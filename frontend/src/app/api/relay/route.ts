@@ -557,6 +557,48 @@ export async function POST(req: NextRequest) {
           '0xf4d678b8': 'InsufficientBalance',
           '0x32cc7236': 'NotFactory',
           '0x90b8ec18': 'TransferFailed',
+          // ── Платный вызов арбитра (31 июля 2026) ─────────────────────────
+          // ⚠️ Найдено замком: эти пять дописали тогда в relayer/app.js и НЕ
+          // дописали сюда, хотя браузер ходит именно этой дорогой. То есть
+          // «спор уже взят» и «доплата не нужна» полмесяца доезжали до
+          // человека сырым хексом на самом ходовом пути.
+          '0x277093f8': 'TopUpNotNeeded',
+          '0x88d471c4': 'BountyAlreadyFunded',
+          '0xd3fc8f8a': 'DisputeAlreadyClaimed',
+          '0x2d4e8c7b': 'NoRefundableBounty',
+          '0x68d369c9': 'NothingToPush',
+          // ── ArbiterRegistryFacet, остаток ────────────────────────────────
+          // Дописано 14 августа 2026 вместе с шестью ошибками 4в-2 Выкатки 2.
+          // Таблица велась вручную и отставала: из ~54 ошибок фасета здесь
+          // лежала половина, а всё, чего нет, доезжает до человека сырым
+          // хексом. Полнота теперь сторожится замком
+          // lib/presentationDigestAbi.test.ts (и его релеерным близнецом
+          // relayer/test/forwarderErrorsMatchFacet.test.js): каждая
+          // объявленная в фасете ошибка обязана быть здесь.
+          '0x30cd7471': 'NotOwner',
+          '0xabf29500': 'NotOwnerOrFeeRecipient',
+          '0x3551edda': 'NotOwnerOrChief',
+          '0xffc49e8e': 'NotOwnerOrDAO',
+          '0x0feb6fac': 'AlreadyArbiter',
+          '0xad196d5d': 'NotAnArbiter',
+          '0xb72a2522': 'NotClaimed',
+          '0xea8e4eb5': 'NotAuthorized',
+          '0x6eb498a6': 'DAONotActive',
+          '0x419652c3': 'ZeroChatKey',
+          '0x92762df3': 'InsufficientXP',
+          '0xff892798': 'VaultInsufficient',
+          '0x5aa9184d': 'NoRewardToClaim',
+          '0xac2e659e': 'InsufficientCleanStreak',
+          '0xf098a90b': 'NotRegisteredAgreement',
+          '0x7b14afdf': 'NoVerdictSubmitted',
+          '0xa807d475': 'RewardPathRetired',
+          // ── 4в-2 Выкатка 2: запись о молчании и отпечаток предъявления ───
+          '0x7c27222a': 'NoResponseTooEarly',
+          '0x61ba6a10': 'NoResponseAlreadyRecorded',
+          '0x29d2e575': 'NotClaimingArbiter',
+          '0x616d24a0': 'ClaimTimeUnknown',
+          '0xe56aceea': 'NotDisputeParty',
+          '0x506f3a1b': 'ZeroDigest',
         };
 
         let reason = 'Inner call reverted';

@@ -45,7 +45,21 @@ const emptyReading = (over: Partial<DisputeBoxReading> = {}): DisputeBoxReading 
   // поле не переопределяет и не обязана, они про другие охранники. Сцена
   // «опись перестраивалась» (R7b) называет его явно.
   indexTrusted: true,
+  // ⚠️ Умолчание — «цепь не читана» для ВСЕХ прежних сцен R1-R12: они про
+  // другое, и отпечаток в них не участвует. Сцены сверки (R13-R16) называют
+  // это поле явно.
+  anchors: null,
   skipped: [], presentations: [], ...over,
+});
+
+const DIGEST = `0x${'ab'.repeat(32)}` as `0x${string}`;
+
+/** ⚠️ `windowCoversDispute: false` умолчанием — так отвечает живая сеть
+ *  (ревью, круг 2). Сцена «мы ЗНАЕМ, что записи нет» называет флаг вслух. */
+const anchorsOf = (over: Partial<NonNullable<DisputeBoxReading['anchors']>> = {}) => ({
+  digests: [], digestsComplete: true, records: [], noResponse: [],
+  logsComplete: true, windowCoversDispute: false,
+  window: { fromBlock: BigInt(44_656_800), toBlock: BigInt(44_700_000) }, ...over,
 });
 
 const bagOf = (over: Partial<PresentedBag> = {}): PresentedBag => ({
@@ -53,6 +67,8 @@ const bagOf = (over: Partial<PresentedBag> = {}): PresentedBag => ({
   declared: { read: 3, hidden: 4, notPrepared: 1 },
   measured: { read: 2, unopened: 1, hidden: 4, notPrepared: 1 },
   countsDisagree: [], uploaderIsPresenter: true,
+  digest: DIGEST,
+  anchor: { verdict: 'unread', block: null, submitter: null, records: 0, total: 0 },
   view: { container: 'ok', messages: [], counts: { read: 2, unopened: 1, hidden: 4, notPrepared: 1 },
           notPrepared: [], perSender: [], presenter: A },
   messages: [{
@@ -69,9 +85,9 @@ async function summary(reading: DisputeBoxReading, before: number | null, device
   const { BoxSummaryView } = await import('@/components/ArbiterPresentations');
   return renderToStaticMarkup(React.createElement(BoxSummaryView, { reading, before, deviceKey }));
 }
-async function bagHtml(bag: PresentedBag): Promise<string> {
+async function bagHtml(bag: PresentedBag, anchors: DisputeBoxReading['anchors'] = null): Promise<string> {
   const { PresentationBagView } = await import('@/components/ArbiterPresentations');
-  return renderToStaticMarkup(React.createElement(PresentationBagView, { bag }));
+  return renderToStaticMarkup(React.createElement(PresentationBagView, { bag, anchors }));
 }
 
 describe('два набора чисел — двумя строками', () => {
@@ -327,5 +343,145 @@ describe('четыре вердикта ключа устройства — че
       expect(agree, `при согласии ключей показана тревога ${k}`)
         .not.toContain(translate(`arbiter.presentations_device_key_${k === 'differs' ? 'differs' : k}`));
     }
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Сверка отпечатка доехала ДО ГЛАЗ (Задача 7)
+//
+// ⚠️ Отпечаток, который никто не сверяет, — украшение; сверка, которая не
+// доехала до разметки, — то же самое украшение этажом выше. Именно этот класс
+// промаха замок и сторожит (находка К-2: разводка причин доехала до панели и
+// не доехала до списка).
+// ═══════════════════════════════════════════════════════════════════════════
+
+describe('три состояния отпечатка на экране арбитра', () => {
+  it('R13: «сходится» — с НОМЕРОМ БЛОКА, а не одним словом', async () => {
+    const html = await bagHtml(bagOf({
+      anchor: { verdict: 'match', block: BigInt(44_700_000), submitter: A, records: 1, total: 1 },
+    }));
+    expect(html).toContain(translate('arbiter.presentation_anchor_match', { block: '44700000' }));
+    expect(html).not.toContain(translate('arbiter.presentation_anchor_absent'));
+    expect(html).not.toContain(translate('arbiter.presentation_anchor_mismatch', { count: 1 }));
+  });
+
+  it('R14: «не сходится» — сказано, и сказано числом отпечатков, с которыми сверяли', async () => {
+    const html = await bagHtml(bagOf({
+      anchor: { verdict: 'mismatch', block: null, submitter: null, records: 0, total: 2 },
+    }));
+    expect(html).toContain(translate('arbiter.presentation_anchor_mismatch', { count: 2 }));
+    expect(html).not.toContain(translate('arbiter.presentation_anchor_absent'));
+  });
+
+  it('R15: «в цепи не отмечено» и «цепь не ответила» — РАЗНЫЕ надписи, и ни одна не обвиняет', async () => {
+    const absent = await bagHtml(bagOf({
+      anchor: { verdict: 'absent', block: null, submitter: null, records: 0, total: 0 },
+    }));
+    const unread = await bagHtml(bagOf({
+      anchor: { verdict: 'unread', block: null, submitter: null, records: 0, total: 0 },
+    }));
+    expect(absent).toContain(translate('arbiter.presentation_anchor_absent'));
+    expect(unread).toContain(translate('arbiter.presentation_anchor_unread'));
+    expect(absent).not.toContain(translate('arbiter.presentation_anchor_unread'));
+    expect(unread).not.toContain(translate('arbiter.presentation_anchor_absent'));
+    // Ни то, ни другое не смеет звучать как «не сходится».
+    expect(absent + unread).not.toContain(translate('arbiter.presentation_anchor_mismatch', { count: 0 }));
+  });
+
+  it('R16: отметка есть, а блока в ленте нет — своя надпись, а не молчание и не «не отмечено»', async () => {
+    const html = await bagHtml(bagOf({
+      anchor: { verdict: 'match', block: null, submitter: null, records: 1, total: 1 },
+    }));
+    expect(html).toContain(translate('arbiter.presentation_anchor_match_no_block'));
+    expect(html).not.toContain(translate('arbiter.presentation_anchor_absent'));
+  });
+
+  it('R17: дубли схлопнуты в строку, но число записей на экране ЕСТЬ', async () => {
+    const html = await bagHtml(bagOf({
+      anchor: { verdict: 'match', block: BigInt(44_700_000), submitter: A, records: 3, total: 3 },
+    }));
+    expect(html).toContain(translate('arbiter.presentation_anchor_dupes', { count: 3 }));
+  });
+
+  it('R18: ПОРЯДОК доехал до глаз — оба номера блока в одной строке', async () => {
+    const withRecord = anchorsOf({
+      digests: [DIGEST],
+      noResponse: [{ arbiter: B, at: BigInt(1_760_000_000), block: BigInt(44_700_050), txHash: null }],
+    });
+    const before = await bagHtml(bagOf({
+      anchor: { verdict: 'match', block: BigInt(44_700_000), submitter: A, records: 1, total: 1 },
+    }), withRecord);
+    expect(before).toContain(translate('arbiter.presentation_anchor_order_digest_first',
+      { digest: '44700000', record: '44700050' }));
+
+    const after = await bagHtml(bagOf({
+      anchor: { verdict: 'match', block: BigInt(44_700_090), submitter: A, records: 1, total: 1 },
+    }), withRecord);
+    expect(after).toContain(translate('arbiter.presentation_anchor_order_record_first',
+      { digest: '44700090', record: '44700050' }));
+
+    // Записи о молчании нет, и покрытие начала спора ДОКАЗАНО — порядка на
+    // экране нет вовсе, и это НЕ потеря: мы знаем, что записи нет.
+    const alone = await bagHtml(bagOf({
+      anchor: { verdict: 'match', block: BigInt(44_700_000), submitter: A, records: 1, total: 1 },
+    }), anchorsOf({ digests: [DIGEST], windowCoversDispute: true }));
+    expect(alone).not.toContain(translate('arbiter.presentation_anchor_order_digest_first',
+      { digest: '44700000', record: '44700050' }));
+    expect(alone).not.toContain(translate('arbiter.presentation_anchor_order_out_of_window'));
+  });
+
+  it('R20: ПОТЕРЯ ПОРЯДКА ГРОМКАЯ — «не смотрели так далеко», а не молчание', async () => {
+    // ⚠️ Правка круга 1. Прежде этот случай не рисовал НИЧЕГО, и на экране он
+    // был неотличим от «отпечатка нет» — при том что человек может обойти его
+    // сам, попросив разбор.
+    const html = await bagHtml(bagOf({
+      anchor: { verdict: 'match', block: null, submitter: null, records: 1, total: 1 },
+    }), anchorsOf({ digests: [DIGEST], logsComplete: false }));
+    expect(html).toContain(translate('arbiter.presentation_anchor_order_out_of_window'));
+    // И это не смешано ни с «не отмечено», ни с «не сходится».
+    expect(html).not.toContain(translate('arbiter.presentation_anchor_absent'));
+    expect(html).not.toContain(translate('arbiter.presentation_anchor_mismatch', { count: 1 }));
+  });
+
+  it('R21: предел поиска назван ЧИСЛАМИ в сводке — И ВСЕГДА (ревью, круг 2)', async () => {
+    const line = translate('arbiter.presentations_anchor_window',
+      { from: '44656800', to: '44700000' });
+
+    const partial = await summary(emptyReading({
+      anchors: anchorsOf({ digests: [DIGEST], logsComplete: false }),
+    }), 0);
+    expect(partial).toContain(line);
+
+    // ⚠️ ГЛАВНОЕ ЗДЕСЬ. Прежде строка стояла под `!logsComplete`, и в самой
+    // обычной сцене — отпечатки накрыты, запись арбитра старше окна — экран
+    // молчал ОБО ВСЁМ: ни порядка, ни предупреждения, только «сходится, блок N».
+    const covered = await summary(emptyReading({
+      anchors: anchorsOf({ digests: [DIGEST], logsComplete: true }),
+    }), 0);
+    expect(covered, 'предел поиска молчит там, где он и вреден').toContain(line);
+
+    // Ленту не спрашивали вовсе (отпечатков нет) — окна нет, и строки нет.
+    const noWindow = await summary(emptyReading({ anchors: anchorsOf({ window: null }) }), 0);
+    expect(noWindow).not.toContain(line);
+  });
+
+  it('R22: обрезанный список отпечатков назван числом — и только когда обрезан', async () => {
+    const truncated = await summary(emptyReading({
+      anchors: anchorsOf({ digests: [DIGEST], digestsComplete: false }),
+    }), 0);
+    expect(truncated).toContain(translate('arbiter.presentations_anchor_truncated', { count: 1 }));
+
+    const clean = await summary(emptyReading({ anchors: anchorsOf({ digests: [DIGEST] }) }), 0);
+    expect(clean).not.toContain(translate('arbiter.presentations_anchor_truncated', { count: 1 }));
+  });
+
+  it('R19: запись арбитра о молчании названа в сводке НОМЕРОМ БЛОКА', async () => {
+    const html = await summary(emptyReading({
+      anchors: anchorsOf({
+        noResponse: [{ arbiter: B, at: BigInt(1_760_000_000), block: BigInt(44_699_000), txHash: null }],
+      }),
+    }), 0);
+    expect(html).toContain(translate('arbiter.presentations_no_response_record',
+      { block: '44699000', count: 1 }));
   });
 });

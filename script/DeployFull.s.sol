@@ -8,14 +8,15 @@ pragma solidity ^0.8.20;
 // см. test/StorageLayout.t.sol.
 //
 // Регенерирован 2026-07-25 из живых ABI (`forge inspect <Facet> methodIdentifiers`)
-// после ~40 инкрементальных апгрейдов, которые этот файл не отслеживал. Все 169
+// после ~40 инкрементальных апгрейдов, которые этот файл не отслеживал. Все 177
 // селекторов 11 фасетов проверены против test/DeployFullSelectors.t.sol — тот тест
 // падает, если этот файл и живые ABI разойдутся снова. Число здесь — сумма
-// литералов `new bytes4[](n)` в билдерах ниже; оно уже пятикратно протухало (стояло
+// литералов `new bytes4[](n)` в билдерах ниже; оно уже шестикратно протухало (стояло
 // 148, когда фабрика выросла с 13 до 20; затем 159, до порога и котировки
 // платного вызова арбитра; затем 162 — цифру не поправили в том же коммите,
 // где код вырос до 167, 31 июля 2026; затем 167, когда 9 августа 2026 добавился
-// getArbiterChatKeys; затем 168, когда в тот же день добавился setArbiterChatKey),
+// getArbiterChatKeys; затем 168, когда в тот же день добавился setArbiterChatKey;
+// затем 169, когда 14 августа 2026 приехали восемь функций 4в-2 Выкатки 2),
 // поэтому сверяется тем же тестом.
 // Пересчитать, не полагаясь на глаз:
 //   grep -o "new bytes4\[\]([0-9]*)" script/DeployFull.s.sol \
@@ -382,9 +383,9 @@ contract DeployFull is Script {
         sels[24] = ServiceBoardFacet.getPendingRequestCount.selector;
     }
 
-    // ArbiterRegistryFacet — 56 селекторов
+    // ArbiterRegistryFacet — 64 селектора
     function arbiterRegistryFacetSelectors() public pure returns (bytes4[] memory sels) {
-        sels = new bytes4[](56);
+        sels = new bytes4[](64);
 
         // DAO-режим
         sels[0]  = ArbiterRegistryFacet.activateDAO.selector;
@@ -463,6 +464,18 @@ contract DeployFull is Script {
         // Ключи чата арбитра (4б, 9 августа 2026)
         sels[54] = ArbiterRegistryFacet.getArbiterChatKeys.selector;
         sels[55] = ArbiterRegistryFacet.setArbiterChatKey.selector;
+
+        // Запись «просил, ответа нет» и отпечаток предъявления
+        // (4в-2 Выкатка 2, 14 августа 2026). На живой диамонд эти восемь
+        // приезжают разрезом script/UpgradePresentationRecord.s.sol.
+        sels[56] = ArbiterRegistryFacet.getDisputeClaimedAt.selector;
+        sels[57] = ArbiterRegistryFacet.recordNoResponse.selector;
+        sels[58] = ArbiterRegistryFacet.getNoResponseAt.selector;
+        sels[59] = ArbiterRegistryFacet.getNoResponseFloor.selector;
+        sels[60] = ArbiterRegistryFacet.recordPresentationDigest.selector;
+        sels[61] = ArbiterRegistryFacet.getPresentationDigests.selector;
+        sels[62] = ArbiterRegistryFacet.getPresentationDigestCount.selector;
+        sels[63] = ArbiterRegistryFacet.getPresentationDigestsPage.selector;
     }
 
     // DealMetadataFacet — 1 селектор

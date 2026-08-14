@@ -19,7 +19,7 @@ import Link from "next/link";
 import { useTranslations } from "next-intl";
 import {
   commitDisputeClaimGasless, claimDisputeGasless, releaseDisputeGasless,
-  setArbiterChatKeyGasless,
+  setArbiterChatKeyGasless, recordNoResponseGasless,
 } from "@/lib/relay";
 import { keccak256, encodePacked, parseAbi } from "viem";
 import type { Abi, Address, Hex, TransactionReceipt } from "viem";
@@ -283,11 +283,18 @@ export default function ArbiterPage() {
   // хранили и оплачивали местом на диске.
   //
   // Список приходит из цепи: `getArbiterDeals(me)` — это дела, где спор брал Я.
-  // Статус употребляется РОВНО НА ОДНО: порядок (живой спор выше) — тот же
-  // приём, что с `sealedFor` у мешков, где заявление годится для очерёдности и
-  // не годится для выбрасывания. Ответ «ящик не ваш» даёт СЕРВЕР, прочитав
-  // цепь, и печатается строками `presentations_not_mine` /
-  // `presentations_box_closed`.
+  // Статус употребляется НА ДВА, и оба раза не для выбрасывания ящика:
+  //   — порядок (живой спор выше) — тот же приём, что с `sealedFor` у мешков,
+  //     где заявление годится для очерёдности и не годится для выбрасывания;
+  //   — `disputeOpen` для кнопки «просил, ответа не было» (ревью Задачи 8):
+  //     карточек столько, сколько дел за всю жизнь арбитра, и три чтения цепи
+  //     на каждую разобранную — плата всех за случай одного. Ящик этим полем
+  //     НЕ гейтится: он живёт до конца апелляции.
+  // Ответ «ящик не ваш» по-прежнему даёт СЕРВЕР, прочитав цепь, и печатается
+  // строками `presentations_not_mine` / `presentations_box_closed`.
+  //
+  // ⚠️ Пока `histDetails` не приехали, `disputeOpen` честно `false`: блок
+  // появится секундой позже, а не покажет кнопку, за которой ничего нет.
   const myBoxCases: ArbiterCase[] = [...(myHistory ?? [])]
     .sort((x, y) =>
       Number(histDetails[y]?.status === AGREEMENT_STATUS_DISPUTED) -
@@ -296,6 +303,7 @@ export default function ArbiterPage() {
       agreement: a as `0x${string}`,
       client: (histDetails[a]?.client ?? ZERO_ADDR) as `0x${string}`,
       executor: (histDetails[a]?.executor ?? ZERO_ADDR) as `0x${string}`,
+      disputeOpen: histDetails[a]?.status === AGREEMENT_STATUS_DISPUTED,
     }));
 
   // Подписчик ключа чата — тот же раскрой, что у заявки и публикации ключа.
@@ -495,6 +503,37 @@ export default function ArbiterPage() {
     } catch (err: any) {
       toast.error(err?.message || t("common.error"));
     } finally { setBusy(null); }
+  };
+
+  /**
+   * Арбитр записывает в цепь: просил переписку — ответа не было (4в-2,
+   * Выкатка 2, Задача 8).
+   *
+   * ⚠️ ПОДПИСЬ ЖИВЁТ ЗДЕСЬ, А НЕ В КАРТОЧКЕ СПОРА. `ArbiterPresentations.tsx`
+   * кошелька не трогает намеренно (см. его шапку и `lib/signaturePaths.test.ts`,
+   * который перечисляет места вызова подписи ПОИМЁННО): мьютекс кошелька стоит
+   * внутри `recordNoResponseGasless`, и заводить второе место подписи ради одной
+   * кнопки значило бы обойти этот учёт.
+   *
+   * ⚠️ БРОСАЕТ НАРУЖУ. Карточка перечитывает цепь и на удаче, и на отказе:
+   * `NoResponseAlreadyRecorded` означает, что её чтение устарело. Проглотить
+   * ошибку здесь — оставить арбитра с кнопкой, которая «не работает».
+   */
+  const handleRecordNoResponse = async (agreement: `0x${string}`) => {
+    if (!walletClient || !publicClient) { toast.error(t("common.error")); throw new Error("no client"); }
+    const id = toast.loading(t("arbiter.no_response_recording"));
+    try {
+      const { txHash } = await recordNoResponseGasless(walletClient, publicClient, agreement);
+      // ⚠️ assertMined обязателен: waitForTransactionReceipt разрешается и на
+      // отвергнутой транзакции — без этой строки экран сказал бы «записано» там,
+      // где цепь ответила отказом.
+      assertMined(await publicClient.waitForTransactionReceipt({ hash: txHash as `0x${string}` }));
+      toast.success(t("arbiter.no_response_done"), { id });
+      bump();
+    } catch (err: any) {
+      toast.error(err?.shortMessage || err?.message || t("common.error"), { id });
+      throw err;
+    }
   };
 
   // Для арбитра, взявшего спор ДО апгрейда 9 августа: тогда заявка ключей не
@@ -775,6 +814,7 @@ export default function ArbiterPage() {
               publicClient={publicClient}
               signChatKey={signChatKeyForBox}
               getBoxPass={getBoxPass}
+              recordNoResponse={handleRecordNoResponse}
             />
           )}
 

@@ -13,6 +13,7 @@
  */
 import { describe, it, expect, beforeAll } from 'vitest';
 import { ethers } from 'ethers';
+import { keccak256 } from 'viem';
 import { BAG_READ_BUDGET_PER_MIN } from '@/lib/chatTransport';
 import { CHAT_KEY_TYPED_DATA, type ChatKeypair } from '@/lib/chatCrypto';
 import { createGatedSignChatKey } from '@/lib/arbiterClaimKeys';
@@ -28,9 +29,13 @@ import type { ChatSession } from '@/lib/chatSession';
 import {
   readingOrder, bagNameFromKey, arbitersBefore, deviceKeyVerdict,
   countsDisagreement, readDisputeBox, openArbiterBoxSession, isSessionAbsent,
-  boxReadRefusal, attestationDateLabel,
-  type DisputeBoxSource,
+  boxReadRefusal, attestationDateLabel, openDisputeBoxImpl,
+  type BoxOpenState, type DisputeBoxReading, type DisputeBoxSource,
 } from '@/lib/arbiterPresentations';
+import {
+  anchorOrder, bagAnchor, firstNoResponse, verifyDigest,
+  type ChainAnchors, type DigestRecord,
+} from '@/lib/presentationAnchor';
 
 const AGREEMENT = '0x2e7a7a0515bfdc0006a812ebb3e55d32800bc660' as `0x${string}`;
 const OTHER_DEAL = '0x760f07367888c62f7c2dfb619a5e534132855ce5' as `0x${string}`;
@@ -720,4 +725,284 @@ describe('цена', () => {
     expect(r.stop).toBe('read_all');
     expect(ms, 'разбор ящика упёрся в алгоритм, а не в мелочи').toBeLessThan(120_000);
   }, 300_000);
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// F. Отпечаток в цепи — сверяется, а не лежит украшением (Задача 7)
+//
+// ⚠️ ЗАЧЕМ ЭТОТ РАЗДЕЛ. «Отпечаток обязан кем-то сверяться, иначе он
+// украшение» (замысел 5.4). Класс бага в проекте известен поимённо: поле
+// объявлено, выглядит осмысленно и не проверяется ничем. Здесь у него есть
+// читатель, вердикт и число.
+//
+// ⚠️ ОЖИДАЕМЫЙ ОТПЕЧАТОК СЧИТАЕТСЯ ЗДЕСЬ САМ — `keccak256(canonical…)`, а не
+// зовётся `presentationDigest` из проверяемого пути: иначе тест сверял бы
+// модуль сам с собой и молчал бы ровно на той беде, ради которой стоит (другой
+// пре-образ или другая функция хэша).
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * ⚠️ `windowCoversDispute` ПО УМОЛЧАНИЮ `false`, И ЭТО НЕ ПРИДИРКА (ревью,
+ * круг 2). Так живая сеть и отвечает: окно ленты — сутки, начала спора оно не
+ * достаёт, доказательства покрытия нет. Сцена, в которой «записи о молчании
+ * нет» — ЗНАНИЕ, обязана называть флаг вслух, а не получать его умолчанием.
+ */
+const anchorsOf = (over: Partial<ChainAnchors> = {}): ChainAnchors => ({
+  digests: [], digestsComplete: true, records: [], noResponse: [],
+  logsComplete: true, windowCoversDispute: false, window: null, ...over,
+});
+
+const recordOf = (digest: `0x${string}`, block: bigint, over: Partial<DigestRecord> = {}): DigestRecord => ({
+  digest, submitter: alice.address, index: BigInt(0), block, txHash: null, ...over,
+});
+
+const readAnchored = (source: DisputeBoxSource, anchors: ChainAnchors | null) =>
+  readDisputeBox({
+    source, own: judy, agreement: AGREEMENT, me: JUDY,
+    anchors: anchors === null
+      ? async () => { throw new Error('узел не ответил'); }
+      : async () => anchors,
+  });
+
+describe('сверка отпечатка', () => {
+  it('F1: подменили байты мешка при живом отпечатке — «не сходится»', () => {
+    const onChain = keccak256(canonicalPresentationBytes(honest));
+    const tampered = { ...honest, frames: honest.frames.slice(1) };
+    expect(verifyDigest(tampered, onChain)).toBe(false);
+  });
+
+  it('F2: нетронутый мешок сходится', () => {
+    expect(verifyDigest(honest, keccak256(canonicalPresentationBytes(honest)))).toBe(true);
+  });
+
+  it('F3: регистр отпечатка ничего не решает — шов держит и верхний', () => {
+    const onChain = keccak256(canonicalPresentationBytes(honest));
+    expect(verifyDigest(honest, onChain.toUpperCase().replace('0X', '0x') as `0x${string}`)).toBe(true);
+    // …и при этом длина всё-таки сверяется: обрезанный отпечаток не «сходится».
+    expect(verifyDigest(honest, onChain.slice(0, 40) as `0x${string}`)).toBe(false);
+  });
+
+  it('F4: мешок из ящика сверяется с цепью — «сходится» и НОМЕР БЛОКА из ленты', async () => {
+    const sealed = await sealPresentation(honest, judy.publicKey);
+    const bag = summary('honest.bin');
+    const digest = keccak256(canonicalPresentationBytes(honest));
+    const s = stand({ bags: [bag], arbiter: JUDY, sealedForOthers: 0 }, new Map([[bag.key, sealed]]));
+    const r = await readAnchored(s.source, anchorsOf({
+      digests: [digest], records: [recordOf(digest, BigInt(44_700_000))],
+    }));
+    expect(r.presentations.length).toBe(1);
+    expect(r.presentations[0].digest).toBe(digest);
+    expect(r.presentations[0].anchor.verdict).toBe('match');
+    // ⚠️ БЛОК — ТОЛЬКО ИЗ СОБЫТИЯ. Геттеры его не отдают, а без него порядок
+    // («отпечаток на блоке N, запись арбитра на блоке M») показать нечем.
+    expect(r.presentations[0].anchor.block).toBe(BigInt(44_700_000));
+  });
+
+  it('F5: байты подменили, подпись перевешена честно — цепь ловит то, чего не ловит подпись', async () => {
+    // Живой лжец собирает контейнер сам и подписывает СВОЁ враньё: подпись
+    // сойдётся, вердикт читалки будет `ok`. Разойдутся только 32 байта,
+    // легшие в цепь на своём блоке.
+    const anchoredDigest = keccak256(canonicalPresentationBytes(honest));
+    const rebuilt = await resign({ ...honest, frames: honest.frames.slice(1) }, alice.session);
+    const sealed = await sealPresentation(rebuilt, judy.publicKey);
+    const bag = summary('rebuilt.bin');
+    const s = stand({ bags: [bag], arbiter: JUDY, sealedForOthers: 0 }, new Map([[bag.key, sealed]]));
+    const r = await readAnchored(s.source, anchorsOf({
+      digests: [anchoredDigest], records: [recordOf(anchoredDigest, BigInt(44_700_000))],
+    }));
+    expect(r.presentations.length).toBe(1);
+    expect(r.presentations[0].view.container, 'подпись перевешена — читалке претензий нет').toBe('ok');
+    expect(r.presentations[0].anchor.verdict).toBe('mismatch');
+    expect(r.presentations[0].anchor.total, 'сверять БЫЛО с чем — и это число на экране').toBe(1);
+  });
+
+  it('F6: в цепи не отмечено — ЭТО НЕ ОШИБКА и не «не сходится»', async () => {
+    const sealed = await sealPresentation(honest, judy.publicKey);
+    const bag = summary('honest.bin');
+    const s = stand({ bags: [bag], arbiter: JUDY, sealedForOthers: 0 }, new Map([[bag.key, sealed]]));
+    const r = await readAnchored(s.source, anchorsOf({ digests: [] }));
+    expect(r.presentations[0].anchor.verdict).toBe('absent');
+  });
+
+  it('F7: цепь не ответила — «не знаем», а НЕ «не отмечено», и ящик всё равно прочитан', async () => {
+    const sealed = await sealPresentation(honest, judy.publicKey);
+    const bag = summary('honest.bin');
+    const s = stand({ bags: [bag], arbiter: JUDY, sealedForOthers: 0 }, new Map([[bag.key, sealed]]));
+    const r = await readAnchored(s.source, null);
+    expect(r.anchors).toBeNull();
+    expect(r.presentations.length, 'отказ узла уронил чтение ящика').toBe(1);
+    expect(r.presentations[0].anchor.verdict).toBe('unread');
+  });
+
+  it('F8: список отпечатков НЕПОЛОН и не совпало — «не знаем», а не обвинение', () => {
+    const digest = keccak256(canonicalPresentationBytes(honest));
+    const other = keccak256(new Uint8Array([1, 2, 3]));
+    expect(bagAnchor(digest, anchorsOf({ digests: [other], digestsComplete: false })).verdict)
+      .toBe('unread');
+    // Тот же список, но полный — уже обвинение, и оно законно.
+    expect(bagAnchor(digest, anchorsOf({ digests: [other] })).verdict).toBe('mismatch');
+  });
+
+  it('F9: дубль отпечатка схлопнут в одну строку, но число записей НЕ спрятано', () => {
+    const digest = keccak256(canonicalPresentationBytes(honest));
+    const a = bagAnchor(digest, anchorsOf({
+      digests: [digest, digest],
+      records: [recordOf(digest, BigInt(44_700_010), { index: BigInt(1) }), recordOf(digest, BigInt(44_700_000))],
+    }));
+    expect(a.verdict).toBe('match');
+    expect(a.records, 'дубль спрятан — это не ложь, но и не правда').toBe(2);
+    expect(a.block, 'взят поздний блок — спор решает то, что легло РАНЬШЕ').toBe(BigInt(44_700_000));
+  });
+
+  it('F10: отметка есть, а блока в ленте нет — «сходится», а не «не отмечено»', () => {
+    const digest = keccak256(canonicalPresentationBytes(honest));
+    const a = bagAnchor(digest, anchorsOf({ digests: [digest], records: [], logsComplete: false }));
+    expect(a.verdict).toBe('match');
+    expect(a.block).toBeNull();
+  });
+
+  it('F11: ПОРЯДОК — ради него всё и затевалось, и он не угадывается', () => {
+    const d = keccak256(canonicalPresentationBytes(honest));
+    const rec = (block: bigint) => ({
+      arbiter: REX, at: BigInt(1_760_000_000), block, txHash: null,
+    });
+    const at = (digestBlock: bigint | null, recBlocks: bigint[], over = {}) => anchorOrder(
+      { verdict: 'match', block: digestBlock, submitter: null, records: 1, total: 1 },
+      anchorsOf({ digests: [d], noResponse: recBlocks.map(rec), ...over }),
+    );
+    expect(at(BigInt(10), [BigInt(20)])).toBe('digest_first');
+    expect(at(BigInt(20), [BigInt(10)])).toBe('record_first');
+    expect(at(BigInt(10), [BigInt(10)])).toBe('same_block');
+    // Записи нет, а окно ДОКАЗАНО достаёт до начала спора — это ЗНАНИЕ, и
+    // молчать про него законно.
+    expect(at(BigInt(10), [], { windowCoversDispute: true }),
+      'записи о молчании нет и покрытие доказано').toBe('no_record');
+  });
+
+  it('F11b: «не знаю» и «не смотрел так далеко» — РАЗНЫЕ вещи (правка круга 1)', () => {
+    const d = keccak256(canonicalPresentationBytes(honest));
+    const match = (block: bigint | null) =>
+      ({ verdict: 'match' as const, block, submitter: null, records: 1, total: 1 });
+
+    // Отметка есть, номер блока за границей окна — ГРОМКО, а не молчанием.
+    expect(anchorOrder(match(null), anchorsOf({ digests: [d], logsComplete: false })))
+      .toBe('out_of_window');
+    // ⚠️ СЦЕНА РЕВЬЮЕРА (круг 2). Свой блок нашёлся, ВСЕ отпечатки накрыты
+    // (`logsComplete: true`) — а запись арбитра могла лежать старше окна.
+    // Прежний признак объявлял это «записи нет»; правда — «не знаем».
+    expect(anchorOrder(match(BigInt(10)), anchorsOf({ digests: [d], logsComplete: true })))
+      .toBe('out_of_window');
+    // Тот же случай при ДОКАЗАННОМ покрытии — уже знание.
+    expect(anchorOrder(match(BigInt(10)),
+      anchorsOf({ digests: [d], logsComplete: true, windowCoversDispute: true })))
+      .toBe('no_record');
+    // А это НЕ потери, у каждой своя строка на экране.
+    expect(anchorOrder(match(BigInt(10)), null)).toBe('chain_unread');
+    expect(anchorOrder(
+      { verdict: 'absent', block: null, submitter: null, records: 0, total: 0 }, anchorsOf(),
+    )).toBe('not_anchored');
+  });
+
+  it('F12: записи арбитров о молчании доезжают до модели с номерами блоков', async () => {
+    const sealed = await sealPresentation(honest, judy.publicKey);
+    const bag = summary('honest.bin');
+    const digest = keccak256(canonicalPresentationBytes(honest));
+    const s = stand({ bags: [bag], arbiter: JUDY, sealedForOthers: 0 }, new Map([[bag.key, sealed]]));
+    const r = await readAnchored(s.source, anchorsOf({
+      digests: [digest],
+      records: [recordOf(digest, BigInt(44_700_000))],
+      noResponse: [
+        { arbiter: REX, at: BigInt(1_760_000_100), block: BigInt(44_700_050), txHash: null },
+        { arbiter: JUDY, at: BigInt(1_760_000_000), block: BigInt(44_699_000), txHash: null },
+      ],
+    }));
+    const first = firstNoResponse(r.anchors);
+    expect(first, 'записи о молчании потерялись по дороге к экрану').not.toBeNull();
+    expect(first!.block, 'взята поздняя запись — сравнивать надо с ПЕРВОЙ').toBe(BigInt(44_699_000));
+    expect(anchorOrder(r.presentations[0].anchor, r.anchors)).toBe('record_first');
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// O. Что происходит по НАЖАТИЮ «открыть ящик» (правка круга 1)
+//
+// ⚠️ ЗАЧЕМ ЭТОТ РАЗДЕЛ. Решение по нажатию жило внутри обработчика компонента,
+// а нажатие в этом проекте не исполняет ни один замок: у фронта нет ни jsdom,
+// ни `@testing-library`. Сторожил его только замок на ТЕКСТ исходника — то
+// есть на имя, а не на употребление. Здесь решение зовётся напрямую, и
+// меряется РАБОТА.
+// ═══════════════════════════════════════════════════════════════════════════
+
+describe('нажатие «открыть ящик»', () => {
+  const emptyReading = (): DisputeBoxReading => ({
+    arbiterNow: JUDY, mine: true, listed: 0, tried: 0, stop: 'read_all',
+    sealedForOthersDeclared: 0, notOurs: 0, notOursFetched: 0, notParsed: 0,
+    indexTrusted: true, anchors: null, skipped: [], presentations: [],
+  });
+
+  const press = async (over: Partial<Parameters<typeof openDisputeBoxImpl>[0]> = {}) => {
+    const seen: BoxOpenState[] = [];
+    await openDisputeBoxImpl({
+      ready: true,
+      alive: () => true,
+      apply: (s) => { seen.push(s); },
+      read: async () => ({ reading: emptyReading(), before: 1, deviceKey: 'agree' as const }),
+      ...over,
+    });
+    return seen;
+  };
+
+  it('O1: успех — сперва «читаем», потом ящик; «читаем» не пропущено', async () => {
+    const seen = await press();
+    expect(seen.map(s => s.kind), 'человек жмёт и до ответа не видит ничего').toEqual(['reading', 'done']);
+    expect(seen[1].kind === 'done' && seen[1].before).toBe(1);
+  });
+
+  it('O2: ключа на устройстве НЕТ — своя причина и своя кнопка, а не общий отказ', async () => {
+    const seen = await press({
+      read: async () => { throw Object.assign(new Error('нет ключа'), { code: 'session_absent' }); },
+    });
+    // Схлопни этот исход в отказ — человек прочтёт «ящик прочитать не удалось»
+    // там, где ему нужно одно нажатие, и окно подписи станет неожиданностью.
+    expect(seen.map(s => s.kind)).toEqual(['reading', 'key_needed']);
+  });
+
+  it('O3: отказ приезжает РАЗОБРАННОЙ причиной, а не английским текстом', async () => {
+    const seen = await press({
+      read: async () => { throw Object.assign(new Error('403'), { code: 'not_the_arbiter' }); },
+    });
+    expect(seen[1]).toEqual({ kind: 'failed', refusal: 'not_mine_now' });
+
+    const other = await press({
+      read: async () => { throw Object.assign(new Error('пропуск'), { code: 'pass_expired' }); },
+    });
+    expect(other[1]).toEqual({ kind: 'failed', refusal: 'pass_stale' });
+
+    // Незнакомое НЕ угадывается — честное «не знаем», а не выдуманный совет.
+    const unknown = await press({ read: async () => { throw new Error('оборвалась сеть'); } });
+    expect(unknown[1]).toEqual({ kind: 'failed', refusal: 'unknown' });
+  });
+
+  it('O4: идти не с чем (кошелёк не подключён) — НЕ ПРИМЕНЯЕТСЯ НИЧЕГО', async () => {
+    let read = 0;
+    const seen = await press({ ready: false, read: async () => { read++; throw new Error('не должно'); } });
+    // ⚠️ Порядок здесь несущий: выставь «читаем» до этой проверки — карточка
+    // зависла бы на «читаем» навсегда, потому что дальше стоит выход.
+    expect(seen, 'экран ушёл в «читаем» и не вернётся').toEqual([]);
+    expect(read, 'пошли за ящиком без ключа').toBe(0);
+  });
+
+  it('O5: вкладку закрыли, пока читали — ответ никуда не применяется', async () => {
+    const seen = await press({ alive: () => false });
+    expect(seen.map(s => s.kind), 'состояние ставится мёртвому компоненту').toEqual(['reading']);
+    const failed = await press({
+      alive: () => false,
+      read: async () => { throw Object.assign(new Error('нет ключа'), { code: 'session_absent' }); },
+    });
+    expect(failed.map(s => s.kind)).toEqual(['reading']);
+  });
+
+  it('O6: нажатие НЕ БРОСАЕТ — отказ становится состоянием, а не исключением', async () => {
+    await expect(press({ read: async () => { throw new Error('что угодно'); } })).resolves.toBeTruthy();
+  });
 });

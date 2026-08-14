@@ -219,6 +219,40 @@ describe('слежение за арбитром и судьба мешка', ()
     expect(unknown).not.toContain(translate('chat.present_sent'));
   });
 
+  it('C14: «в цепи не отмечено» — ТРЕТЬЯ строка и кнопка «отметить»', async () => {
+    // ⚠️ РАДИ ЭТОГО ЗАДАЧА 6 СУЩЕСТВУЕТ ОТДЕЛЬНО. Мешок у арбитра, отпечатка в
+    // цепи нет: «предъявлено» — неправда (страховки нет), «ошибка» — тоже
+    // неправда (переписка у арбитра). Третье слово, и с выходом: кнопкой.
+    const { PresentAnchorLine } = await load();
+    const missing = renderToStaticMarkup(
+      <PresentAnchorLine state={{ kind: 'missing', digest: `0x${'11'.repeat(32)}` }}
+        busy={false} onRetry={() => {}} />);
+    const anchored = renderToStaticMarkup(
+      <PresentAnchorLine state={{ kind: 'anchored', txHash: `0x${'ab'.repeat(32)}` }}
+        busy={false} onRetry={() => {}} />);
+    const none = renderToStaticMarkup(
+      <PresentAnchorLine state={{ kind: 'none' }} busy={false} onRetry={() => {}} />);
+
+    expect(missing).toContain(translate('chat.present_not_anchored'));
+    expect(missing, 'у плохой новости нет выхода — кнопки «отметить» нет')
+      .toContain('data-present-anchor-retry');
+    expect(missing).toContain(translate('chat.present_anchor_retry'));
+    expect(anchored).toContain(translate('chat.present_anchored'));
+    expect(anchored, 'отмеченное предлагают отметить ещё раз')
+      .not.toContain('data-present-anchor-retry');
+    // Три РАЗНЫХ вида, и «не спрашивали» — пустое место, а не «всё хорошо».
+    expect(none).toBe('');
+    expect(new Set([missing, anchored, none]).size).toBe(3);
+    // Средняя строка не выдаёт себя за успех.
+    expect(missing).not.toContain(translate('chat.present_anchored'));
+    // Пока идём в цепь — кнопка заперта: два похода одним нажатием не нужны.
+    const busy = renderToStaticMarkup(
+      <PresentAnchorLine state={{ kind: 'missing', digest: `0x${'11'.repeat(32)}` }}
+        busy onRetry={() => {}} />);
+    expect(busy).toContain('disabled=""');
+    expect(missing).not.toContain('disabled=""');
+  });
+
   it('C8: собранное раньше предложено в модалке, и число названо', async () => {
     const { PresentPickerModal, selectableMessages } = await load();
     const { rows, dropped } = selectableMessages([msg(ME, 0, 'раз'), msg(PEER, 0, 'два')]);
@@ -349,6 +383,67 @@ describe('проводка: вынесенное действительно ко
       .toMatch(/applySent:\s*\(fn\)\s*=>\s*setSent\(fn\)/);
     expect(SELF, 'восстановлению отданы не функциональные обновления')
       .toMatch(/applyBox:\s*\(fn\)\s*=>\s*setBoxState\(fn\)/);
+  });
+
+  it('C15: второй шаг ОТДАН отправке, а третье состояние — экрану', () => {
+    // ⚠️ ТА ЖЕ ПРИРОДА, ЧТО У C11: замок на проводку, а не на работу. Работу
+    // второго шага меряют T43–T48; здесь закрывается ровно то, чего у них
+    // нет, — что решения кому-то отданы. Без этого `sendPresentation` получил
+    // бы `recordDigest`, который ничего не делает, а `presentSay` считал бы
+    // слова, которых никто не показывает.
+    expect(SELF, 'отправке не отдан второй шаг — отпечаток в цепь не поедет ни разу')
+      .toMatch(/recordDigest:\s*\(digest\)\s*=>\s*\n?\s*recordPresentationDigestGasless\(/);
+    expect(SELF, 'слово после отправки выбирает не presentSay, а ветвление на месте')
+      .toMatch(/presentSay\(verdict\)/);
+    // ⚠️ Слияние — ДО раннего выхода по отказу, иначе правило «отказ не стирает
+    // неотмеченного» (T47) на экране не действует ни разу: `return` случится
+    // раньше. Проверяется расстоянием: `setAnchor` стоит перед `if (!verdict.ok)`.
+    const merge = SELF.indexOf('setAnchor(prev => anchorAfter(prev, verdict))');
+    const bail  = SELF.indexOf('if (!verdict.ok) {');
+    expect(merge, 'состояние отпечатка никем не сливается').toBeGreaterThan(0);
+    expect(bail, 'ранний выход по отказу пропал — сцена изменилась').toBeGreaterThan(0);
+    expect(merge, 'слияние стоит ПОСЛЕ раннего выхода: при отказе строка гаснет')
+      .toBeLessThan(bail);
+    expect(SELF, 'кнопке «отметить» не отдан повтор').toMatch(/void\s+retryAnchorImpl\(/);
+    expect(SELF, 'строка про отпечаток не отрисовывается').toMatch(/<PresentAnchorLine\b/);
+    // ⚠️ Ревью, круг 1, правка 2: нажатие «отметить» без кошелька молчало.
+    // Решение вынесено (T49), здесь — что его СПРАШИВАЮТ и что отказ доезжает
+    // до человека тостом, а не до консоли.
+    expect(SELF, 'повтор отметки решает не anchorRetryGate, а условие на месте')
+      .toMatch(/anchorRetryGate\(\{/);
+    expect(SELF, 'отказ повтора не показывается человеку — нажатие проваливается в тишину')
+      .toMatch(/if\s*\(gate\.key\)\s*toast\.error\(/);
+  });
+
+  it('C16: «отмечено ли» СПРАШИВАЕТСЯ У ЦЕПИ на монтировании, и тем же путём, что у арбитра', () => {
+    // ⚠️ ТА ЖЕ ПРИРОДА, ЧТО У C11/C15: замок на проводку. Работу восстановления
+    // меряют H1-H8 (`lib/presentationAnchor.test.ts`); здесь закрывается ровно
+    // то, чего у них нет, — что кто-то это зовёт. Без строки ниже человек,
+    // перезагрузивший вкладку на неотмеченном предъявлении, возвращается к
+    // экрану без строки и без кнопки — это сомнение №1 отчёта Задачи 6.
+    expect(SELF, 'восстановление отметки из цепи никем не вызывается')
+      .toMatch(/void\s+restoreAnchorImpl\s*\(/);
+    // ⚠️ И ЧТЕНИЕ ЦЕПИ — ОДНО НА ОБЕ СТОРОНЫ. Своя копия здесь разошлась бы с
+    // арбитровой молча: сторона видела бы «отмечено» там, где арбитр видит
+    // «не сходится».
+    //
+    // ⚠️ И БЕЗ ЛЕНТЫ (волна правок общего ревью, правка 2). Природа проверки
+    // прежняя — ПРОВОДКА, замок на текст; работу меряют G11-G13
+    // (`lib/presentationAnchor.test.ts`) числом обращений к поддельному узлу.
+    // Здесь закрывается ровно то, чего у них нет: что сторона зовёт чтение
+    // именно так. Снимут `withLog: false` — каждое открытие чата по спорной
+    // сделке снова стоит ДВЕНАДЦАТЬ `eth_getLogs` ради `txHash`, который
+    // `PresentAnchorLine` не рисует нигде, и заметить это можно только счётом
+    // запросов к узлу.
+    expect(SELF, 'сторона читает цепь своим способом, а не общим')
+      .toMatch(/readAnchors:\s*\(\)\s*=>\s*readChainAnchors\(/);
+    expect(SELF, 'сторона платит за ленту, из которой ничего не рисует')
+      .toMatch(/readChainAnchors\(publicClient,\s*agreement,\s*\{\s*withLog:\s*false\s*\}\)/);
+    // ⚠️ ФУНКЦИОНАЛЬНОЕ ОБНОВЛЕНИЕ, как у C11: без него `keepKnownAnchor`
+    // получал бы не то `prev`, ради которого написан, и правило
+    // «восстановленное не затирает известное» умерло бы при зелёном H7.
+    expect(SELF, 'восстановлению отдана прямая запись вместо слияния')
+      .toMatch(/applyAnchor:\s*\(fn\)\s*=>\s*setAnchor\(fn\)/);
   });
 });
 

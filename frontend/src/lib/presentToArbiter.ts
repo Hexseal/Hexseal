@@ -12,7 +12,7 @@
  * доказательство, а выглядеть замазанное будет как обычное. Контейнер уходит
  * на склад ровно тем, что вернула сборка.
  */
-import type { PublicClient } from 'viem';
+import { keccak256, type Hex, type PublicClient } from 'viem';
 import type { ChatSession } from './chatSession';
 import type { ChatKeyAttestation } from './chatKeyAttestation';
 import type { PeerChatKeys } from './chatDirectoryTypes';
@@ -25,8 +25,9 @@ import {
 // байты печати» ровно один, и он в Задаче 5 (`readDisputeArbiterKey` отдаёт
 // готовые `boxKeyBytes`). Импорт вернул бы этому переходу второе место.
 import {
-  buildPresentation, toPeerBoxKeyBytes,
+  buildPresentation, canonicalPresentationBytes, toPeerBoxKeyBytes,
   type ArbiterBoxKeyBytes, type BuildFailure, type PresentationContainer,
+  type UnsignedPresentation,
 } from './presentation';
 import { presentationWireBytes, sealPresentation, type FitVerdict } from './presentationBag';
 import {
@@ -576,13 +577,31 @@ export interface SentBagRecord { key: string; uploadedAt: number }
 export function lastSentBag(
   drafts: readonly PresentationDraft[], dealId: string,
 ): SentBagRecord | null {
+  const d = lastSentDraft(drafts, dealId);
+  // Оба поля проверены отбором внутри `lastSentDraft` — здесь только пересказ.
+  return d ? { key: d.bagKey as string, uploadedAt: d.sentAt as number } : null;
+}
+
+/**
+ * Тот же самый черновик, но ЦЕЛИКОМ — с контейнером.
+ *
+ * ⚠️ ХОЗЯИН ОТБОРА «какой черновик считается последним отправленным» ОДИН, И ОН
+ * ЗДЕСЬ. `lastSentBag` пересказывает отсюда два поля, а Задача 7 берёт из того
+ * же черновика контейнер, чтобы пересчитать отпечаток и спросить у цепи,
+ * отмечено ли предъявление (`presentationAnchor.ts`). Заведи второй отбор — на
+ * перезагруженной вкладке сверялся бы ДРУГОЙ мешок, чем тот, про который
+ * экран говорит «положено в ящик», и разошлось бы это молча.
+ */
+export function lastSentDraft(
+  drafts: readonly PresentationDraft[], dealId: string,
+): PresentationDraft | null {
   const deal = String(dealId).toLowerCase();
   for (const d of drafts) {
     if (d.state !== 'sent') continue;
     if (String(d.dealId).toLowerCase() !== deal) continue;
     if (typeof d.bagKey !== 'string' || d.bagKey.length === 0) continue;
     if (typeof d.sentAt !== 'number' || !Number.isFinite(d.sentAt)) continue;
-    return { key: d.bagKey, uploadedAt: d.sentAt };
+    return d;
   }
   return null;
 }
@@ -763,6 +782,34 @@ export async function tickBoxImpl(io: BoxTickIO): Promise<void> {
   io.applyBox(prev => boxStateFromList(prev, list, io.bagKey));
 }
 
+/* ─────────────────────── отпечаток предъявления ──────────────────────── */
+
+/**
+ * Тридцать два байта, которые ложатся в цепь вторым шагом.
+ *
+ * ⚠️ ТОТ ЖЕ КАНОНИЧЕСКИЙ ВИД, КОТОРЫМ ПРЕДЪЯВЛЕНИЕ ПОДПИСЫВАЕТСЯ, И В ЭТОМ ВСЯ
+ * ЗАДАЧА. `buildPresentation` подписывает ровно `canonicalPresentationBytes`
+ * (`presentation.ts:985`), арбитр в Задаче 7 сверяет отпечаток тем же видом —
+ * значит и считать его надо им, а не байтами склада (`presentationWireBytes`:
+ * тот же контейнер, но JSON, и байты у него другие). Цепь видит только 32
+ * байта и совпадения проверить не может ничем: возьми этот путь другой
+ * пре-образ или другую функцию — в цепи лежали бы такие же законные 32 байта,
+ * «сходится» не сошлось бы никогда, и узнали бы мы об этом от человека со
+ * сломанным экраном. Договор назван дословно и в контракте
+ * (`src/facets/ArbiterRegistryFacet.sol`, `recordPresentationDigest`).
+ *
+ * ⚠️ ФУНКЦИЯ ХЭША — `keccak256`, ТА ЖЕ, ЧТО В ЦЕПИ. Второго перехода
+ * «контейнер → отпечаток» не заводить: Задаче 7 брать его отсюда.
+ *
+ * ⚠️ ПОДПИСЬ В ПРЕ-ОБРАЗ НЕ ВХОДИТ (`UnsignedPresentation`), и это не наша
+ * вольность, а форма самого канонического вида: подписать собственную подпись
+ * нельзя. Сюда законно едет и целый `PresentationContainer` — лишнее поле
+ * `signature` канонический вид не читает.
+ */
+export function presentationDigest(container: UnsignedPresentation): Hex {
+  return keccak256(canonicalPresentationBytes(container));
+}
+
 /* ──────────────────────────────── отправка ───────────────────────────── */
 
 export interface SendPresentationDeps {
@@ -818,13 +865,63 @@ export interface SendPresentationDeps {
     presenter: `0x${string}`, dealId: `0x${string}`, issuedAt: number,
     bagKey: string, sentAt: number,
   ) => Promise<DraftMarkVerdict>;
+  /**
+   * ВТОРОЙ ШАГ: отпечаток в цепь.
+   *
+   * ⚠️ ЗАВИСИМОСТЬ ОБЯЗАТЕЛЬНАЯ, И ЭТО РЕШЕНИЕ, А НЕ НЕДОСМОТР. Умолчания у
+   * неё быть не может (нужен кошелёк и узел), а сделай её необязательной —
+   * компонент, забывший её отдать, молча перестал бы отмечать предъявления в
+   * цепи, и ни один замок бы не покраснел. Так расхождение ловит
+   * `npm run type-check` у нас, а не человек, который через месяц спора не
+   * может показать, что предъявлял вовремя.
+   *
+   * ⚠️ БРОСОК ЗДЕСЬ — НЕ ОТКАЗ ОТПРАВКИ. Мешок к этому времени на складе;
+   * см. договор `sendPresentation` про третий исход.
+   */
+  recordDigest: (digest: Hex) => Promise<{ txHash: string }>;
   now?: () => number;
 }
 
+/**
+ * Три исхода вместо двух — ради среднего.
+ *
+ * ⚠️ `stored-not-anchored` — ЭТО НЕ ОШИБКА И НЕ УСПЕХ. Мешок у арбитра, то
+ * есть предъявление ДЕЙСТВИТЕЛЬНО: сказать «не отправлено» значило бы соврать
+ * и подтолкнуть человека предъявлять второй раз. Но страховки нет: порядка
+ * «предъявил на блоке N — арбитр записал молчание на блоке M» цепь не покажет,
+ * и сказать «предъявлено» без оговорки значило бы пообещать доказательство,
+ * которого не легло. Отсутствующая страховка не равна тому, что ничего не
+ * произошло, — поэтому у случая своё имя, свой текст и своя кнопка.
+ */
+export type PresentStatus = 'sent' | 'stored-not-anchored' | 'error';
+
+/** Общее у двух исходов, где мешок УЖЕ на складе. */
+export interface PresentStored {
+  ok: true;
+  bagKey: string;
+  uploadedAt: number;
+  draftSaved: DraftSaveVerdict;
+  draftMarked: DraftMarkVerdict;
+  /** Отпечаток ЭТОГО мешка. Есть в обоих исходах: не лёг в цепь — не значит
+   *  «не посчитан», и повтор отметки берёт именно его, а не считает заново. */
+  digest: Hex;
+}
+
+/**
+ * ⚠️ `ok` И `status` НЕ РАСХОДЯТСЯ, ПОТОМУ ЧТО СОБИРАЮТСЯ В ТРЁХ МЕСТАХ И
+ * БОЛЬШЕ НИГДЕ: `refuse()` ниже и два `return` в конце `sendPresentation`.
+ * `ok` отвечает на грубый вопрос «уехало ли хоть что-нибудь» (его спрашивает
+ * `draftKeepNotice` и старый код), `status` — на точный, из трёх слов.
+ */
 export type PresentVerdict =
-  | { ok: true; bagKey: string; uploadedAt: number;
-      draftSaved: DraftSaveVerdict; draftMarked: DraftMarkVerdict }
-  | { ok: false; reason: PresentRefusal };
+  | (PresentStored & { status: 'sent'; anchorTx: string })
+  | (PresentStored & { status: 'stored-not-anchored' })
+  | { ok: false; status: 'error'; reason: PresentRefusal };
+
+/** Отказ — одной дверью. */
+function refuse(reason: PresentRefusal): Extract<PresentVerdict, { ok: false }> {
+  return { ok: false, status: 'error', reason };
+}
 
 /**
  * Что сказать человеку про ЗАПИСЬ НА ЭТОМ УСТРОЙСТВЕ. `null` — говорить нечего.
@@ -917,16 +1014,16 @@ export function refusalOfBoxError(err: unknown): PresentRefusal {
  */
 function changeRefusal(
   presented: PresentedTo, now: DisputeArbiterKey,
-): { ok: false; reason: PresentRefusal } | null {
+): Extract<PresentVerdict, { ok: false }> | null {
   // «Не спросили» — не «сменился», и склеивать их нельзя: человеку надо
   // повторить попытку, а не пересобирать предъявление.
-  if (now.state === 'unreadable') return { ok: false, reason: 'chain_unavailable' };
+  if (now.state === 'unreadable') return refuse('chain_unavailable');
   const signal = comparePresentedWith(presented, now);
-  if (signal) return { ok: false, reason: signal.reason };
+  if (signal) return refuse(signal.reason);
   // ⚠️ Достижимо только если Задача 5 промолчала на состоянии, где
   // предъявлять уже некому (её договор этого не допускает, T23 это и
   // сторожит). Молча отправлять в таком случае мы не будем.
-  if (now.state !== 'ready') return { ok: false, reason: 'arbiter_left' };
+  if (now.state !== 'ready') return refuse('arbiter_left');
   return null;
 }
 
@@ -956,12 +1053,19 @@ function changeRefusal(
  * отправки (не отказ вовсе — `draftKeepNotice`). Голый бросок отсюда уходил бы
  * мимо `doSend` в необработанный отказ промиса: человек посреди спора получал
  * бы молчащую кнопку вместо причины.
+ *
+ * ⚠️ И ПЯТЫЙ РОД — ВТОРОЙ ШАГ, ОТПЕЧАТОК В ЦЕПЬ. Он ПОСЛЕДНИЙ, и порядок здесь
+ * несущий (замысел 5.3): мешок — существо дела, отпечаток — страховка.
+ * Поменяй их местами — и человек, у которого узел молчит или кошелёк отказал,
+ * не предъявил бы переписку вовсе, при том что склад её принял бы. Отказ
+ * второго шага НЕ отменяет первого и отказом отправки не становится: у этого
+ * случая свой исход `stored-not-anchored`, свой текст и своя кнопка «отметить».
  */
 export async function sendPresentation(deps: SendPresentationDeps): Promise<PresentVerdict> {
-  if (deps.consent !== true) return { ok: false, reason: 'no_consent' };
+  if (deps.consent !== true) return refuse('no_consent');
 
   const box = deps.agreement.toLowerCase();
-  if (_sending.has(box)) return { ok: false, reason: 'already_sending' };
+  if (_sending.has(box)) return refuse('already_sending');
   _sending.add(box);
   try {
     // Дешёвая дверь: сменился или ушёл — не собираем вовсе.
@@ -969,7 +1073,7 @@ export async function sendPresentation(deps: SendPresentationDeps): Promise<Pres
     try {
       before = await deps.readArbiterNow();
     } catch {
-      return { ok: false, reason: 'chain_unavailable' };
+      return refuse('chain_unavailable');
     }
     const changedEarly = changeRefusal(deps.presented, before);
     if (changedEarly) return changedEarly;
@@ -985,6 +1089,7 @@ export async function sendPresentation(deps: SendPresentationDeps): Promise<Pres
     let container: PresentationContainer;
     let sealed: Uint8Array;
     let draftSaved: DraftSaveVerdict;
+    let digest: Hex;
     try {
       const built = await buildPresentation({
         dealId: deps.agreement.toLowerCase() as `0x${string}`,
@@ -1002,10 +1107,19 @@ export async function sendPresentation(deps: SendPresentationDeps): Promise<Pres
         publicClient: deps.publicClient,
         now: deps.now,
       });
-      if (!built.ok) return { ok: false, reason: built.reason };
+      if (!built.ok) return refuse(built.reason);
 
       container = built.container;
       const wireBytes = presentationWireBytes(container);
+      // ⚠️ ОТПЕЧАТОК СЧИТАЕТСЯ ЗДЕСЬ, А НЕ ПЕРЕД ЦЕПЬЮ, И ПРИЧИНА НЕ В
+      // СКОРОСТИ. `canonicalPresentationBytes` умеет бросить (негодное число в
+      // контейнере), а после успешного `put` бросок означал бы «мешок у
+      // арбитра, а отпечатка нет и посчитать его нечем» — то есть исход без
+      // числа, которое нужно кнопке «отметить». Здесь бросок ловится тем же
+      // `catch`, что сборка, и честно зовётся `internal_error`: до склада дело
+      // не дошло. Достижимо это, впрочем, едва ли: тот же вид только что
+      // подписался внутри `buildPresentation`.
+      digest = presentationDigest(container);
       // Черновик — ДО отправки. См. ⚠️ про порядок выше.
       draftSaved = await (deps.saveDraft ?? savePresentationDraft)(
         draftFromContainer(container, wireBytes),
@@ -1018,7 +1132,7 @@ export async function sendPresentation(deps: SendPresentationDeps): Promise<Pres
       sealed = await sealPresentation(container, deps.arbiterBoxKey);
     } catch (err) {
       console.error('[present] сборка/черновик/печать сломались:', err);
-      return { ok: false, reason: 'internal_error' };
+      return refuse('internal_error');
     }
 
     // ⚠️ АВТОРИТЕТНАЯ СВЕРКА — ЗДЕСЬ, между печатью и складом.
@@ -1026,7 +1140,7 @@ export async function sendPresentation(deps: SendPresentationDeps): Promise<Pres
     try {
       after = await deps.readArbiterNow();
     } catch {
-      return { ok: false, reason: 'chain_unavailable' };
+      return refuse('chain_unavailable');
     }
     const changed = changeRefusal(deps.presented, after);
     if (changed) return changed;
@@ -1042,7 +1156,7 @@ export async function sendPresentation(deps: SendPresentationDeps): Promise<Pres
       // событий у стороны и у арбитра разойдётся.
       uploadedAt = stored.uploadedAt;
     } catch (err) {
-      return { ok: false, reason: refusalOfBoxError(err) };
+      return refuse(refusalOfBoxError(err));
     }
 
     // ⚠️ ПОМЕТКА ТОЖЕ МОЖЕТ БРОСИТЬ, И ЗДЕСЬ ЭТО НЕ ОТКАЗ ОТПРАВКИ. Мешок уже
@@ -1059,8 +1173,152 @@ export async function sendPresentation(deps: SendPresentationDeps): Promise<Pres
       console.error('[present] пометка черновика сломалась (мешок УЖЕ в ящике):', err);
       draftMarked = 'disk_unavailable';
     }
-    return { ok: true, bagKey, uploadedAt, draftSaved, draftMarked };
+
+    // ⚠️ ВТОРОЙ ШАГ — ПОСЛЕ ПОМЕТКИ, И ЭТО ТОЖЕ ПОРЯДОК, А НЕ ПРИВЫЧКА.
+    // Пометка — запись на диске на миллисекунды, отпечаток — подпись в
+    // кошельке и поход к релееру на секунды. Уйди отметка вперёд — вкладка,
+    // закрытая посреди неё, потеряла бы «положено в ящик» на устройстве,
+    // хотя мешок уже уехал.
+    const stored: PresentStored = { ok: true, bagKey, uploadedAt, draftSaved, draftMarked, digest };
+    try {
+      const { txHash } = await deps.recordDigest(digest);
+      // ⚠️ ПУСТОЙ ОТВЕТ — НЕ УСПЕХ. Без номера транзакции сказать «отмечено в
+      // цепи» нечем: мы не знаем ни того, что запись прошла, ни на каком она
+      // блоке, а весь смысл отпечатка — в порядке блоков.
+      if (typeof txHash !== 'string' || txHash.length === 0) {
+        console.error('[present] цепь ответила без номера транзакции — считаем неотмеченным');
+        return { ...stored, status: 'stored-not-anchored' };
+      }
+      return { ...stored, status: 'sent', anchorTx: txHash };
+    } catch (err) {
+      // ⚠️ НЕ ОТКАЗ ОТПРАВКИ. Переписка у арбитра — сказать «не отправлено»
+      // было бы враньём с уверенным лицом и погнало бы человека предъявлять
+      // второй раз. Но и «предъявлено» без оговорки было бы враньём: страховки
+      // нет. Отсюда третье имя.
+      console.error('[present] отпечаток не лёг в цепь (мешок УЖЕ в ящике):', err);
+      return { ...stored, status: 'stored-not-anchored' };
+    }
   } finally {
     _sending.delete(box);
+  }
+}
+
+/* ─────────── третий исход на экране: слова, состояние, повтор ─────────── */
+
+/**
+ * Что сказать человеку после нажатия — ТРИ слова, а не два.
+ *
+ * ⚠️ ЭТО РЕШЕНИЕ, А НЕ УКРАШЕНИЕ, И ПОТОМУ ОНО ЗДЕСЬ, А НЕ В ОБРАБОТЧИКЕ.
+ * Оставь выбор слова внутри `doSend` — и «положено, но не отмечено» рано или
+ * поздно склеится с «предъявлено» (лишний `else`), а нажатие в этом проекте не
+ * исполняет ни один замок. Здесь у выбора есть вызывающий и число.
+ */
+export interface PresentSay { tone: 'success' | 'warn' | 'error'; key: string }
+
+export function presentSay(verdict: PresentVerdict): PresentSay {
+  if (verdict.status === 'sent') return { tone: 'success', key: 'chat.present_sent' };
+  if (verdict.status === 'stored-not-anchored') {
+    return { tone: 'warn', key: 'chat.present_not_anchored' };
+  }
+  return { tone: 'error', key: PRESENT_REFUSAL_KEYS[verdict.reason] };
+}
+
+/**
+ * Что стало с отпечатком — на экране.
+ *
+ * ⚠️ `none` — ЭТО «В ЭТОЙ ВКЛАДКЕ НИЧЕГО НЕ ПРЕДЪЯВЛЯЛИ», а не «не отмечено».
+ * Строки в этом случае нет вовсе: предполагать за человека, отмечено ли то,
+ * что он отправлял вчера с другого устройства, мы не станем — см. сомнение в
+ * отчёте Задачи 6 про перезагрузку вкладки.
+ */
+export type AnchorState =
+  | { kind: 'none' }
+  /**
+   * ⚠️ `txHash: null` — ЗАКОННЫЙ ИСХОД, И ОН ПОЯВИЛСЯ В ЗАДАЧЕ 7. Отметка
+   * восстановлена ЧТЕНИЕМ ЦЕПИ на перезагруженной вкладке: геттер отвечает
+   * «отпечаток лежит», а номер транзакции есть только в ленте, и она смотрит
+   * на сутки назад. Отпечаток старше суток — отметка есть, номера нет. Сказать
+   * в этом случае «не отмечено» было бы враньём, а подставить пустую строку —
+   * враньём про транзакцию.
+   */
+  | { kind: 'anchored'; txHash: string | null }
+  | { kind: 'missing'; digest: Hex };
+
+/**
+ * Слияние: что показывать после ОЧЕРЕДНОГО нажатия.
+ *
+ * ⚠️ ОТКАЗ ОТПРАВКИ НЕ СТИРАЕТ НЕОТМЕЧЕННОГО. Сцена обычная: мешок лёг,
+ * отпечаток не лёг, человек нажал «предъявить» ещё раз и получил отказ (арбитр
+ * сменился, склад не принял). Сбрось мы состояние в `none` — строка «в цепи не
+ * отмечено» вместе с кнопкой «отметить» исчезла бы с экрана, а неотмеченный
+ * мешок остался бы лежать у арбитра.
+ */
+export function anchorAfter(prev: AnchorState, verdict: PresentVerdict): AnchorState {
+  if (verdict.status === 'sent') return { kind: 'anchored', txHash: verdict.anchorTx };
+  if (verdict.status === 'stored-not-anchored') return { kind: 'missing', digest: verdict.digest };
+  return prev;
+}
+
+/**
+ * Пускать ли повтор отметки — и если нет, ЧТО СКАЗАТЬ ВСЛУХ.
+ *
+ * ⚠️ ПРИЕХАЛО РЕВЬЮ (круг 1, правка 2): нажатие проваливалось в тишину.
+ * Обработчик выходил на `!publicClient || !walletClient` молча — человек жал
+ * «отметить» и не получал ни строки, ни тоста, ни следа, и не мог понять,
+ * сломалось это или он промахнулся мимо кнопки. Теперь у отказа есть имя и
+ * текст, и он называет ПРИЧИНУ («кошелёк или узел не отвечают»), а не общее
+ * «не удалось»: лечение у неё своё — подключить кошелёк, а не ждать.
+ *
+ * ⚠️ `key: null` — ЗАКОННОЕ МОЛЧАНИЕ, и только одно: состояние не `missing`,
+ * то есть кнопки в разметке нет вовсе (`PresentAnchorLine`). Сюда попадают
+ * лишь повторный клик по уже отработавшей разметке и вызов из кода; говорить
+ * про это человеку нечего.
+ */
+export type AnchorRetryGate =
+  | { go: true; digest: Hex }
+  | { go: false; key: string | null };
+
+export function anchorRetryGate(
+  input: { state: AnchorState; chainReady: boolean },
+): AnchorRetryGate {
+  if (input.state.kind !== 'missing') return { go: false, key: null };
+  if (!input.chainReady) return { go: false, key: 'chat.present_anchor_no_wallet' };
+  return { go: true, digest: input.state.digest };
+}
+
+export interface AnchorRetryIO {
+  /** ⚠️ Отпечаток ТОГО САМОГО мешка, а не пересчитанный: сборка повторно не
+   *  делается, и второй контейнер (другое `issuedAt`) дал бы другие 32 байта. */
+  digest: Hex;
+  record: (digest: Hex) => Promise<{ txHash: string }>;
+  /** Жив ли ещё вызывающий (вкладку закрыли, чат переключили). */
+  alive: () => boolean;
+  applyAnchor: (next: AnchorState) => void;
+  applyBusy: (busy: boolean) => void;
+  onFailed?: (err: unknown) => void;
+}
+
+/**
+ * Повтор второго шага, вынесенный целиком. ⚠️ НЕ БРОСАЕТ.
+ *
+ * ⚠️ НЕУДАЧА ОСТАВЛЯЕТ «НЕ ОТМЕЧЕНО», А НЕ ГАСИТ СТРОКУ. Иначе человек, у
+ * которого узел молчит, нажал бы «отметить» и получил бы вместо кнопки пустое
+ * место — то есть решил бы, что всё вышло.
+ */
+export async function retryAnchorImpl(io: AnchorRetryIO): Promise<boolean> {
+  io.applyBusy(true);
+  try {
+    const { txHash } = await io.record(io.digest);
+    if (typeof txHash !== 'string' || txHash.length === 0) {
+      io.onFailed?.(new Error('цепь ответила без номера транзакции'));
+      return false;
+    }
+    if (io.alive()) io.applyAnchor({ kind: 'anchored', txHash });
+    return true;
+  } catch (err) {
+    io.onFailed?.(err);
+    return false;
+  } finally {
+    if (io.alive()) io.applyBusy(false);
   }
 }

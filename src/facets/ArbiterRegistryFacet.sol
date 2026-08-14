@@ -139,6 +139,61 @@ library ArbiterRegistryStorage {
         // закрытой.
         mapping(address => bytes32)        arbiterBoxKey;   // арбитр → открытый ключ шифрования
         mapping(address => bytes32)        arbiterSignKey;  // арбитр → открытый ключ подписи
+        // ── Момент взятия спора (4в-2 Выкатка 2, 14 августа 2026) ──
+        // Нужен для пола записи о молчании: цепь не принимает «не ответили»
+        // раньше, чем NO_RESPONSE_FLOOR от взятия. Отсчёт именно отсюда, а не
+        // от просьбы: просьба идёт вне цепи и её время арбитр мог бы подделать,
+        // а «взял спор на блоке N» — готовый факт. Он же момент, с которого
+        // сторона физически может предъявить: до него ключ арбитра неизвестен.
+        //
+        // Ключ — ПАРА (сделка, арбитр). Не «сделка → время»: иначе новый арбитр
+        // наследовал бы время старого, пол оказался бы уже пройденным, и запись
+        // о молчании прошла бы в ту же секунду, как он взял спор. Ключевание
+        // парой убирает это структурно и заодно снимает нужду в обнулении при
+        // снятии клейма — мест снятия два, кандидат на третье уже назван
+        // (`abandonClaim`, docs/OPEN-ITEMS.md п. 11), и уборку в нём пришлось бы
+        // не забыть. Наружу отдаётся якорь ТЕКУЩЕГО клеймера, см.
+        // getDisputeClaimedAt.
+        //
+        // ⚠️ Пишется при КАЖДОМ взятии этим арбитром, а не только при первом.
+        // Решение владельца 14.08.2026, отменяет более раннее «один раз
+        // навсегда». Пол должен мерить время, в течение которого стороне было
+        // КОМУ предъявлять, — то есть пока спор стоял за этим арбитром. С
+        // якорем «первое взятие навсегда» подкупленный арбитр брал спор,
+        // отпускал через минуту и возвращался через сутки: пол пройден, запись
+        // о молчании проходит немедленно, а спор почти всё это время стоял
+        // ничей и предъявлять было некому.
+        //
+        // Обратная сторона — что перевзятие сдвигает якорь вперёд — оружием не
+        // является: сдвиг вперёд только ОТКЛАДЫВАЕТ запись, то есть вредит
+        // самому арбитру. Порядок событий при этом виден не отсюда, а из
+        // событий DisputeClaimed / DisputeNoResponseRecorded: хранилище держит
+        // последнее взятие, лента — все.
+        mapping(address => mapping(address => uint256)) disputeClaimedAtBy;
+        // Запись «просил переписку, ответа нет» — секунда блока. 0 — записи нет.
+        // Ключ тот же, пара (сделка, арбитр), а вот правило записи ДРУГОЕ:
+        // пишется ОДИН раз и не стирается никогда. Стираемая или переписываемая
+        // запись означала бы, что арбитр волен переставить её время — отпустил
+        // спор, взял заново, записал заново, — и «когда именно он это утверждал»
+        // становится его выбором, а не фактом. У якоря такой свободы нет: его
+        // сдвиг возможен только вперёд и только себе во вред.
+        mapping(address => mapping(address => uint256)) disputeNoResponseAtBy;
+        // ── Отпечатки предъявлений (4в-2 Выкатка 2, 14 августа 2026) ──
+        // Сделка → список 32-байтовых хэшей канонического вида, которым сторона
+        // ПОДПИСЫВАЕТ предъявление (canonicalPresentationBytes,
+        // frontend/src/lib/presentation.ts:526).
+        //
+        // Список, а не одно значение: переписка не влезает в один мешок, и
+        // предъявлений по спору бывает сколько нужно (замысел 2.7). Ключ —
+        // сделка, а не пара (сделка, сторона): доказывается ПОРЯДОК, а порядок
+        // общий для спора, и лента должна читаться одним запросом. Кто именно
+        // положил, видно из события — в хранилище это не нужно никому.
+        //
+        // Бессмертен отпечаток, а не переписка (замысел 2.12): склад чистится,
+        // 32 байта остаются. Отсюда же то, чего здесь НЕТ и быть не должно —
+        // ни удаления, ни переписывания: запись, которую можно снять,
+        // доказывает ровно ничего.
+        mapping(address => bytes32[]) presentationDigests;
     }
 
     function data() internal pure returns (Data storage d) {
@@ -164,6 +219,14 @@ contract ArbiterRegistryFacet {
     // документация.
     uint256 private constant FINALIZE_DELAY      = 24 hours;  // окно для owner/DAO/апелляции до финализации (было 1 час — недостаточно для обычного пользователя)
 
+    // Пол записи о молчании: столько должно пройти от ВЗЯТИЯ спора, прежде чем
+    // арбитр вправе записать «просил, ответа нет». Решение владельца 14.08.2026.
+    // Совпадает с FINALIZE_DELAY намеренно: одно знакомое число вместо двух похожих.
+    //
+    // ⚠️ Это ЕДИНСТВЕННОЕ место, где число объявлено. Фронт обязан читать его
+    // через getNoResponseFloor(), а не держать копию (замысел 5.2).
+    uint256 private constant NO_RESPONSE_FLOOR = 24 hours;
+
     uint256 private constant MIN_CLEAN_STREAK_TO_REGISTER = 10;   // та же серия, что держит XP исполнителя выше 1000
     uint256 private constant MAX_ARBITER_MISTAKES         = 3;    // подряд ошибок до снятия статуса
     uint256 private constant DEMOTION_XP_RESET            = 2500; // фиксированный сброс при снятии — не вычитание
@@ -185,6 +248,22 @@ contract ArbiterRegistryFacet {
     event DisputeClaimCommitted(address indexed arbiter, bytes32 indexed commitment);
     event DisputeClaimed(address indexed agreement, address indexed arbiter);
     event DisputeReleased(address indexed agreement, address indexed prevArbiter);
+    /// Арбитр записал в цепь: просил переписку у стороны — ответа не было.
+    /// Событие несёт то же, что и хранилище, и заведено ради ленты апелляции:
+    /// хранилище показывает только запись ТЕКУЩЕГО клеймера, а по апелляции
+    /// смотрят весь ход спора, включая арбитров, которые спор уже отпустили.
+    event DisputeNoResponseRecorded(address indexed agreement, address indexed arbiter, uint256 at);
+    /// Сторона спора положила в цепь отпечаток предъявления.
+    ///
+    /// ⚠️ СОБЫТИЕ ОБЯЗАТЕЛЬНО, и не как дубль хранилища: хранилище отвечает
+    /// «сколько и какие», а спор решается вопросом «что было раньше». Номер
+    /// блока и порядок относительно DisputeNoResponseRecorded есть только у
+    /// ленты. `index` дублирует место в списке нарочно — читающий ленту не
+    /// обязан ходить в хранилище, чтобы понять, первое это предъявление или
+    /// десятое.
+    event PresentationDigestRecorded(
+        address indexed agreement, address indexed submitter, bytes32 digest, uint256 index
+    );
     event DAOActivated(address indexed by);
     event ArbiterApplied(address indexed arbiter);
     /// Ключи чата арбитра опубликованы или заменены.
@@ -283,6 +362,25 @@ contract ArbiterRegistryFacet {
     error DisputeAlreadyClaimed();
     error NotParty();
     error RewardPathRetired();
+
+    // ── Запись «просил, ответа нет» (4в-2 Выкатка 2) ──
+    error NoResponseTooEarly();
+    error NoResponseAlreadyRecorded();
+    /// Отдельно от NotTheClaimer намеренно: тот отвечает на пути вердикта, и
+    /// сторона, увидевшая его в ответ на кнопку «ответа не было», решила бы,
+    /// что дело в вердикте. Одинаковый смысл, разные экраны.
+    error NotClaimingArbiter();
+    error ClaimTimeUnknown();
+
+    // ── Отпечаток предъявления (4в-2 Выкатка 2) ──
+    /// Отдельно от NotParty намеренно, по той же причине, что NotClaimingArbiter
+    /// отдельно от NotTheClaimer: NotParty живёт на пути ОПЛАТЫ арбитра
+    /// (fundDispute), и человек, получивший её в ответ на «предъявить
+    /// переписку», пошёл бы искать проблему в деньгах. Смысл один, экраны разные.
+    error NotDisputeParty();
+    /// Нулевой отпечаток — не предъявление, а пустая запись в ленте: хэша, чей
+    /// прообраз можно показать, у нуля нет.
+    error ZeroDigest();
 
     // -------- MODIFIERS --------
 
@@ -562,6 +660,14 @@ contract ArbiterRegistryFacet {
         require(setOk, "ArbiterRegistry: setArbiter failed");
 
         d.disputeClaims[agreement] = caller;
+        // Якорь пола — при КАЖДОМ взятии, без условия «только если ноль».
+        // Условие здесь стояло и снято решением владельца 14.08.2026: оно
+        // защищало от самовреда (перевзятие откладывает запись арбитру же), а
+        // взамен открывало настоящую дыру — взять спор, отпустить через минуту,
+        // вернуться через сутки и записать молчание немедленно, хотя спор почти
+        // всё это время стоял ничей и предъявлять было некому. Подробности — у
+        // поля в ArbiterRegistryStorage.
+        d.disputeClaimedAtBy[agreement][caller] = block.timestamp;
         d.arbiterDeals[caller].push(agreement);
         d.openClaimCount[caller]++;
 
@@ -627,6 +733,12 @@ contract ArbiterRegistryFacet {
             revert DisputeWindowPassed();
         }
 
+        // Якорь взятия и запись о молчании здесь НЕ трогаются: они ключуются
+        // парой (сделка, арбитр), поэтому «новый арбитр наследует чужое время»
+        // невозможно и без уборки, а стирать запись о молчании нельзя — это
+        // отдало бы арбитру право переставить её время. Наружу оба геттера
+        // ходят через disputeClaims, поэтому сразу после этой строки они честно
+        // дают ноль.
         delete d.disputeClaims[agreement];
         if (d.openClaimCount[current] > 0) d.openClaimCount[current]--;
 
@@ -636,6 +748,90 @@ contract ArbiterRegistryFacet {
         require(ok, "ArbiterRegistry: reset arbiter failed");
 
         emit DisputeReleased(agreement, current);
+    }
+
+    /// @notice Арбитр записывает в цепь факт: просил переписку — ответа не было.
+    /// @dev Пуск только по слову арбитра, по таймеру не отлетает ничего (замысел 2.5).
+    /// Последствий нет: ни XP, ни репутации, ни сдвига вердикта (замысел 2.6) — цепь не
+    /// видит наш ящик и поверить может только слову арбитра, а навесить на непроверяемое
+    /// слово автоматику значит выдать подкупленному арбитру настоящее оружие.
+    /// Отпечаток предъявления записи НЕ мешает (замысел 2.11): жёсткий запрет дал бы
+    /// стороне щит — отправить отпечаток пустышки и стать неуязвимой.
+    function recordNoResponse(address agreement) external {
+        address caller = _msgSender();
+        ArbiterRegistryStorage.Data storage d = ArbiterRegistryStorage.data();
+
+        if (d.disputeClaims[agreement] != caller) revert NotClaimingArbiter();
+
+        uint256 claimedAt = d.disputeClaimedAtBy[agreement][caller];
+        // Ноль — спор взят ДО разреза 4в-2: цепь не знает, когда это было, и пол
+        // считать не от чего. Отказываем закрыто. Выход есть и он дешёвый:
+        // releaseDisputeClaim и взять спор заново (решение владельца 14.08.2026).
+        if (claimedAt == 0) revert ClaimTimeUnknown();
+        // Однократность проверяется РАНЬШЕ пола, и порядок здесь не косметика.
+        // С якорем, который переставляется при каждом взятии, арбитр, уже
+        // сделавший запись и перевзявший спор, упирался бы в NoResponseTooEarly:
+        // ответ, который врёт: он обещает, что через сутки получится, а через
+        // сутки получится NoResponseAlreadyRecorded. «Уже записано» — состояние
+        // окончательное и от времени не зависящее, поэтому и отвечать про него
+        // надо первым.
+        if (d.disputeNoResponseAtBy[agreement][caller] != 0) revert NoResponseAlreadyRecorded();
+        if (block.timestamp < claimedAt + NO_RESPONSE_FLOOR) revert NoResponseTooEarly();
+
+        d.disputeNoResponseAtBy[agreement][caller] = block.timestamp;
+        emit DisputeNoResponseRecorded(agreement, caller, block.timestamp);
+    }
+
+    /// @notice Сторона спора кладёт в цепь отпечаток предъявления — 32 байта.
+    /// @dev Это `keccak256` того же канонического вида, которым сторона
+    /// ПОДПИСЫВАЕТ предъявление (`canonicalPresentationBytes`,
+    /// frontend/src/lib/presentation.ts:526: длина перед каждым полем, склеек
+    /// нет). Функция хэша названа здесь дословно и не случайно: это шов, у
+    /// которого цепь видит только 32 байта и совпадение проверить не может
+    /// ничем. Возьми фронт sha256 — в цепи лежали бы такие же законные 32
+    /// байта, «сходится» не сошлось бы никогда, и узнали бы мы об этом от
+    /// человека со сломанным экраном. Смысл — не доказать содержание,
+    /// а показать ПОРЯДОК: отпечаток лёг на блоке N, запись арбитра «просил,
+    /// ответа нет» — на блоке M. Доверия к нашему серверу для этого не нужно, и
+    /// если сервер потеряет ящик, факт предъявления останется.
+    ///
+    /// Записи о молчании отпечаток НЕ мешает (замысел 2.11) — ни здесь, ни в
+    /// recordNoResponse нет ни одной строки, которая связывала бы одно с другим.
+    /// Жёсткий запрет дал бы стороне щит: цепь не знает, что лежит под хэшем,
+    /// значит неуязвимость покупалась бы отпечатком пустого файла. Кто прав,
+    /// решает арбитр, глядя на порядок, а не контракт.
+    function recordPresentationDigest(address agreement, bytes32 digest) external {
+        if (digest == bytes32(0)) revert ZeroDigest();
+
+        address caller = _msgSender();
+
+        // Стороны берём из СВОЕГО реестра, а не внешним вызовом к сделке.
+        // RegistryStorage.AgreementRecord уже держит client и executor
+        // (src/RegistryFacet.sol), и остальные функции этого фасета ходят туда
+        // же (notifyArbiterTimeout, fundDispute). Так дешевле, не заводит
+        // внешнего вызова с разбором returndata — и заодно отвечает на «а
+        // сделка вообще наша?»: у адреса, которого в реестре нет, нет ни
+        // клиента, ни исполнителя, поэтому стороной по нему не окажется никто и
+        // ленту чужой сделки не наполнит никто.
+        RegistryStorage.AgreementRecord storage rec =
+            RegistryStorage.store().agreements[agreement];
+        // ⚠️ Первая строка сегодня СРАБОТАТЬ НЕ МОЖЕТ, и написано это здесь,
+        // чтобы следующий читатель не принял её за живой замок. Записи в
+        // реестре пишутся целиком (RegistryFacet.register) и не удаляются
+        // нигде, поэтому «записи нет» означает и client == 0, и executor == 0 —
+        // а тогда вторая строка отвергает любого ненулевого вызывающего сама.
+        // Замерено снятием: убрать первую строку — 0 красных из 632; убрать обе
+        // — 3 красных. Оставлена как объявление намерения («сделка обязана быть
+        // нашей») ценой одного холодного SLOAD; если этот SLOAD когда-нибудь
+        // станет жалко, снимать надо именно её, а не вторую.
+        if (rec.agreement != agreement) revert NotDisputeParty();
+        if (caller != rec.client && caller != rec.executor) revert NotDisputeParty();
+
+        ArbiterRegistryStorage.Data storage d = ArbiterRegistryStorage.data();
+        d.presentationDigests[agreement].push(digest);
+        emit PresentationDigestRecorded(
+            agreement, caller, digest, d.presentationDigests[agreement].length - 1
+        );
     }
 
     // -------- VERDICT FLOW --------
@@ -1243,6 +1439,7 @@ contract ArbiterRegistryFacet {
         ArbiterRegistryStorage.Data storage d = ArbiterRegistryStorage.data();
         address claimedArbiter = d.disputeClaims[agreement];
         if (claimedArbiter != address(0)) {
+            // Якорь и запись о молчании не трогаются — см. releaseDisputeClaim.
             delete d.disputeClaims[agreement];
             if (d.openClaimCount[claimedArbiter] > 0) d.openClaimCount[claimedArbiter]--;
         }
@@ -1340,6 +1537,92 @@ contract ArbiterRegistryFacet {
     function isRegisteredArbiter(address addr) external view returns (bool) { return ArbiterRegistryStorage.data().isArbiter[addr]; }
     function getArbiters()      external view returns (address[] memory) { return ArbiterRegistryStorage.data().arbiterList; }
     function getDisputeClaimer(address agreement) external view returns (address) { return ArbiterRegistryStorage.data().disputeClaims[agreement]; }
+
+    /// @notice Когда ТЕКУЩИЙ клеймер взял этот спор, в секундах блока. Если он
+    /// брал его несколько раз — момент последнего взятия, от него и считается
+    /// пол. 0 — спор не взят (в том числе отпущен) или взят до разреза 4в-2.
+    ///
+    /// Подпись односоставная намеренно: спрашивающему нужен якорь того, кто
+    /// судит спор сейчас, а не история по каждому арбитру. История есть, она в
+    /// событиях DisputeClaimed/DisputeReleased.
+    function getDisputeClaimedAt(address agreement) external view returns (uint256) {
+        ArbiterRegistryStorage.Data storage d = ArbiterRegistryStorage.data();
+        return d.disputeClaimedAtBy[agreement][d.disputeClaims[agreement]];
+    }
+
+    /// @notice Когда текущий клеймер записал «просил, ответа нет». 0 — не записывал.
+    /// Ноль здесь же означает «спор ничей»: запись принадлежит арбитру, а не
+    /// сделке, и вместе с клеймом уходит из виду, не пропадая из цепи.
+    function getNoResponseAt(address agreement) external view returns (uint256) {
+        ArbiterRegistryStorage.Data storage d = ArbiterRegistryStorage.data();
+        return d.disputeNoResponseAtBy[agreement][d.disputeClaims[agreement]];
+    }
+
+    /// @notice Сколько должно пройти от взятия спора до записи о молчании.
+    /// Фронт обязан спрашивать здесь, а не держать своё число (замысел 5.2).
+    function getNoResponseFloor() external pure returns (uint256) {
+        return NO_RESPONSE_FLOOR;
+    }
+
+    /// @notice Все отпечатки предъявлений по сделке, в порядке появления.
+    /// Порядок и есть содержание ответа: спор решается тем, что легло раньше.
+    ///
+    /// Удобен и честен на обычных числах, но список целиком при большом их
+    /// количестве упирается в потолок газа на eth_call — и ломается чтение У
+    /// АРБИТРА и у второй стороны, а не у того, кто список раздул. Кому нужна
+    /// гарантия — getPresentationDigestsPage ниже. Кто именно положил каждый
+    /// отпечаток, здесь не видно: это в событии PresentationDigestRecorded, и
+    /// туда же ходят за номером блока.
+    function getPresentationDigests(address agreement) external view returns (bytes32[] memory) {
+        return ArbiterRegistryStorage.data().presentationDigests[agreement];
+    }
+
+    /// @notice Отпечатки по сделке окном: с `offset`, не больше `limit` штук.
+    /// @dev Полный getPresentationDigests честен на малых числах, но при большом
+    /// списке упирается в потолок eth_call — и ломается чтение У АРБИТРА, а не у
+    /// того, кто список раздул. Окно даёт читателю выход без апгрейда контракта.
+    ///
+    /// ⚠️ На честном запросе НЕ ревертит никогда: читатель не обязан заранее
+    /// знать длину, а узнать её он может только вторым вызовом — то есть в
+    /// другом блоке, когда длина уже другая. Реверт на «offset за концом»
+    /// означал бы, что листающий обязан выиграть гонку с пишущим. Поэтому:
+    ///   - `offset` за концом списка (и пустой список)  → пустой массив;
+    ///   - `limit == 0`                                  → пустой массив;
+    ///   - `offset + limit` больше длины                 → хвост до конца.
+    /// Пустой ответ читается однозначно: «здесь больше ничего нет», и это
+    /// условие остановки для листающего. Отличить его от «мимо» можно
+    /// getPresentationDigestCount, но обычно незачем.
+    ///
+    /// Сумма `offset + limit` не считается нигде намеренно, и это не
+    /// придирка: на checked-арифметике 0.8 наивное `offset + limit` при
+    /// `limit` вроде type(uint256).max ПАНИКУЕТ (0x11), то есть ровно ломает
+    /// обещание «на честном запросе не ревертит» — а «дай всё с этого места»
+    /// запрос честный. Замерено мутацией: наивная сумма → красный тест
+    /// test_Page_HugeLimit_IsUpToTheEnd_NotARevert с panic 0x11.
+    function getPresentationDigestsPage(address agreement, uint256 offset, uint256 limit)
+        external
+        view
+        returns (bytes32[] memory)
+    {
+        bytes32[] storage all = ArbiterRegistryStorage.data().presentationDigests[agreement];
+        uint256 len = all.length;
+        if (offset >= len) return new bytes32[](0);
+
+        uint256 available = len - offset;
+        uint256 n = limit < available ? limit : available;
+
+        bytes32[] memory page = new bytes32[](n);
+        for (uint256 i = 0; i < n; i++) {
+            page[i] = all[offset + i];
+        }
+        return page;
+    }
+
+    /// @notice Сколько отпечатков лежит по сделке. Отдельно от списка — чтобы
+    /// экран, которому нужно только «есть или нет», не тащил весь массив.
+    function getPresentationDigestCount(address agreement) external view returns (uint256) {
+        return ArbiterRegistryStorage.data().presentationDigests[agreement].length;
+    }
 
     /// Открытые половины ключей чата арбитра. Нули означают «ключей нет» —
     /// для 4в это признак «предъявлять некому», и различать «нет записи» от

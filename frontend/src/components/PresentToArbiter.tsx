@@ -39,6 +39,7 @@ import {
 import { fetchPeerChatKeys } from '@/hooks/useChatSession';
 import { peekBagPass, requestBagPass } from '@/lib/chatTransport';
 import { listDisputeBox, putDisputeBag } from '@/lib/disputeBox';
+import { recordPresentationDigestGasless } from '@/lib/relay';
 import { withWalletLock } from '@/lib/walletLock';
 import { fittingMessageCount } from '@/lib/presentationBag';
 // ⚠️ `arbiterBoxKeyBytes` не импортируется и здесь: байты печати приезжают
@@ -49,14 +50,20 @@ import { toPeerBoxKeyBytes, type ArbiterBoxKeyBytes } from '@/lib/presentation';
 // (арбитра сменили, просят предъявить заново) не существует вовсе.
 import { readPresentationDrafts, type PresentationDraft } from '@/lib/presentationDraft';
 import {
-  BOX_POLL_MS, PRESENT_REFUSAL_KEYS, canSend, countLegacyExposed, draftKeepNotice,
+  BOX_POLL_MS, PRESENT_REFUSAL_KEYS, anchorAfter, anchorRetryGate, canSend,
+  countLegacyExposed, draftKeepNotice,
   fitNotice, lastDraftOfDeal, otherAttestationsOf, pickingPrep, presentButtonVisible,
-  presentWarning, presentedFromKey, restoreMountImpl,
+  presentSay, presentWarning, presentedFromKey, restoreMountImpl, retryAnchorImpl,
   selectableMessages, selectionFromContainer, sendPresentation, shouldPollBox,
   tickBoxImpl,
-  type FitNotice, type PrepVerdict, type PresentableMessage, type SelectableMessage,
-  type SentBagState, type WarnLine,
+  type AnchorState, type FitNotice, type PrepVerdict, type PresentableMessage,
+  type SelectableMessage, type SentBagState, type WarnLine,
 } from '@/lib/presentToArbiter';
+// ⚠️ ОДНО ЧТЕНИЕ ЦЕПИ НА ОБЕ СТОРОНЫ (Задача 7): арбитр сверяет отпечаток тем
+// же `readChainAnchors`, которым сторона узнаёт, отмечено ли её предъявление.
+// Разнятся они РОВНО ОДНИМ входом — `withLog` (см. вызов ниже): порядок нужен
+// арбитру, стороне нужно слово.
+import { readChainAnchors, restoreAnchorImpl } from '@/lib/presentationAnchor';
 
 export interface PresentToArbiterProps {
   agreement: `0x${string}`;
@@ -302,6 +309,48 @@ export function PresentSentLine(props: { state: SentBagState }) {
   );
 }
 
+/**
+ * ТРЕТЬЕ СОСТОЯНИЕ: «положено, но в цепи не отмечено — отметить».
+ *
+ * ⚠️ ЭТО НИ «ОТПРАВЛЕНО», НИ «ОШИБКА», И РАДИ ЭТОГО ЗАДАЧА СУЩЕСТВУЕТ
+ * ОТДЕЛЬНО. Мешок у арбитра — предъявление действительно, и сказать «не
+ * отправлено» значило бы погнать человека предъявлять второй раз. Отпечатка в
+ * цепи нет — значит нет и страховки: порядка «предъявил на блоке N, арбитр
+ * записал молчание на блоке M» не покажет никто. Отсутствующая страховка не
+ * равна тому, что ничего не произошло, поэтому слово третье и кнопка своя.
+ *
+ * ⚠️ `none` НЕ РИСУЕТСЯ ВОВСЕ. Ни «отмечено», ни «не отмечено» про то, чего
+ * эта вкладка не отправляла, сказать нельзя честно.
+ */
+export function PresentAnchorLine(
+  props: { state: AnchorState; busy: boolean; onRetry: () => void },
+) {
+  const t = useTranslations();
+  const s = props.state;
+  if (s.kind === 'none') return null;
+  if (s.kind === 'anchored') {
+    return (
+      <span data-present-anchor="anchored" className="text-[10px] text-emerald-400/60">
+        {t('chat.present_anchored')}
+      </span>
+    );
+  }
+  return (
+    <span data-present-anchor="missing" className="text-[10px] text-amber-400/70">
+      {t('chat.present_not_anchored')}{' '}
+      <button
+        data-present-anchor-retry
+        onClick={props.onRetry}
+        disabled={props.busy}
+        className="text-[10px] text-primary hover:underline disabled:opacity-40 inline-flex items-center gap-1"
+      >
+        {props.busy && <Loader2 className="w-2.5 h-2.5 animate-spin" />}
+        {t('chat.present_anchor_retry')}
+      </button>
+    </span>
+  );
+}
+
 /* ─────────────────────────────── кнопка ─────────────────────────────── */
 
 /** Снимок, показанный человеку. ⚠️ ОДИН на предъявление: и в предупреждении,
@@ -333,6 +382,17 @@ export function PresentToArbiter({ agreement, peer, messages, session }: Present
   const [sent, setSent] = useState<{ key: string } | null>(null);
   const [boxState, setBoxState] = useState<SentBagState>({ kind: 'unknown' });
   const [change, setChange] = useState<ArbiterChangeSignal | null>(null);
+  /** Второй шаг: лёг ли отпечаток в цепь. ⚠️ Живёт в этой вкладке и только в
+   *  ней — см. сомнение отчёта про перезагрузку. */
+  const [anchor, setAnchor] = useState<AnchorState>({ kind: 'none' });
+  const [anchorBusy, setAnchorBusy] = useState(false);
+  /** Жив ли ещё компонент: повтор отметки — поход в кошелёк и к релееру на
+   *  секунды, вкладку за это время закрывают. */
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; };
+  }, []);
   /** Кому предъявляли/собирались предъявить — для слежения. */
   const presentedRef = useRef<PresentedTo | null>(null);
   /**
@@ -582,9 +642,24 @@ export function PresentToArbiter({ agreement, peer, messages, session }: Present
           address.toLowerCase() as `0x${string}`,
         )).pass),
         put: (pass, box, sealed, sealedFor) => putDisputeBag(pass, box, sealed, sealedFor),
+        // ⚠️ ВТОРОЙ ШАГ, И ОН ГЕЙСЛЕСС, КАК ВСЁ ОСТАЛЬНОЕ. Отпечаток кладёт
+        // САМА СТОРОНА (контракт берёт `_msgSender()` и сверяет его с
+        // реестром), поэтому подписывает человек, а газ платит релеер.
+        recordDigest: (digest) =>
+          recordPresentationDigestGasless(walletClient, publicClient, agreement, digest),
       });
+      // ⚠️ СЛОВО ВЫБИРАЕТ `presentSay`, А НЕ `else` ЗДЕСЬ: их три, и среднее
+      // («переписка у арбитра, в цепи не отмечено») обязано отличаться от
+      // обоих крайних.
+      const say = presentSay(verdict);
+      const line = t(say.key as Parameters<typeof t>[0]);
+      if (say.tone === 'error') toast.error(line);
+      else if (say.tone === 'warn') toast(line);
+      else toast.success(line);
+      // ⚠️ Состояние отпечатка сливается ДО раннего выхода: отказ отправки не
+      // отменяет того, что прошлый мешок лежит неотмеченным (`anchorAfter`).
+      setAnchor(prev => anchorAfter(prev, verdict));
       if (!verdict.ok) {
-        toast.error(t(PRESENT_REFUSAL_KEYS[verdict.reason] as Parameters<typeof t>[0]));
         // Сменился арбитр или ключ — снимок мёртв, согласие спрашивается заново.
         if (verdict.reason === 'arbiter_changed' || verdict.reason === 'key_changed'
           || verdict.reason === 'arbiter_left') {
@@ -598,7 +673,6 @@ export function PresentToArbiter({ agreement, peer, messages, session }: Present
       setDraft(null);
       setStage('idle');
       setConsent(false);   // следующее предъявление спросит заново
-      toast.success(t('chat.present_sent'));
       // ⚠️ ЗАПИСЬ НА УСТРОЙСТВЕ МОГЛА НЕ ЛЕЧЬ, и человек об этом узнаёт
       // (ревью, круг 1, I-4). Мешок при этом в ящике — отправка удалась;
       // не удалась память вкладки, и последствие у неё заметное.
@@ -608,6 +682,46 @@ export function PresentToArbiter({ agreement, peer, messages, session }: Present
       setBusy(false);
     }
   }, [address, agreement, consent, peer, publicClient, selected, session, snap, t, walletClient]);
+
+  /**
+   * «ОТМЕТИТЬ» — ПОВТОР ТОЛЬКО ВТОРОГО ШАГА.
+   *
+   * ⚠️ ПЕРЕПИСКА ЗАНОВО НЕ СОБИРАЕТСЯ И НА СКЛАД НЕ ЕДЕТ. В цепь уходит ТОТ ЖЕ
+   * отпечаток того же мешка (`anchor.digest`): пересборка дала бы другое
+   * `issuedAt`, то есть другие 32 байта, и у арбитра не сошлось бы с тем, что
+   * он уже забрал. Кошелёк при этом будится: подпись мета-транзакции —
+   * человеческое действие, и оно здесь ровно по нажатию.
+   *
+   * ⚠️ И НАЖАТИЕ НЕ ПРОВАЛИВАЕТСЯ В ТИШИНУ (ревью, круг 1, правка 2). Прежде
+   * при отсутствии кошелька или узла обработчик выходил молча: ни строки, ни
+   * тоста. Теперь решает `anchorRetryGate`, и у отказа есть текст.
+   */
+  const retryAnchor = useCallback(() => {
+    const gate = anchorRetryGate({
+      state: anchor, chainReady: Boolean(publicClient && walletClient),
+    });
+    if (!gate.go) {
+      if (gate.key) toast.error(t(gate.key as Parameters<typeof t>[0]));
+      return;
+    }
+    // ⚠️ ВЕТКА ДЛЯ ТИПОВ, А НЕ ВТОРОЕ ПРАВИЛО: `gate.go` уже означает, что оба
+    // клиента есть (`chainReady`). Тихого выхода здесь больше нет.
+    if (!publicClient || !walletClient) return;
+    void retryAnchorImpl({
+      digest: gate.digest,
+      record: (digest) =>
+        recordPresentationDigestGasless(walletClient, publicClient, agreement, digest),
+      alive: () => mounted.current,
+      applyAnchor: setAnchor,
+      applyBusy: setAnchorBusy,
+      // ⚠️ Неудача НЕ гасит строку: состояние остаётся `missing`, кнопка
+      // остаётся на месте, а человек узнаёт словом, а не пустотой.
+      onFailed: (e) => {
+        console.warn('[present] повтор отметки в цепи не удался:', e);
+        toast.error(t('chat.present_anchor_failed'));
+      },
+    });
+  }, [agreement, anchor, publicClient, t, walletClient]);
 
   const visible = presentButtonVisible({ arbiter: arbiterNow, isParty });
 
@@ -679,6 +793,51 @@ export function PresentToArbiter({ agreement, peer, messages, session }: Present
   }, [address, agreement]);
 
   /**
+   * ОТМЕЧЕНО ЛИ В ЦЕПИ — СПРАШИВАЕТСЯ У ЦЕПИ, А НЕ ВСПОМИНАЕТСЯ.
+   *
+   * ⚠️ ЭТО ПРО ОБСТОЯТЕЛЬСТВА, А НЕ ПРО ЛОГИКУ, И ЭТО СОМНЕНИЕ №1 ОТЧЁТА
+   * ЗАДАЧИ 6. `AnchorState` жил в памяти вкладки: человек, положивший мешок и
+   * НЕ отметивший отпечаток, закрывал вкладку — и возвращался к экрану без
+   * строки «в цепи не отмечено» и без кнопки «отметить». Мешок у арбитра,
+   * страховки нет, узнать неоткуда. Четвёртый вопрос про обстоятельства («если
+   * сломается — узнает ли?») отвечался «нет».
+   *
+   * ⚠️ ПУТЬ ТОТ ЖЕ, ЧТО У АРБИТРА: `readChainAnchors` одна на обоих
+   * (`presentationAnchor.ts`). Двух мест, читающих цепь, здесь быть не может —
+   * они разошлись бы молча, и сторона видела бы «отмечено» там, где арбитр
+   * видит «не сходится».
+   *
+   * ⚠️ НО ВОПРОС РАЗНЫЙ, И ПОЭТОМУ `withLog: false`. Арбитру нужен ПОРЯДОК —
+   * «отпечаток на блоке N, запись о молчании на блоке M», — а номера блока не
+   * отдаёт ни один геттер, только лента. Стороне нужно одно слово: отмечено её
+   * предъявление или нет. Это сравнение со списком геттера, один `eth_call`;
+   * лента же — 43 200 блоков кусками по 3 600, ДВЕНАДЦАТЬ параллельных
+   * `eth_getLogs` на каждое открытие чата по спорной сделке. Купить на них
+   * сторона могла бы только `txHash`, а он не рисуется нигде
+   * (`PresentAnchorLine` знает ровно два слова).
+   *
+   * ⚠️ ЧЕСТНОЕ РАЗЛИЧЕНИЕ ЗАДАЧИ 7 ЦЕЛО: «не отмечено» и «не знаем» считаются
+   * ПО ГЕТТЕРУ (`anchorBy`: `unread` — это молчание геттера либо неполный
+   * список), лента в вердикт не входит ни одной веткой.
+   *
+   * ⚠️ ЦЕПЬ НЕ ОТВЕТИЛА — МОЛЧИМ. `anchorFromChain` отдаёт `none`, строки нет
+   * вовсе: «не отмечено», сказанное из-за молчания узла, погнало бы человека
+   * платить за отметку, которая уже стоит в цепи.
+   */
+  useEffect(() => {
+    if (!address || !publicClient) return;
+    let alive = true;
+    void restoreAnchorImpl({
+      presenter: address.toLowerCase() as `0x${string}`,
+      agreement,
+      alive: () => alive,
+      applyAnchor: (fn) => setAnchor(fn),
+      readAnchors: () => readChainAnchors(publicClient, agreement, { withLog: false }),
+    });
+    return () => { alive = false; };
+  }, [address, agreement, publicClient]);
+
+  /**
    * «ЗАБРАЛИ» + ВРЕМЯ — из описи, по такту.
    *
    * ⚠️ КОШЕЛЁК НЕ БУДИМ: пропуск берётся из кэша (`peekBagPass`). Нет
@@ -729,6 +888,7 @@ export function PresentToArbiter({ agreement, peer, messages, session }: Present
         <span className="hidden sm:inline">{t('chat.present_btn')}</span>
       </button>
       {sent !== null && <PresentSentLine state={boxState} />}
+      <PresentAnchorLine state={anchor} busy={anchorBusy} onRetry={retryAnchor} />
       <PresentChangeNotice signal={change} />
       <PresentPickerModal
         open={stage === 'picking'}

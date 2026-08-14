@@ -18,7 +18,7 @@ import {
   type Address,
   type Hex,
 } from 'viem';
-import { DIAMOND_ABI, CONTRACTS } from '@/config/contracts';
+import { ARBITER_REGISTRY_ABI, DIAMOND_ABI, CONTRACTS } from '@/config/contracts';
 import { CHAIN_ID } from '@/config/constants';
 import type { BoxKey, SignKey } from '@/lib/arbiterChatKey';
 import {
@@ -1451,6 +1451,125 @@ export async function setArbiterChatKeyGasless(
       // args в writeContract().
       const gas = await callGasLimit(publicClient, userAddress, DIAMOND, calldata, 'setArbiterChatKey');
       const txHash = await walletClient.sendTransaction({ account, to: DIAMOND, data: calldata, gas, chain: walletClient.chain });
+      await assertFallbackMined(publicClient, txHash);
+      return { txHash, fallbackUsed: true };
+    }
+  } finally {
+    releaseLock();
+  }
+}
+
+// ─── recordPresentationDigestGasless ─────────────────────────────────────────
+
+/**
+ * Сторона спора кладёт в цепь отпечаток предъявления — 32 байта (4в-2,
+ * Выкатка 2, Задача 6).
+ *
+ * ⚠️ ВТОРОЙ ШАГ ПРЕДЪЯВЛЕНИЯ, А НЕ САМОСТОЯТЕЛЬНОЕ ДЕЙСТВИЕ. Первым идёт мешок
+ * на склад, и он существо дела; здесь — страховка: отпечаток лёг на блоке N,
+ * запись арбитра «просил, ответа нет» — на блоке M, и кто разбирает апелляцию,
+ * видит порядок. Отказ этого вызова предъявления НЕ отменяет
+ * (`sendPresentation` отвечает на него исходом `stored-not-anchored`).
+ *
+ * ⚠️ ГЕЙСЛЕСС ОБЯЗАТЕЛЬНО, И ЭТО НЕ УДОБСТВО. Контракт берёт отправителя через
+ * `_msgSender()` и сверяет его со сторонами сделки из своего реестра
+ * (`ArbiterRegistryFacet.recordPresentationDigest`): подписывает человек, газ
+ * платит релеер. Прямая транзакция остаётся фолбэком на случай молчащего
+ * релеера — ТОЙ ЖЕ калдатой, а не пересобранными args.
+ *
+ * ⚠️ ABI БЕРЁТСЯ ИЗ `ARBITER_REGISTRY_ABI`, а не объявляется здесь своей
+ * `parseAbi`-строкой: у подписи один хозяин, и он уже сверяется с исходником
+ * фасета замком `lib/presentationDigestAbi.test.ts`. Вторая копия разошлась бы
+ * с контрактом молча — ровно так, как это уже случалось с записью заявки.
+ */
+export async function recordPresentationDigestGasless(
+  walletClient: WalletClient,
+  publicClient: PublicClient,
+  agreementAddress: Address,
+  digest: Hex,
+): Promise<{ txHash: string; fallbackUsed?: boolean }> {
+  const userAddress = walletClient.account?.address;
+  if (!userAddress) throw new Error('Wallet not connected');
+  const releaseLock = await acquireWalletLock(userAddress);
+  try {
+    const calldata = encodeFunctionData({
+      abi: ARBITER_REGISTRY_ABI as Abi,
+      functionName: 'recordPresentationDigest',
+      args: [agreementAddress, digest],
+    }) as Hex;
+    try {
+      const result = await _sendForwardRequest(
+        walletClient, publicClient, calldata, 'recordPresentationDigest', DIAMOND,
+      );
+      return { txHash: result.txHash };
+    } catch (err) {
+      if (!isRelayDown(err)) throw err;
+      const account = walletClient.account;
+      if (!account) throw new Error('Wallet not connected');
+      const gas = await callGasLimit(
+        publicClient, userAddress, DIAMOND, calldata, 'recordPresentationDigest');
+      const txHash = await walletClient.sendTransaction({
+        account, to: DIAMOND, data: calldata, gas, chain: walletClient.chain,
+      });
+      await assertFallbackMined(publicClient, txHash);
+      return { txHash, fallbackUsed: true };
+    }
+  } finally {
+    releaseLock();
+  }
+}
+
+// ─── recordNoResponseGasless ─────────────────────────────────────────────────
+
+/**
+ * Арбитр кладёт в цепь факт: просил переписку — ответа не было (4в-2, Выкатка 2,
+ * Задача 8).
+ *
+ * ⚠️ ФАКТ СО ВРЕМЕНЕМ, А НЕ НАКАЗАНИЕ. Запись не влечёт ничего — ни XP, ни
+ * репутации, ни сдвига вердикта (замысел 2.6): цепь не видит нашего ящика и
+ * поверить может только слову арбитра, а навесить на непроверяемое слово
+ * автоматику значило бы выдать подкупленному арбитру настоящее оружие. Поэтому
+ * здесь нет и не будет второго вызова «заодно».
+ *
+ * ⚠️ ГЕЙСЛЕСС ОБЯЗАТЕЛЬНО, И ЭТО НЕ УДОБСТВО. Контракт берёт отправителя через
+ * `_msgSender()` и сверяет его с `disputeClaims[agreement]`
+ * (`ArbiterRegistryFacet.recordNoResponse`): подписывает арбитр, газ платит
+ * релеер. Прямая транзакция остаётся фолбэком на молчащий релеер — ТОЙ ЖЕ
+ * калдатой, а не пересобранными заново args.
+ *
+ * ⚠️ ABI БЕРЁТСЯ ИЗ `ARBITER_REGISTRY_ABI`, а не объявляется здесь своей
+ * `parseAbi`-строкой: у подписи один хозяин, и он уже сверяется с исходником
+ * фасета замком `lib/presentationDigestAbi.test.ts`. Вторая копия разошлась бы с
+ * контрактом молча — ровно так, как это уже случалось с записью заявки.
+ */
+export async function recordNoResponseGasless(
+  walletClient: WalletClient,
+  publicClient: PublicClient,
+  agreementAddress: Address,
+): Promise<{ txHash: string; fallbackUsed?: boolean }> {
+  const userAddress = walletClient.account?.address;
+  if (!userAddress) throw new Error('Wallet not connected');
+  const releaseLock = await acquireWalletLock(userAddress);
+  try {
+    const calldata = encodeFunctionData({
+      abi: ARBITER_REGISTRY_ABI as Abi,
+      functionName: 'recordNoResponse',
+      args: [agreementAddress],
+    }) as Hex;
+    try {
+      const result = await _sendForwardRequest(
+        walletClient, publicClient, calldata, 'recordNoResponse', DIAMOND,
+      );
+      return { txHash: result.txHash };
+    } catch (err) {
+      if (!isRelayDown(err)) throw err;
+      const account = walletClient.account;
+      if (!account) throw new Error('Wallet not connected');
+      const gas = await callGasLimit(
+        publicClient, userAddress, DIAMOND, calldata, 'recordNoResponse');
+      const txHash = await walletClient.sendTransaction({
+        account, to: DIAMOND, data: calldata, gas, chain: walletClient.chain,
+      });
       await assertFallbackMined(publicClient, txHash);
       return { txHash, fallbackUsed: true };
     }

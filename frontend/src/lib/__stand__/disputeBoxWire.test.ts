@@ -246,6 +246,8 @@ async function sendThroughButton(): Promise<{ key: string; uploadedAt: number; s
     expect(await seedArchive(alice, bob, [...mine, ...theirs])).toBe(3);
 
     const boxKey = toBoxKey(hex32(judyKeypair.publicKey));
+    /** Отпечатки, ушедшие вторым шагом. Пусто — значит шага не было. */
+    const anchored: string[] = [];
     const verdict = await sendPresentation({
       agreement: chainState.agreement,
       presenter: alice.address.toLowerCase() as `0x${string}`,
@@ -277,9 +279,17 @@ async function sendThroughButton(): Promise<{ key: string; uploadedAt: number; s
       }),
       getPass: async () => presenterPass,
       put: (pass, box, sealed, sealedFor) => putDisputeBag(pass, box, sealed, sealedFor),
+      // ⚠️ ЧЕТВЁРТЫЙ ПОДМЕНЁННЫЙ КОНЕЦ — ЦЕПЬ ВТОРОГО ШАГА (Выкатка 2, Задача
+      // 6). Узел на стенде поддельный и записи не принимает вовсе; здесь важно
+      // другое — что мешок уезжает ПЕРВЫМ и что отказ цепи предъявления не
+      // отменяет. То, чем именно считается отпечаток, меряет `T45`.
+      recordDigest: async (digest) => { anchored.push(digest); return { txHash: `0x${'ab'.repeat(32)}` }; },
     });
     expect(verdict.ok, `боевой путь отказал: ${verdict.ok ? '' : verdict.reason}`).toBe(true);
     if (!verdict.ok) throw new Error(verdict.reason);
+    expect(anchored.length, 'второй шаг на боевом пути не случился ни разу').toBe(1);
+    expect(anchored[0], 'в цепь ушли не 32 байта').toMatch(/^0x[0-9a-f]{64}$/);
+    expect(verdict.status, 'оба шага прошли, а слово не «предъявлено»').toBe('sent');
     const drafts = await readPresentationDrafts(alice.address.toLowerCase() as `0x${string}`);
     expect(drafts.length, 'черновик не лёг').toBe(1);
     expect(drafts[0].state, 'черновик не помечен отправленным').toBe('sent');
