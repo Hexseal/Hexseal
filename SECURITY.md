@@ -89,7 +89,17 @@ We will credit you in the fix commit unless you ask us not to.
   availability limits **that are already listed in `docs/OPEN-ITEMS.md`**. New ones that
   are not listed there are in scope.
 - Vendored third-party code under `lib/` — report those upstream to OpenZeppelin or
-  Foundry.
+  Foundry. That directory holds 924 files we did not write and do not call from our own
+  code.
+
+  **The recurring false positive, named so you can skip it.** `lib/forge-std/src/StdChains.sol`
+  hardcodes default RPC URLs that contain what look like API keys — an Infura key on
+  Sepolia, an Alchemy key on mainnet. They ship inside Foundry's standard library and are
+  present in every Foundry project in existence. They are not ours and there is nothing
+  for us to rotate. Measured on this repository: those strings appear in **4 files, all
+  under `lib/`, and in 0 files under `src/`, `frontend/` or `relayer/`**. Credential
+  scanners flag them regularly; a report about them will be closed with this paragraph.
+
 - Findings produced by an automated scanner and submitted without a reproduction. A
   Slither or npm-audit dump with no analysis will be closed.
 - Anything about a mainnet deployment. There isn't one.
