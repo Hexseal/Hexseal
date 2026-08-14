@@ -577,13 +577,31 @@ export interface SentBagRecord { key: string; uploadedAt: number }
 export function lastSentBag(
   drafts: readonly PresentationDraft[], dealId: string,
 ): SentBagRecord | null {
+  const d = lastSentDraft(drafts, dealId);
+  // Оба поля проверены отбором внутри `lastSentDraft` — здесь только пересказ.
+  return d ? { key: d.bagKey as string, uploadedAt: d.sentAt as number } : null;
+}
+
+/**
+ * Тот же самый черновик, но ЦЕЛИКОМ — с контейнером.
+ *
+ * ⚠️ ХОЗЯИН ОТБОРА «какой черновик считается последним отправленным» ОДИН, И ОН
+ * ЗДЕСЬ. `lastSentBag` пересказывает отсюда два поля, а Задача 7 берёт из того
+ * же черновика контейнер, чтобы пересчитать отпечаток и спросить у цепи,
+ * отмечено ли предъявление (`presentationAnchor.ts`). Заведи второй отбор — на
+ * перезагруженной вкладке сверялся бы ДРУГОЙ мешок, чем тот, про который
+ * экран говорит «положено в ящик», и разошлось бы это молча.
+ */
+export function lastSentDraft(
+  drafts: readonly PresentationDraft[], dealId: string,
+): PresentationDraft | null {
   const deal = String(dealId).toLowerCase();
   for (const d of drafts) {
     if (d.state !== 'sent') continue;
     if (String(d.dealId).toLowerCase() !== deal) continue;
     if (typeof d.bagKey !== 'string' || d.bagKey.length === 0) continue;
     if (typeof d.sentAt !== 'number' || !Number.isFinite(d.sentAt)) continue;
-    return { key: d.bagKey, uploadedAt: d.sentAt };
+    return d;
   }
   return null;
 }
@@ -1215,7 +1233,15 @@ export function presentSay(verdict: PresentVerdict): PresentSay {
  */
 export type AnchorState =
   | { kind: 'none' }
-  | { kind: 'anchored'; txHash: string }
+  /**
+   * ⚠️ `txHash: null` — ЗАКОННЫЙ ИСХОД, И ОН ПОЯВИЛСЯ В ЗАДАЧЕ 7. Отметка
+   * восстановлена ЧТЕНИЕМ ЦЕПИ на перезагруженной вкладке: геттер отвечает
+   * «отпечаток лежит», а номер транзакции есть только в ленте, и она смотрит
+   * на сутки назад. Отпечаток старше суток — отметка есть, номера нет. Сказать
+   * в этом случае «не отмечено» было бы враньём, а подставить пустую строку —
+   * враньём про транзакцию.
+   */
+  | { kind: 'anchored'; txHash: string | null }
   | { kind: 'missing'; digest: Hex };
 
 /**

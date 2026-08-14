@@ -32,6 +32,14 @@ import { findPresentations, PRESENTATION_MAX_BYTES, type SkipReason } from '@/li
 import { readPresentation, type PresentationView } from '@/lib/presentationRead';
 import type { DisputeBoxBag, DisputeBoxList } from '@/lib/disputeBox';
 import type { ArbiterTurn } from '@/lib/arbiterTurn';
+// ⚠️ ОТПЕЧАТОК СЧИТАЕТСЯ И СВЕРЯЕТСЯ НЕ ЗДЕСЬ. Переход «контейнер → 32 байта»
+// один на весь фронт (`presentationDigest`, Задача 6), а чтение цепи и сверка —
+// `presentationAnchor.ts`, одни на арбитра и на предъявлявшую сторону.
+import {
+  containerAnchor, digestOfContainer, readChainAnchors,
+  type BagAnchor, type ChainAnchors,
+} from '@/lib/presentationAnchor';
+import type { Hex } from 'viem';
 
 export type CountField = 'read' | 'hidden' | 'notPrepared';
 export type BoxStop = 'read_all' | 'read_budget' | 'transport' | 'not_mine';
@@ -40,6 +48,11 @@ export type DeviceKeyVerdict = 'agree' | 'differs' | 'chain_missing' | 'chain_un
 
 const same = (a: unknown, b: unknown): boolean =>
   typeof a === 'string' && typeof b === 'string' && a.toLowerCase() === b.toLowerCase();
+
+/** Отпечаток, которого в цепи не бывает: `recordPresentationDigest` отвергает
+ *  нулевой (`ZeroDigest`). Ставится мешку, у которого канонический вид не
+ *  считается вовсе — сойтись такому не с чем. */
+const ZERO_DIGEST = ('0x' + '00'.repeat(32)) as Hex;
 
 /* ─────────────────────────── тип-замки формы ──────────────────────────── */
 
@@ -244,6 +257,19 @@ export interface PresentedBag {
   countsDisagree: readonly CountField[];
   /** `null` — сравнивать не с чем (подпись не сошлась). */
   uploaderIsPresenter: boolean | null;
+  /**
+   * Отпечаток ТОГО, ЧТО ЛЕЖИТ В ЯЩИКЕ, — посчитан нами по байтам мешка.
+   * ⚠️ Считается ЕДИНСТВЕННЫМ переходом (`presentationDigest`): возьми этот
+   * путь другой пре-образ, «сходится» не сошлось бы никогда, и узнали бы мы об
+   * этом от арбитра со сломанным экраном, а не от замка.
+   */
+  digest: Hex;
+  /**
+   * Сошёлся ли он с цепью. ⚠️ ОТПЕЧАТОК, КОТОРЫЙ НИКТО НЕ СВЕРЯЕТ, — УКРАШЕНИЕ
+   * (замысел 5.4): поле объявлено, лежит, выглядит осмысленно и не проверяется
+   * ничем. Здесь у него есть читатель и вердикт.
+   */
+  anchor: BagAnchor;
   view: PresentationView;
   messages: PresentedMessageView[];
 }
@@ -297,9 +323,25 @@ export interface DisputeBoxReading {
    *  Задачи 1, круг 2). `false` обязано подавлять «вам ничего не
    *  предъявили» ДАЖЕ когда `notOurs` и `sealedForOthersDeclared` оба нули. */
   indexTrusted: boolean;
+  /**
+   * Что цепь знает про отпечатки этой сделки. `null` — прочитать не удалось;
+   * тогда все вердикты мешков честно `unread`, а не «не отмечено».
+   *
+   * ⚠️ ЛЕЖИТ ЦЕЛИКОМ, А НЕ ТРЕМЯ ВЫЖИМКАМИ. Здесь же приезжают записи арбитров
+   * «просил, ответа нет» с номерами блоков — без них порядок («предъявление на
+   * блоке N, запись на блоке M») показать нечем, а порядок и есть предмет.
+   */
+  anchors: ChainAnchors | null;
   skipped: { bagKey: string; why: BagSkip }[];
   presentations: PresentedBag[];
 }
+
+/**
+ * Откуда берётся ответ цепи про отпечатки. Отдельной зависимостью, чтобы стенд
+ * мог подать сцену без узла; в бою подставляется `readChainAnchors` — та же
+ * самая, которой пользуется предъявлявшая сторона.
+ */
+export type ChainAnchorsSource = () => Promise<ChainAnchors>;
 
 export interface DisputeBoxSource {
   list(): Promise<DisputeBoxList>;
@@ -391,8 +433,13 @@ export async function readDisputeBox(input: {
   agreement: `0x${string}`;
   me: `0x${string}`;
   publicClient?: PublicClient;
+  /** Умолчание — боевое чтение цепи, когда узел есть. Нет узла и нет
+   *  подставленного источника — вердикты честно `unread`. */
+  anchors?: ChainAnchorsSource;
 }): Promise<DisputeBoxReading> {
   const { source, own, agreement, me, publicClient } = input;
+  const anchorsSource: ChainAnchorsSource | null = input.anchors
+    ?? (publicClient ? () => readChainAnchors(publicClient, agreement) : null);
   const list = await source.list();
   const bags = Array.isArray(list.bags) ? list.bags : [];
   // Опись снята ДО единого забора — значит непустой `fetchedAt` в ней это
@@ -438,9 +485,19 @@ export async function readDisputeBox(input: {
   // утверждать про цепь.
   if (!same(list.arbiter, me)) {
     return {
-      ...head, mine: false, tried: 0, stop: 'not_mine',
+      ...head, mine: false, tried: 0, stop: 'not_mine', anchors: null,
       notOurs: 0, notOursFetched: 0, notParsed: 0, skipped: [], presentations: [],
     };
+  }
+
+  // ⚠️ ОТКАЗ ЦЕПИ НЕ РОНЯЕТ ЧТЕНИЕ ЯЩИКА. Мешки уже забраны или вот-вот будут,
+  // и они существо дела; отпечаток — страховка. Уронив здесь всё, мы бы вместо
+  // предъявлений показали арбитру «ящик прочитать не удалось» из-за узла,
+  // который к ящику отношения не имеет. `null` доезжает до вердикта как
+  // «не знаем» и печатается своей строкой.
+  let anchors: ChainAnchors | null = null;
+  if (anchorsSource) {
+    try { anchors = await anchorsSource(); } catch { anchors = null; }
   }
 
   const skipped: { bagKey: string; why: BagSkip }[] = [];
@@ -494,6 +551,20 @@ export async function readDisputeBox(input: {
     // неизвестен, и «заявлено стороной» назвало бы автором того, кого мы не
     // установили.
     const declared = view.container === 'ok' ? found.container.counts : null;
+    // ⚠️ ОТПЕЧАТОК СЧИТАЕТСЯ ПО ТОМУ, ЧТО ПРИЕХАЛО, И ВСЕГДА, а не только при
+    // сошедшейся подписи. Именно расхождение и есть новость: контейнер,
+    // пересобранный задним числом, подписан честно СВОИМ ключом — подпись
+    // сойдётся, а 32 байта, легшие в цепь на своём блоке, уже другие.
+    // ⚠️ ВЕРДИКТ БЕРЁТСЯ ПО КОНТЕЙНЕРУ (`containerAnchor` → `verifyDigest`), а
+    // не по числу, посчитанному строкой ниже: сверять посчитанное с самим
+    // собой значит не проверять ничего.
+    //
+    // Отпечаток для ПОКАЗА считается отдельно и умеет не посчитаться вовсе
+    // (негодное число в контейнере роняет канонический вид). Ноль вместо него
+    // не лжёт: контракт нулевой отпечаток не принимает (`ZeroDigest`), значит
+    // в цепи его нет и быть не может.
+    const anchor: BagAnchor = containerAnchor(found.container, anchors);
+    const digest: Hex = digestOfContainer(found.container) ?? ZERO_DIGEST;
     presentations.push({
       bagKey: found.bagKey,
       uploadedBy: found.uploadedBy,
@@ -503,12 +574,17 @@ export async function readDisputeBox(input: {
       countsDisagree: countsDisagreement(declared, view.counts),
       uploaderIsPresenter:
         view.container === 'ok' && view.presenter ? same(view.presenter, found.uploadedBy) : null,
+      digest,
+      anchor,
       view,
       messages: presentedMessages(view),
     });
   }
 
-  return { ...head, mine: true, tried, stop, notOurs, notOursFetched, notParsed, skipped, presentations };
+  return {
+    ...head, mine: true, tried, stop, anchors,
+    notOurs, notOursFetched, notParsed, skipped, presentations,
+  };
 }
 
 /* ─────────────────────── сеанс арбитра, и почём он ────────────────────── */

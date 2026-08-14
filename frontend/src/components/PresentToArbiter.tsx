@@ -59,6 +59,9 @@ import {
   type AnchorState, type FitNotice, type PrepVerdict, type PresentableMessage,
   type SelectableMessage, type SentBagState, type WarnLine,
 } from '@/lib/presentToArbiter';
+// ⚠️ ОДНО ЧТЕНИЕ ЦЕПИ НА ОБЕ СТОРОНЫ (Задача 7): арбитр сверяет отпечаток тем
+// же `readChainAnchors`, которым сторона узнаёт, отмечено ли её предъявление.
+import { readChainAnchors, restoreAnchorImpl } from '@/lib/presentationAnchor';
 
 export interface PresentToArbiterProps {
   agreement: `0x${string}`;
@@ -786,6 +789,38 @@ export function PresentToArbiter({ agreement, peer, messages, session }: Present
     });
     return () => { alive = false; };
   }, [address, agreement]);
+
+  /**
+   * ОТМЕЧЕНО ЛИ В ЦЕПИ — СПРАШИВАЕТСЯ У ЦЕПИ, А НЕ ВСПОМИНАЕТСЯ.
+   *
+   * ⚠️ ЭТО ПРО ОБСТОЯТЕЛЬСТВА, А НЕ ПРО ЛОГИКУ, И ЭТО СОМНЕНИЕ №1 ОТЧЁТА
+   * ЗАДАЧИ 6. `AnchorState` жил в памяти вкладки: человек, положивший мешок и
+   * НЕ отметивший отпечаток, закрывал вкладку — и возвращался к экрану без
+   * строки «в цепи не отмечено» и без кнопки «отметить». Мешок у арбитра,
+   * страховки нет, узнать неоткуда. Четвёртый вопрос про обстоятельства («если
+   * сломается — узнает ли?») отвечался «нет».
+   *
+   * ⚠️ ПУТЬ ТОТ ЖЕ, ЧТО У АРБИТРА: `readChainAnchors` одна на обоих
+   * (`presentationAnchor.ts`). Двух мест, читающих цепь, здесь быть не может —
+   * они разошлись бы молча, и сторона видела бы «отмечено» там, где арбитр
+   * видит «не сходится».
+   *
+   * ⚠️ ЦЕПЬ НЕ ОТВЕТИЛА — МОЛЧИМ. `anchorFromChain` отдаёт `none`, строки нет
+   * вовсе: «не отмечено», сказанное из-за молчания узла, погнало бы человека
+   * платить за отметку, которая уже стоит в цепи.
+   */
+  useEffect(() => {
+    if (!address || !publicClient) return;
+    let alive = true;
+    void restoreAnchorImpl({
+      presenter: address.toLowerCase() as `0x${string}`,
+      agreement,
+      alive: () => alive,
+      applyAnchor: (fn) => setAnchor(fn),
+      readAnchors: () => readChainAnchors(publicClient, agreement),
+    });
+    return () => { alive = false; };
+  }, [address, agreement, publicClient]);
 
   /**
    * «ЗАБРАЛИ» + ВРЕМЯ — из описи, по такту.

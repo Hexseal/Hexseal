@@ -49,6 +49,7 @@ import {
   type BoxReadRefusal, type DeviceKeyVerdict, type DisputeBoxReading,
   type PresentedBag, type PresentedMessageView,
 } from '@/lib/arbiterPresentations';
+import { anchorOrder, firstNoResponse, type NoResponseRecord } from '@/lib/presentationAnchor';
 
 /** Пока `getDetails` дела не приехал, стороны неизвестны — ссылок в чат не рисуем. */
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
@@ -176,6 +177,16 @@ export function BoxSummaryView({ reading, before, deviceKey }: {
       {reading.mine && !reading.indexTrusted && (
         <p className="text-amber-300/85">{t('arbiter.presentations_index_rebuilt')}</p>
       )}
+      {/* ⚠️ ЗАПИСЬ О МОЛЧАНИИ НАЗЫВАЕТСЯ НОМЕРОМ БЛОКА, А НЕ ФАКТОМ. Ради
+          порядка всё и затевалось: без блока сравнить «предъявили» и «записал,
+          что не ответили» нечем. Строка стоит и тогда, когда предъявлений в
+          ящике нет вовсе, — это ровно тот случай, о котором спор и пойдёт. */}
+      {firstNoResponse(reading.anchors) !== null && (
+        <p>{t('arbiter.presentations_no_response_record', {
+          block: firstNoResponse(reading.anchors)!.block.toString(),
+          count: reading.anchors ? reading.anchors.noResponse.length : 0,
+        })}</p>
+      )}
       {/* ⚠️ «Вам ничего не предъявили» — самая опасная надпись экрана: сказанная
           не вовремя, она превращает «мы не смогли открыть» в «сторона молчала»
           (§2.3 замысла запрещает это прямым текстом). Поэтому она подавляется,
@@ -266,8 +277,85 @@ function MessageRow({ m }: { m: PresentedMessageView }) {
   );
 }
 
+/**
+ * Сверка отпечатка — чистая разметка над готовым вердиктом.
+ *
+ * ⚠️ ЧЕТЫРЕ СТРОКИ, И ТРЕТЬЯ НЕ ОШИБКА. «Сходится» / «не сходится» / «в цепи не
+ * отмечено» — три состояния из задания; четвёртое, «цепь не ответила», добавлено
+ * по тому же правилу, по которому у ключа устройства четыре вердикта, а не один
+ * говорящий и три немых: «не знаем» и «не отмечено» — разные новости, и вторая,
+ * сказанная вместо первой, обвиняет сторону молчанием узла.
+ *
+ * ⚠️ ПОРЯДОК — ЭТО И ЕСТЬ ПРЕДМЕТ. Отпечаток лёг на блоке N, запись арбитра
+ * «просил, ответа нет» — на блоке M; доверия к нашему серверу для такого
+ * сравнения не нужно, а без него отпечаток остаётся украшением.
+ */
+export function BagAnchorView({ bag, noResponse }: {
+  bag: PresentedBag; noResponse: NoResponseRecord | null;
+}) {
+  const t = useTranslations();
+  const a = bag.anchor;
+  const order = anchorOrder(a.block, noResponse ? noResponse.block : null);
+  return (
+    <>
+      {a.verdict === 'match' && (a.block !== null
+        ? (
+          <p className="text-[11px] text-emerald-300/85">
+            {t('arbiter.presentation_anchor_match', { block: a.block.toString() })}
+          </p>
+        )
+        : (
+          // Отметка есть (её назвал геттер), а номера блока нет: лента смотрит
+          // на сутки назад. Сказать «не отмечено» здесь было бы враньём.
+          <p className="text-[11px] text-emerald-300/85">
+            {t('arbiter.presentation_anchor_match_no_block')}
+          </p>
+        ))}
+      {a.verdict === 'mismatch' && (
+        <p className="text-[11px] text-red-300/85 flex items-start gap-1.5">
+          <ShieldAlert className="w-3 h-3 shrink-0 mt-0.5" />
+          {t('arbiter.presentation_anchor_mismatch', { count: a.total })}
+        </p>
+      )}
+      {a.verdict === 'absent' && (
+        <p className="text-[11px] text-white/45">{t('arbiter.presentation_anchor_absent')}</p>
+      )}
+      {a.verdict === 'unread' && (
+        <p className="text-[11px] text-white/45">{t('arbiter.presentation_anchor_unread')}</p>
+      )}
+      {/* ⚠️ ДУБЛЬ НЕ ПРЯЧЕТСЯ. Строка одна (схлопнута), но число записей
+          названо: повтор «отметить» после обрыва — честное поведение, а не
+          подделка, и решать это арбитру, а не нам за него. */}
+      {a.records > 1 && (
+        <p className="text-[11px] text-white/45">
+          {t('arbiter.presentation_anchor_dupes', { count: a.records })}
+        </p>
+      )}
+      {order === 'digest_first' && noResponse && a.block !== null && (
+        <p className="text-[11px] text-amber-300/85">
+          {t('arbiter.presentation_anchor_order_digest_first',
+            { digest: a.block.toString(), record: noResponse.block.toString() })}
+        </p>
+      )}
+      {order === 'record_first' && noResponse && a.block !== null && (
+        <p className="text-[11px] text-white/45">
+          {t('arbiter.presentation_anchor_order_record_first',
+            { digest: a.block.toString(), record: noResponse.block.toString() })}
+        </p>
+      )}
+      {order === 'same_block' && a.block !== null && (
+        <p className="text-[11px] text-white/45">
+          {t('arbiter.presentation_anchor_order_same', { block: a.block.toString() })}
+        </p>
+      )}
+    </>
+  );
+}
+
 /** Одно предъявление. Чистая. */
-export function PresentationBagView({ bag }: { bag: PresentedBag }) {
+export function PresentationBagView({ bag, noResponse = null }: {
+  bag: PresentedBag; noResponse?: NoResponseRecord | null;
+}) {
   const t = useTranslations();
   return (
     <div className="rounded-[16px] border border-white/[0.08] bg-white/[0.02] p-3 space-y-2">
@@ -308,6 +396,8 @@ export function PresentationBagView({ bag }: { bag: PresentedBag }) {
           {t('arbiter.presentation_counts_disagree')}
         </p>
       )}
+
+      <BagAnchorView bag={bag} noResponse={noResponse} />
 
       <ul className="space-y-1.5">
         {bag.messages.map(m => <MessageRow key={`${m.sender}-${m.seq}`} m={m} />)}
@@ -416,7 +506,15 @@ function DisputeBoxCard({ deal, me, chainKeys, publicClient, signChatKey, getBox
         <>
           <BoxSummaryView reading={state.reading} before={state.before} deviceKey={state.deviceKey} />
           <div className="space-y-2">
-            {state.reading.presentations.map(b => <PresentationBagView key={b.bagKey} bag={b} />)}
+            {state.reading.presentations.map(b => (
+              <PresentationBagView
+                key={b.bagKey}
+                bag={b}
+                // Самая ранняя запись о молчании — с ней и сравнивается
+                // предъявление: поздние записи порядка не меняют.
+                noResponse={firstNoResponse(state.reading.anchors)}
+              />
+            ))}
           </div>
         </>
       )}
