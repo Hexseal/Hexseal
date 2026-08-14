@@ -1595,7 +1595,12 @@ const forwarder = new ethers.Contract(FORWARDER_ADDR, FORWARDER_ABI, provider);
 // step and route.ts is compiled by Next.js, so importing one from the other would
 // mean standing up a small internal package neither app currently has for the sake
 // of one lookup table. Keep the two tables in sync if either changes.
-const FORWARDER_CUSTOM_ERRORS = {
+//
+// Экспортируется ради замка test/forwarderErrorsMatchFacet.test.js: тот сверяет
+// СОСТАВ таблицы с объявлениями ошибок в src/facets/ArbiterRegistryFacet.sol.
+// Сверять по тексту app.js он мог бы и без экспорта — но тогда сторожил бы
+// строчку в файле, а не то, чем пользуется decodeForwarderRevert.
+export const FORWARDER_CUSTOM_ERRORS = {
   '0xf12ce677': 'ActivationWindowPassed',
   '0x646cf558': 'AlreadyClaimed',
   '0xb6682ad2': 'CommitmentNotFound',
@@ -1668,6 +1673,39 @@ const FORWARDER_CUSTOM_ERRORS = {
   '0xf4d678b8': 'InsufficientBalance',
   '0x32cc7236': 'NotFactory',
   '0x90b8ec18': 'TransferFailed',
+  // ── ArbiterRegistryFacet, остаток ───────────────────────────────────────────
+  // Дописано 14 августа 2026 вместе с шестью ошибками 4в-2 Выкатки 2. Таблица
+  // велась вручную и отставала: из ~54 ошибок фасета здесь лежала половина, а
+  // всё, чего в ней нет, доезжает до человека сырым хексом. Полнота теперь
+  // сторожится замком test/forwarderErrorsMatchFacet.test.js — каждая
+  // объявленная в фасете ошибка обязана быть здесь.
+  '0x30cd7471': 'NotOwner',
+  '0xabf29500': 'NotOwnerOrFeeRecipient',
+  '0x3551edda': 'NotOwnerOrChief',
+  '0xffc49e8e': 'NotOwnerOrDAO',
+  '0x0feb6fac': 'AlreadyArbiter',
+  '0xad196d5d': 'NotAnArbiter',
+  '0xb72a2522': 'NotClaimed',
+  '0xea8e4eb5': 'NotAuthorized',
+  '0x6eb498a6': 'DAONotActive',
+  '0x419652c3': 'ZeroChatKey',
+  '0x92762df3': 'InsufficientXP',
+  '0xff892798': 'VaultInsufficient',
+  '0x5aa9184d': 'NoRewardToClaim',
+  '0xac2e659e': 'InsufficientCleanStreak',
+  '0xf098a90b': 'NotRegisteredAgreement',
+  '0x7b14afdf': 'NoVerdictSubmitted',
+  '0xa807d475': 'RewardPathRetired',
+  // ── 4в-2 Выкатка 2: запись о молчании и отпечаток предъявления ──────────────
+  // Все новые вызовы идут гейслесс, то есть именно этой дорогой: без имён
+  // «рано», «уже записано» и «не ваш спор» человек увидел бы «Inner call
+  // reverted» ровно там, где ему надо объяснить, почему кнопка не сработала.
+  '0x7c27222a': 'NoResponseTooEarly',
+  '0x61ba6a10': 'NoResponseAlreadyRecorded',
+  '0x29d2e575': 'NotClaimingArbiter',
+  '0x616d24a0': 'ClaimTimeUnknown',
+  '0xe56aceea': 'NotDisputeParty',
+  '0x506f3a1b': 'ZeroDigest',
 };
 
 // Decodes MinimalForwarder.execute()'s `retdata` (the inner call's own revert data)

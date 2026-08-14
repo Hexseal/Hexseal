@@ -1,0 +1,271 @@
+import { readFileSync } from 'node:fs';
+import { describe, it, expect } from 'vitest';
+import { keccak256, toBytes } from 'viem';
+import { ARBITER_REGISTRY_ABI } from '@/config/contracts';
+
+/**
+ * Замок против расхождения ABI фронта с контрактом — восемь входов 4в-2 Выкатки 2.
+ *
+ * ⚠️ ЗАЧЕМ. Тот же класс, ради которого заведён соседний
+ * `claimAbiMatchesContract.test.ts`: 9 августа подпись `claimDispute` сменилась, и
+ * единственным, что связывало фронт с контрактом, было внимание человека. Селектор
+ * едет вместе с подписью — старого входа в даймонде не остаётся, и вызов по нему
+ * читается снаружи как «арбитраж сломался». Здесь входов сразу восемь, и половина из
+ * них — чтения с ВОЗВРАТОМ, где ошибка молчит вдвойне: `readContract` приводит
+ * результат типом, формы в рантайме не сверяет никто.
+ *
+ * ⚠️ ЧИТАЕМ ИСХОДНИК `.sol`, А НЕ `out/*.json`. `out/` в гите нет (.gitignore), и
+ * замок, зависящий от результата сборки, был бы зелёным на несобранном дереве — то
+ * есть на чистой копии репозитория. Прецеденты: `claimAbiMatchesContract.test.ts`,
+ * `disputeBounty.test.ts`, `relayer/test/agreementStatusEnum.test.js`.
+ *
+ * ⚠️ ЧЕГО ЭТОТ ЗАМОК НЕ ДОКАЗЫВАЕТ: что запись смонтирована в живой даймонд. Это
+ * дело `test/PresentationRecordUpgrade.t.sol` (состав разреза против ABI) и
+ * `test/DeployFullSelectors.t.sol` (полный деплой). Здесь сверяется только шов
+ * «фронт ↔ исходник контракта».
+ */
+
+const FACET_SRC = readFileSync(
+  new URL('../../../src/facets/ArbiterRegistryFacet.sol', import.meta.url),
+  'utf8',
+);
+
+/**
+ * Блок объявления функции: от `function <имя>(` до начала тела (`{`) либо до `;`.
+ *
+ * Падает, если объявлений больше одного: перегрузка означает, что «подпись» —
+ * понятие неоднозначное, и сверять с ABI нечего. Ровно этим ревью Задачи 1
+ * показало, что сверка без такой проверки берёт первое попавшееся совпадение.
+ */
+function declarationBlock(source: string, fnName: string): string {
+  const re = new RegExp(`function\\s+${fnName}\\s*\\([^)]*\\)[\\s\\S]*?(?:\\{|;)`, 'g');
+  const matches = [...source.matchAll(re)];
+  if (matches.length === 0) throw new Error(`объявление ${fnName} не найдено в исходнике`);
+  if (matches.length > 1) {
+    throw new Error(
+      `объявление ${fnName} встречается ${matches.length} раза в исходнике — ` +
+      `подпись неоднозначна, каноническую сверку сделать нельзя`,
+    );
+  }
+  return matches[0][0];
+}
+
+/** Расположение данных — не часть типа и не имя. Снимается до разбора. */
+const DATA_LOCATIONS = new Set(['memory', 'calldata', 'storage']);
+
+type Param = { type: string; name: string };
+
+/**
+ * Разбор списка параметров Solidity в пары «тип, имя».
+ *
+ * ⚠️ Имя тут именно необязательно, и это не мелочь: `returns (bytes32[] memory)`
+ * даёт ДВА слова, из которых второе — расположение данных, а не имя. Наивное
+ * «имя = последнее слово» назвало бы возврат `getPresentationDigests` именем
+ * `memory` и сверяло бы фронт с выдумкой. Пустое имя здесь — законный ответ, и в
+ * ABI ему соответствует `name: ''`.
+ */
+function parseParams(list: string): Param[] {
+  return list
+    .split(',')
+    .map((p) => p.trim())
+    .filter((p) => p.length > 0)
+    .map((p) => {
+      const words = p.split(/\s+/).filter((w) => !DATA_LOCATIONS.has(w));
+      return { type: words[0], name: words.length > 1 ? words[words.length - 1] : '' };
+    });
+}
+
+/** Входы из объявления в `.sol`. */
+function solInputs(source: string, fnName: string): Param[] {
+  const decl = declarationBlock(source, fnName);
+  const inside = /\(([^)]*)\)/.exec(decl);
+  if (!inside) throw new Error(`не разобрать список аргументов ${fnName}`);
+  return parseParams(inside[1]);
+}
+
+/** Возвраты из `returns (...)`. Пустой массив — функция ничего не возвращает. */
+function solOutputs(source: string, fnName: string): Param[] {
+  const decl = declarationBlock(source, fnName);
+  const returnsMatch = /returns\s*\(([^)]*)\)/.exec(decl);
+  if (!returnsMatch) return [];
+  return parseParams(returnsMatch[1]);
+}
+
+/**
+ * Изменчивость из объявления: `pure` / `view` / `payable`, иначе `nonpayable`.
+ *
+ * Нужна не для красоты. `useReadContract` в wagmi принимает только чтения: объяви
+ * во фронте `getNoResponseFloor` как `nonpayable` — и крючок пола перестанет
+ * собираться типами; объяви `recordNoResponse` как `view` — и запись в цепь можно
+ * будет «прочитать», получив тишину вместо транзакции.
+ */
+function solMutability(source: string, fnName: string): string {
+  const decl = declarationBlock(source, fnName);
+  const afterArgs = decl.slice(decl.indexOf(')'));
+  if (/\bpure\b/.test(afterArgs)) return 'pure';
+  if (/\bview\b/.test(afterArgs)) return 'view';
+  if (/\bpayable\b/.test(afterArgs)) return 'payable';
+  return 'nonpayable';
+}
+
+type AbiEntry = {
+  type: string;
+  name: string;
+  inputs?: { type: string; name: string }[];
+  outputs?: { type: string; name: string }[];
+  stateMutability?: string;
+};
+
+function abiEntry(abi: readonly unknown[], fnName: string): AbiEntry {
+  const found = (abi as AbiEntry[]).filter((e) => e && e.type === 'function' && e.name === fnName);
+  if (found.length === 0) throw new Error(`${fnName} нет в ABI фронта`);
+  if (found.length > 1) throw new Error(`${fnName} в ABI фронта ${found.length} раза`);
+  return found[0];
+}
+
+const shape = (params: Param[]) => params.map((p) => `${p.type} ${p.name}`).join(', ');
+
+const abiParams = (list: { type: string; name: string }[] | undefined): Param[] =>
+  (list ?? []).map((p) => ({ type: p.type, name: p.name ?? '' }));
+
+/**
+ * Восемь входов, приехавших разрезом 4в-2 Выкатки 2. Список написан РУКАМИ и
+ * намеренно: сгенерируй его из самого ABI — и забытая запись сверялась бы сама с
+ * собой, а забыть тут ровно то, о чём этот файл.
+ */
+const NEW_FUNCTIONS = [
+  'getDisputeClaimedAt',
+  'recordNoResponse',
+  'getNoResponseAt',
+  'getNoResponseFloor',
+  'recordPresentationDigest',
+  'getPresentationDigests',
+  'getPresentationDigestsPage',
+  'getPresentationDigestCount',
+] as const;
+
+describe('ABI записи о молчании и отпечатка не расходится с контрактом', () => {
+  for (const fnName of NEW_FUNCTIONS) {
+    it(`${fnName}: входы — типы и имена — совпадают с исходником`, () => {
+      // Имена сверяются наравне с типами, и это не педантизм: у
+      // getPresentationDigestsPage два подряд uint256 (offset, limit), и
+      // перестановка их местами по типам НЕВИДИМА — а читатель получил бы
+      // окно не там, где просил.
+      expect(shape(abiParams(abiEntry(ARBITER_REGISTRY_ABI, fnName).inputs)))
+        .toBe(shape(solInputs(FACET_SRC, fnName)));
+    });
+
+    it(`${fnName}: возвраты совпадают с исходником — здесь ошибка молчит`, () => {
+      expect(shape(abiParams(abiEntry(ARBITER_REGISTRY_ABI, fnName).outputs)))
+        .toBe(shape(solOutputs(FACET_SRC, fnName)));
+    });
+
+    it(`${fnName}: изменчивость совпадает с исходником`, () => {
+      expect(abiEntry(ARBITER_REGISTRY_ABI, fnName).stateMutability)
+        .toBe(solMutability(FACET_SRC, fnName));
+    });
+
+    it(`${fnName}: в исходнике ровно одно объявление`, () => {
+      const count = (FACET_SRC.match(new RegExp(`function\\s+${fnName}\\s*\\(`, 'g')) ?? []).length;
+      expect(count).toBe(1);
+    });
+  }
+});
+
+describe('разбор объявлений сам по себе честен', () => {
+  it('расположение данных не принимается за имя возврата', () => {
+    const fake = 'function f(address a) external view returns (bytes32[] memory) {';
+    expect(solOutputs(fake, 'f')).toEqual([{ type: 'bytes32[]', name: '' }]);
+  });
+
+  it('именованный возврат с расположением данных разбирается на тип и имя', () => {
+    const fake = 'function f() external view returns (bytes32[] memory digests) {';
+    expect(solOutputs(fake, 'f')).toEqual([{ type: 'bytes32[]', name: 'digests' }]);
+  });
+
+  it('разбор падает на перегрузке — сверять было бы не с чем', () => {
+    const fake = `
+      function recordNoResponse(address agreement) external {}
+      function recordNoResponse(address agreement, uint256 when) external {}
+    `;
+    expect(() => solInputs(fake, 'recordNoResponse')).toThrow();
+  });
+
+  it('изменчивость читается после списка аргументов, а не по всему объявлению', () => {
+    // `view` в имени параметра или в комментарии не должно превращать запись в чтение.
+    expect(solMutability('function f(address viewer) external {', 'f')).toBe('nonpayable');
+    expect(solMutability('function f() external pure returns (uint256) {', 'f')).toBe('pure');
+  });
+});
+
+/**
+ * ⚠️ ВТОРАЯ ПОЛОВИНА ТОГО ЖЕ ШВА: ОШИБКИ, А НЕ ФУНКЦИИ.
+ *
+ * Все новые вызовы идут гейслесс, а гейслесс на фронте идёт через
+ * `app/api/relay/route.ts`: тот сначала СИМУЛИРУЕТ `MinimalForwarder.execute()` и,
+ * если внутренний вызов отвергнут, разбирает `retdata` по таблице селекторов
+ * `CUSTOM_ERRORS`. Селектора нет в таблице — человек получает «Inner call
+ * reverted», то есть сырой хекс вместо причины. Ровно этим 4в-1 уже болел: два
+ * арбитра гонятся за один спор, проигравшему не сказано ничего.
+ *
+ * ⚠️ ПОЧЕМУ ТАБЛИЦА ЧИТАЕТСЯ ТЕКСТОМ, А НЕ ИМПОРТОМ. `route.ts` — обработчик
+ * маршрута Next: экспортировать из него что-либо кроме HTTP-методов нельзя,
+ * `next build` проверяет состав экспортов и падает. Таблица — литерал внутри
+ * функции, и достать её иначе, чем разбором исходника, нечем. Сторожится при этом
+ * не «есть такая строчка», а СОСТАВ таблицы против объявлений контракта: добавь
+ * ошибку в фасет и не впиши сюда — красный. Проводку «таблица → текст причины»
+ * этот замок не доказывает, и не должен: она не менялась.
+ */
+const RELAY_ROUTE_SRC = readFileSync(
+  new URL('../app/api/relay/route.ts', import.meta.url),
+  'utf8',
+);
+
+/** Все `error Имя(типы);` фасета — по порядку объявления. */
+function solidityErrorSignatures(source: string): string[] {
+  return [...source.matchAll(/\berror\s+(\w+)\s*\(([^)]*)\)\s*;/g)].map(([, name, args]) => {
+    const types = args
+      .split(',')
+      .map((a) => a.trim())
+      .filter((a) => a.length > 0)
+      .map((a) => a.split(/\s+/)[0]);
+    return `${name}(${types.join(',')})`;
+  });
+}
+
+/** Пары «селектор → имя» из литерала таблицы `CUSTOM_ERRORS` в `route.ts`. */
+function relayRouteErrorTable(source: string): Record<string, string> {
+  const block = /const CUSTOM_ERRORS: Record<string, string> = \{([\s\S]*?)\n\s*\};/.exec(source);
+  if (!block) throw new Error('таблица CUSTOM_ERRORS не найдена в app/api/relay/route.ts');
+  const table: Record<string, string> = {};
+  for (const [, selector, name] of block[1].matchAll(/'(0x[0-9a-fA-F]{8})':\s*'(\w+)'/g)) {
+    table[selector.toLowerCase()] = name;
+  }
+  if (Object.keys(table).length === 0) throw new Error('таблица CUSTOM_ERRORS пуста');
+  return table;
+}
+
+describe('фронт умеет назвать любую ошибку арбитражного фасета', () => {
+  const table = relayRouteErrorTable(RELAY_ROUTE_SRC);
+  const signatures = solidityErrorSignatures(FACET_SRC);
+
+  it('в фасете вообще есть объявленные ошибки — иначе сверка тавтологична', () => {
+    expect(signatures.length).toBeGreaterThan(40);
+  });
+
+  for (const signature of signatures) {
+    const name = signature.slice(0, signature.indexOf('('));
+    it(`${signature} разбирается в имя, а не в сырой хекс`, () => {
+      // Селектор считается ТУТ ЖЕ из подписи, а не берётся из таблицы: иначе
+      // таблица сверялась бы сама с собой — тот самый класс, из-за которого
+      // пол вынесен в цепь (замысел 5.2).
+      const selector = keccakSelector(signature);
+      expect(table[selector], `${signature} (${selector}) нет в таблице route.ts`).toBe(name);
+    });
+  }
+});
+
+/** Первые 4 байта keccak256 подписи — селектор ошибки, тем же счётом, что у цепи. */
+function keccakSelector(signature: string): string {
+  return keccak256(toBytes(signature)).slice(0, 10).toLowerCase();
+}

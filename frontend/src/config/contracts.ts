@@ -1959,6 +1959,82 @@ export const ARBITER_REGISTRY_ABI = [
     stateMutability: 'view',
     type: 'function',
   },
+  // ── 4в-2 Выкатка 2: запись «просил, ответа нет» и отпечаток предъявления ──
+  //
+  // Восемь входов, приехавших разрезом script/UpgradePresentationRecord.s.sol
+  // (ArbiterRegistryFacet, 14 августа 2026). Типы взяты из исходника фасета, а не
+  // по памяти, и сверяются с ним замком lib/presentationDigestAbi.test.ts —
+  // включая ИМЕНА аргументов: у getPresentationDigestsPage два подряд uint256,
+  // перестановка которых по типам невидима.
+  //
+  // ⚠️ Пол записи о молчании здесь СВОИМ ЧИСЛОМ не лежит и лежать не должен:
+  // спрашивается у цепи через getNoResponseFloor (hooks/useNoResponseFloor.ts).
+  {
+    inputs: [{ internalType: 'address', name: 'agreement', type: 'address' }],
+    name: 'getDisputeClaimedAt',
+    outputs: [{ internalType: 'uint256', name: '', type: 'uint256' }],
+    stateMutability: 'view',
+    type: 'function',
+  },
+  {
+    inputs: [{ internalType: 'address', name: 'agreement', type: 'address' }],
+    name: 'recordNoResponse',
+    outputs: [],
+    stateMutability: 'nonpayable',
+    type: 'function',
+  },
+  {
+    inputs: [{ internalType: 'address', name: 'agreement', type: 'address' }],
+    name: 'getNoResponseAt',
+    outputs: [{ internalType: 'uint256', name: '', type: 'uint256' }],
+    stateMutability: 'view',
+    type: 'function',
+  },
+  {
+    inputs: [],
+    name: 'getNoResponseFloor',
+    outputs: [{ internalType: 'uint256', name: '', type: 'uint256' }],
+    // `pure`, а не `view`: число — константа контракта. Изменчивость сверяется
+    // замком, потому что от неё зависит, соберётся ли крючок чтения (wagmi
+    // useReadContract принимает только pure/view).
+    stateMutability: 'pure',
+    type: 'function',
+  },
+  {
+    inputs: [
+      { internalType: 'address', name: 'agreement', type: 'address' },
+      { internalType: 'bytes32', name: 'digest', type: 'bytes32' },
+    ],
+    name: 'recordPresentationDigest',
+    outputs: [],
+    stateMutability: 'nonpayable',
+    type: 'function',
+  },
+  {
+    inputs: [{ internalType: 'address', name: 'agreement', type: 'address' }],
+    name: 'getPresentationDigests',
+    outputs: [{ internalType: 'bytes32[]', name: '', type: 'bytes32[]' }],
+    stateMutability: 'view',
+    type: 'function',
+  },
+  {
+    inputs: [
+      { internalType: 'address', name: 'agreement', type: 'address' },
+      { internalType: 'uint256', name: 'offset', type: 'uint256' },
+      { internalType: 'uint256', name: 'limit', type: 'uint256' },
+    ],
+    name: 'getPresentationDigestsPage',
+    outputs: [{ internalType: 'bytes32[]', name: '', type: 'bytes32[]' }],
+    stateMutability: 'view',
+    type: 'function',
+  },
+  {
+    inputs: [{ internalType: 'address', name: 'agreement', type: 'address' }],
+    name: 'getPresentationDigestCount',
+    outputs: [{ internalType: 'uint256', name: '', type: 'uint256' }],
+    stateMutability: 'view',
+    type: 'function',
+  },
   // V3 — events
   {
     anonymous: false,
