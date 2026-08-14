@@ -139,6 +139,17 @@ library ArbiterRegistryStorage {
         // закрытой.
         mapping(address => bytes32)        arbiterBoxKey;   // арбитр → открытый ключ шифрования
         mapping(address => bytes32)        arbiterSignKey;  // арбитр → открытый ключ подписи
+        // ── Момент взятия спора (4в-2 Выкатка 2, 14 августа 2026) ──
+        // Нужен для пола записи о молчании: цепь не принимает «не ответили»
+        // раньше, чем NO_RESPONSE_FLOOR от взятия. Отсчёт именно отсюда, а не
+        // от просьбы: просьба идёт вне цепи и её время арбитр мог бы подделать,
+        // а «взял спор на блоке N» — готовый факт. Он же момент, с которого
+        // сторона физически может предъявить: до него ключ арбитра неизвестен.
+        //
+        // ⚠️ Обнуляется вместе с клеймом. Иначе новый арбитр наследовал бы
+        // время старого, пол оказался бы уже пройденным, и запись о молчании
+        // прошла бы в ту же секунду, как он взял спор.
+        mapping(address => uint256) disputeClaimedAt;
     }
 
     function data() internal pure returns (Data storage d) {
@@ -562,6 +573,7 @@ contract ArbiterRegistryFacet {
         require(setOk, "ArbiterRegistry: setArbiter failed");
 
         d.disputeClaims[agreement] = caller;
+        d.disputeClaimedAt[agreement] = block.timestamp;
         d.arbiterDeals[caller].push(agreement);
         d.openClaimCount[caller]++;
 
@@ -628,6 +640,7 @@ contract ArbiterRegistryFacet {
         }
 
         delete d.disputeClaims[agreement];
+        delete d.disputeClaimedAt[agreement];
         if (d.openClaimCount[current] > 0) d.openClaimCount[current]--;
 
         (bool ok,) = agreement.call(
@@ -1244,6 +1257,7 @@ contract ArbiterRegistryFacet {
         address claimedArbiter = d.disputeClaims[agreement];
         if (claimedArbiter != address(0)) {
             delete d.disputeClaims[agreement];
+            delete d.disputeClaimedAt[agreement];
             if (d.openClaimCount[claimedArbiter] > 0) d.openClaimCount[claimedArbiter]--;
         }
         // Авто-очистка застрявшего вердикта: если Agreement вышел из спора через таймаут,
@@ -1340,6 +1354,11 @@ contract ArbiterRegistryFacet {
     function isRegisteredArbiter(address addr) external view returns (bool) { return ArbiterRegistryStorage.data().isArbiter[addr]; }
     function getArbiters()      external view returns (address[] memory) { return ArbiterRegistryStorage.data().arbiterList; }
     function getDisputeClaimer(address agreement) external view returns (address) { return ArbiterRegistryStorage.data().disputeClaims[agreement]; }
+
+    /// @notice Когда спор был взят, в секундах блока. 0 — не брался или отпущен.
+    function getDisputeClaimedAt(address agreement) external view returns (uint256) {
+        return ArbiterRegistryStorage.data().disputeClaimedAt[agreement];
+    }
 
     /// Открытые половины ключей чата арбитра. Нули означают «ключей нет» —
     /// для 4в это признак «предъявлять некому», и различать «нет записи» от
