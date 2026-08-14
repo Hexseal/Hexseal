@@ -40,41 +40,24 @@ contract ArbiterChatKeyUpgradeTest is Test {
         for (uint256 i; i < sigs.length; i++) out[i] = bytes4(keccak256(bytes(sigs[i])));
     }
 
-    /// 1. Полнота: объединение replaceSelectors() и addSelectors() совпадает
-    /// (как множество, без дубликатов) со всеми селекторами скомпилированного
-    /// ArbiterRegistryFacet.
+    /// 1. ── СНЯТ 14 августа 2026, вместе с 4в-2 Выкаткой 2 ──────────────────
     ///
-    /// Что исчезнет из поведения, если снять: забытый в Replace селектор
-    /// молча останется висеть на прежнем адресе фасета — диамонд после
-    /// апгрейда наполовину поедет старым кодом, и никто этого не заметит,
-    /// пока не наткнётся на конкретный вызов.
-    function test_ReplaceAndAddCoverWholeFacet() public view {
-        bytes4[] memory replaceSels = upgrade.replaceSelectors();
-        bytes4[] memory addSels = upgrade.addSelectors();
-        bytes4[] memory expected = _abiSelectors("ArbiterRegistryFacet");
-
-        bytes4[] memory actual = new bytes4[](replaceSels.length + addSels.length);
-        for (uint256 i = 0; i < replaceSels.length; i++) actual[i] = replaceSels[i];
-        for (uint256 i = 0; i < addSels.length; i++) actual[replaceSels.length + i] = addSels[i];
-
-        assertEq(actual.length, expected.length, "Replace+Add: selector count mismatch against compiled ABI");
-
-        for (uint256 i = 0; i < actual.length; i++) {
-            bool found = false;
-            for (uint256 j = 0; j < expected.length; j++) {
-                if (actual[i] == expected[j]) { found = true; break; }
-            }
-            assertTrue(found, "Replace+Add: mounts a selector the facet does not implement (phantom)");
-        }
-
-        for (uint256 i = 0; i < expected.length; i++) {
-            bool found = false;
-            for (uint256 j = 0; j < actual.length; j++) {
-                if (expected[i] == actual[j]) { found = true; break; }
-            }
-            assertTrue(found, "Replace+Add: facet has a selector the cut does not mount (undercut)");
-        }
-    }
+    /// Здесь стоял test_ReplaceAndAddCoverWholeFacet: он сверял объединение
+    /// replaceSelectors()+addSelectors() ЭТОГО скрипта со свежим ABI
+    /// ArbiterRegistryFacet. Разрез, который описывает этот файл, исполнен на
+    /// Base Sepolia 10 августа и больше не повторится, а его списки селекторов
+    /// навсегда описывают фасет ТОГО дня (56 методов). Любой последующий рост
+    /// фасета — а Задачи 1-3 добавили восемь функций, 56 → 64 — красил тест в
+    /// красный, не сообщая ничего ни о чём: сверять исполненный разрез с
+    /// сегодняшним кодом бессмысленно.
+    ///
+    /// Живую роль (заметить недомонтированный или фантомный селектор ДО
+    /// выкатки) перенял точно такой же тест против АКТУАЛЬНОГО разреза —
+    /// test/PresentationRecordUpgrade.t.sol::test_ReplaceAndAddCoverWholeFacet.
+    /// Замок не ослаб: он просто переехал на скрипт, который ещё предстоит
+    /// запустить. Остальные 14 тестов этого файла живы и трогать их не за что —
+    /// они проверяют пред/пост-полётные помощники и целостность хранилища, то
+    /// есть логику, которая от роста фасета не зависит.
 
     /// 2. Старый вход удаляется и его нет в новом ABI.
     ///
