@@ -587,6 +587,61 @@ export async function readDisputeBox(input: {
   };
 }
 
+/* ────────────────── что происходит по нажатию «открыть ящик» ───────────── */
+
+/**
+ * ⚠️ ЭТО ПРАВКА КРУГА 1, И БЕДА У НЕЁ ИЗВЕСТНАЯ. Решение по нажатию жило
+ * внутри обработчика компонента, а нажатие в этом проекте не исполняет ни один
+ * замок: у фронта нет ни jsdom, ни `@testing-library`. Сторожил его только
+ * замок на ТЕКСТ исходника — то есть на имя, а не на употребление. Задача 6
+ * лечила это выносом решения отдельной функцией (`retryAnchorImpl`,
+ * `restoreMountImpl`); здесь то же лечение.
+ */
+export type BoxOpenState =
+  | { kind: 'reading' }
+  | { kind: 'key_needed' }
+  | { kind: 'failed'; refusal: BoxReadRefusal }
+  | { kind: 'done'; reading: DisputeBoxReading; before: number | null; deviceKey: DeviceKeyVerdict };
+
+export interface BoxOpenIO {
+  /**
+   * Есть ли с чем идти: адрес арбитра и подписчик ключа. ⚠️ `false` обязан
+   * означать «не применять НИЧЕГО»: выставь мы «читаем» до этой проверки —
+   * карточка зависла бы на «читаем» навсегда, потому что дальше стоит выход.
+   */
+  ready: boolean;
+  /** Забрать ящик целиком: ключ, пропуск, мешки, ход, ключ устройства. */
+  read: () => Promise<{ reading: DisputeBoxReading; before: number | null; deviceKey: DeviceKeyVerdict }>;
+  /** Жив ли ещё вызывающий: чтение ящика — секунды, вкладку за это время закрывают. */
+  alive: () => boolean;
+  apply: (state: BoxOpenState) => void;
+}
+
+/**
+ * Тело нажатия, вынесенное целиком. ⚠️ НЕ БРОСАЕТ.
+ *
+ * ⚠️ «КЛЮЧА НА УСТРОЙСТВЕ НЕТ» — НЕ ПОЛОМКА, А НАЗВАННАЯ ПРИЧИНА со своей
+ * кнопкой: окно подписи не должно быть неожиданностью (цена названа числом в
+ * `openArbiterBoxSession`). Схлопни этот исход в общий отказ — и человек
+ * увидит «ящик прочитать не удалось» там, где ему нужно одно нажатие.
+ *
+ * ⚠️ ПРИЧИНА ОТКАЗА РАЗБИРАЕТСЯ ПО КОДУ И ЗДЕСЬ, а не в разметке: наружу едет
+ * разобранная причина со своим советом, а не английский текст исключения.
+ */
+export async function openDisputeBoxImpl(io: BoxOpenIO): Promise<void> {
+  if (!io.ready) return;
+  io.apply({ kind: 'reading' });
+  try {
+    const got = await io.read();
+    if (!io.alive()) return;
+    io.apply({ kind: 'done', ...got });
+  } catch (err) {
+    if (!io.alive()) return;
+    if (isSessionAbsent(err)) { io.apply({ kind: 'key_needed' }); return; }
+    io.apply({ kind: 'failed', refusal: boxReadRefusal(err) });
+  }
+}
+
 /* ─────────────────────── сеанс арбитра, и почём он ────────────────────── */
 
 /**

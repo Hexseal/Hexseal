@@ -22,7 +22,6 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { shortAddr } from '@/lib/utils';
 import type { DisputeBoxReading, PresentedBag } from '@/lib/arbiterPresentations';
-import type { NoResponseRecord } from '@/lib/presentationAnchor';
 
 const MESSAGES_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../messages');
 const RU = JSON.parse(fs.readFileSync(path.join(MESSAGES_DIR, 'ru.json'), 'utf8')) as Record<string, unknown>;
@@ -83,9 +82,9 @@ async function summary(reading: DisputeBoxReading, before: number | null, device
   const { BoxSummaryView } = await import('@/components/ArbiterPresentations');
   return renderToStaticMarkup(React.createElement(BoxSummaryView, { reading, before, deviceKey }));
 }
-async function bagHtml(bag: PresentedBag, noResponse: NoResponseRecord | null = null): Promise<string> {
+async function bagHtml(bag: PresentedBag, anchors: DisputeBoxReading['anchors'] = null): Promise<string> {
   const { PresentationBagView } = await import('@/components/ArbiterPresentations');
-  return renderToStaticMarkup(React.createElement(PresentationBagView, { bag, noResponse }));
+  return renderToStaticMarkup(React.createElement(PresentationBagView, { bag, anchors }));
 }
 
 describe('два набора чисел — двумя строками', () => {
@@ -402,27 +401,65 @@ describe('три состояния отпечатка на экране арб�
   });
 
   it('R18: ПОРЯДОК доехал до глаз — оба номера блока в одной строке', async () => {
-    const record: NoResponseRecord = {
-      arbiter: B, at: BigInt(1_760_000_000), block: BigInt(44_700_050), txHash: null,
-    };
+    const withRecord = anchorsOf({
+      digests: [DIGEST],
+      noResponse: [{ arbiter: B, at: BigInt(1_760_000_000), block: BigInt(44_700_050), txHash: null }],
+    });
     const before = await bagHtml(bagOf({
       anchor: { verdict: 'match', block: BigInt(44_700_000), submitter: A, records: 1, total: 1 },
-    }), record);
+    }), withRecord);
     expect(before).toContain(translate('arbiter.presentation_anchor_order_digest_first',
       { digest: '44700000', record: '44700050' }));
 
     const after = await bagHtml(bagOf({
       anchor: { verdict: 'match', block: BigInt(44_700_090), submitter: A, records: 1, total: 1 },
-    }), record);
+    }), withRecord);
     expect(after).toContain(translate('arbiter.presentation_anchor_order_record_first',
       { digest: '44700090', record: '44700050' }));
 
-    // Записи о молчании нет — порядка на экране нет вовсе, а не «одновременно».
+    // Записи о молчании нет, лента накрыта — порядка на экране нет вовсе, и
+    // это НЕ потеря: мы знаем, что записи нет.
     const alone = await bagHtml(bagOf({
       anchor: { verdict: 'match', block: BigInt(44_700_000), submitter: A, records: 1, total: 1 },
-    }), null);
+    }), anchorsOf({ digests: [DIGEST] }));
     expect(alone).not.toContain(translate('arbiter.presentation_anchor_order_digest_first',
       { digest: '44700000', record: '44700050' }));
+    expect(alone).not.toContain(translate('arbiter.presentation_anchor_order_out_of_window'));
+  });
+
+  it('R20: ПОТЕРЯ ПОРЯДКА ГРОМКАЯ — «не смотрели так далеко», а не молчание', async () => {
+    // ⚠️ Правка круга 1. Прежде этот случай не рисовал НИЧЕГО, и на экране он
+    // был неотличим от «отпечатка нет» — при том что человек может обойти его
+    // сам, попросив разбор.
+    const html = await bagHtml(bagOf({
+      anchor: { verdict: 'match', block: null, submitter: null, records: 1, total: 1 },
+    }), anchorsOf({ digests: [DIGEST], logsComplete: false }));
+    expect(html).toContain(translate('arbiter.presentation_anchor_order_out_of_window'));
+    // И это не смешано ни с «не отмечено», ни с «не сходится».
+    expect(html).not.toContain(translate('arbiter.presentation_anchor_absent'));
+    expect(html).not.toContain(translate('arbiter.presentation_anchor_mismatch', { count: 1 }));
+  });
+
+  it('R21: пределы поиска названы ЧИСЛАМИ в сводке — окно и длина списка', async () => {
+    const window = await summary(emptyReading({
+      anchors: anchorsOf({
+        digests: [DIGEST], logsComplete: false,
+        window: { fromBlock: BigInt(44_656_800), toBlock: BigInt(44_700_000) },
+      }),
+    }), 0);
+    expect(window).toContain(translate('arbiter.presentations_anchor_window',
+      { from: '44656800', to: '44700000' }));
+
+    const truncated = await summary(emptyReading({
+      anchors: anchorsOf({ digests: [DIGEST], digestsComplete: false }),
+    }), 0);
+    expect(truncated).toContain(translate('arbiter.presentations_anchor_truncated', { count: 1 }));
+
+    // Лента накрыла всё и список дочитан — ни одной из двух строк нет вовсе.
+    const clean = await summary(emptyReading({ anchors: anchorsOf({ digests: [DIGEST] }) }), 0);
+    expect(clean).not.toContain(translate('arbiter.presentations_anchor_window',
+      { from: '44656800', to: '44700000' }));
+    expect(clean).not.toContain(translate('arbiter.presentations_anchor_truncated', { count: 1 }));
   });
 
   it('R19: запись арбитра о молчании названа в сводке НОМЕРОМ БЛОКА', async () => {

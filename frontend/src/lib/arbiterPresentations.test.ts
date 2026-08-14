@@ -29,8 +29,8 @@ import type { ChatSession } from '@/lib/chatSession';
 import {
   readingOrder, bagNameFromKey, arbitersBefore, deviceKeyVerdict,
   countsDisagreement, readDisputeBox, openArbiterBoxSession, isSessionAbsent,
-  boxReadRefusal, attestationDateLabel,
-  type DisputeBoxSource,
+  boxReadRefusal, attestationDateLabel, openDisputeBoxImpl,
+  type BoxOpenState, type DisputeBoxReading, type DisputeBoxSource,
 } from '@/lib/arbiterPresentations';
 import {
   anchorOrder, bagAnchor, firstNoResponse, verifyDigest,
@@ -856,11 +856,38 @@ describe('сверка отпечатка', () => {
   });
 
   it('F11: ПОРЯДОК — ради него всё и затевалось, и он не угадывается', () => {
-    expect(anchorOrder(BigInt(10), BigInt(20))).toBe('digest_first');
-    expect(anchorOrder(BigInt(20), BigInt(10))).toBe('record_first');
-    expect(anchorOrder(BigInt(10), BigInt(10))).toBe('same_block');
-    expect(anchorOrder(null, BigInt(10)), 'блока нет — молчим').toBe('unknown');
-    expect(anchorOrder(BigInt(10), null), 'записи нет — молчим').toBe('unknown');
+    const d = keccak256(canonicalPresentationBytes(honest));
+    const rec = (block: bigint) => ({
+      arbiter: REX, at: BigInt(1_760_000_000), block, txHash: null,
+    });
+    const at = (digestBlock: bigint | null, recBlocks: bigint[], over = {}) => anchorOrder(
+      { verdict: 'match', block: digestBlock, submitter: null, records: 1, total: 1 },
+      anchorsOf({ digests: [d], noResponse: recBlocks.map(rec), ...over }),
+    );
+    expect(at(BigInt(10), [BigInt(20)])).toBe('digest_first');
+    expect(at(BigInt(20), [BigInt(10)])).toBe('record_first');
+    expect(at(BigInt(10), [BigInt(10)])).toBe('same_block');
+    // Записи нет, а лента накрыла всё — это ЗНАНИЕ, и молчать про него законно.
+    expect(at(BigInt(10), []), 'записи о молчании нет и лента полна').toBe('no_record');
+  });
+
+  it('F11b: «не знаю» и «не смотрел так далеко» — РАЗНЫЕ вещи (правка круга 1)', () => {
+    const d = keccak256(canonicalPresentationBytes(honest));
+    const match = (block: bigint | null) =>
+      ({ verdict: 'match' as const, block, submitter: null, records: 1, total: 1 });
+
+    // Отметка есть, номер блока за границей окна — ГРОМКО, а не молчанием.
+    expect(anchorOrder(match(null), anchorsOf({ digests: [d], logsComplete: false })))
+      .toBe('out_of_window');
+    // Свой блок нашёлся, но лента не накрыта: записи о молчании МОГЛО не быть
+    // видно, и выдавать её отсутствие за факт нельзя.
+    expect(anchorOrder(match(BigInt(10)), anchorsOf({ digests: [d], logsComplete: false })))
+      .toBe('out_of_window');
+    // А это НЕ потери, у каждой своя строка на экране.
+    expect(anchorOrder(match(BigInt(10)), null)).toBe('chain_unread');
+    expect(anchorOrder(
+      { verdict: 'absent', block: null, submitter: null, records: 0, total: 0 }, anchorsOf(),
+    )).toBe('not_anchored');
   });
 
   it('F12: записи арбитров о молчании доезжают до модели с номерами блоков', async () => {
@@ -879,6 +906,90 @@ describe('сверка отпечатка', () => {
     const first = firstNoResponse(r.anchors);
     expect(first, 'записи о молчании потерялись по дороге к экрану').not.toBeNull();
     expect(first!.block, 'взята поздняя запись — сравнивать надо с ПЕРВОЙ').toBe(BigInt(44_699_000));
-    expect(anchorOrder(r.presentations[0].anchor.block, first!.block)).toBe('record_first');
+    expect(anchorOrder(r.presentations[0].anchor, r.anchors)).toBe('record_first');
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// O. Что происходит по НАЖАТИЮ «открыть ящик» (правка круга 1)
+//
+// ⚠️ ЗАЧЕМ ЭТОТ РАЗДЕЛ. Решение по нажатию жило внутри обработчика компонента,
+// а нажатие в этом проекте не исполняет ни один замок: у фронта нет ни jsdom,
+// ни `@testing-library`. Сторожил его только замок на ТЕКСТ исходника — то
+// есть на имя, а не на употребление. Здесь решение зовётся напрямую, и
+// меряется РАБОТА.
+// ═══════════════════════════════════════════════════════════════════════════
+
+describe('нажатие «открыть ящик»', () => {
+  const emptyReading = (): DisputeBoxReading => ({
+    arbiterNow: JUDY, mine: true, listed: 0, tried: 0, stop: 'read_all',
+    sealedForOthersDeclared: 0, notOurs: 0, notOursFetched: 0, notParsed: 0,
+    indexTrusted: true, anchors: null, skipped: [], presentations: [],
+  });
+
+  const press = async (over: Partial<Parameters<typeof openDisputeBoxImpl>[0]> = {}) => {
+    const seen: BoxOpenState[] = [];
+    await openDisputeBoxImpl({
+      ready: true,
+      alive: () => true,
+      apply: (s) => { seen.push(s); },
+      read: async () => ({ reading: emptyReading(), before: 1, deviceKey: 'agree' as const }),
+      ...over,
+    });
+    return seen;
+  };
+
+  it('O1: успех — сперва «читаем», потом ящик; «читаем» не пропущено', async () => {
+    const seen = await press();
+    expect(seen.map(s => s.kind), 'человек жмёт и до ответа не видит ничего').toEqual(['reading', 'done']);
+    expect(seen[1].kind === 'done' && seen[1].before).toBe(1);
+  });
+
+  it('O2: ключа на устройстве НЕТ — своя причина и своя кнопка, а не общий отказ', async () => {
+    const seen = await press({
+      read: async () => { throw Object.assign(new Error('нет ключа'), { code: 'session_absent' }); },
+    });
+    // Схлопни этот исход в отказ — человек прочтёт «ящик прочитать не удалось»
+    // там, где ему нужно одно нажатие, и окно подписи станет неожиданностью.
+    expect(seen.map(s => s.kind)).toEqual(['reading', 'key_needed']);
+  });
+
+  it('O3: отказ приезжает РАЗОБРАННОЙ причиной, а не английским текстом', async () => {
+    const seen = await press({
+      read: async () => { throw Object.assign(new Error('403'), { code: 'not_the_arbiter' }); },
+    });
+    expect(seen[1]).toEqual({ kind: 'failed', refusal: 'not_mine_now' });
+
+    const other = await press({
+      read: async () => { throw Object.assign(new Error('пропуск'), { code: 'pass_expired' }); },
+    });
+    expect(other[1]).toEqual({ kind: 'failed', refusal: 'pass_stale' });
+
+    // Незнакомое НЕ угадывается — честное «не знаем», а не выдуманный совет.
+    const unknown = await press({ read: async () => { throw new Error('оборвалась сеть'); } });
+    expect(unknown[1]).toEqual({ kind: 'failed', refusal: 'unknown' });
+  });
+
+  it('O4: идти не с чем (кошелёк не подключён) — НЕ ПРИМЕНЯЕТСЯ НИЧЕГО', async () => {
+    let read = 0;
+    const seen = await press({ ready: false, read: async () => { read++; throw new Error('не должно'); } });
+    // ⚠️ Порядок здесь несущий: выставь «читаем» до этой проверки — карточка
+    // зависла бы на «читаем» навсегда, потому что дальше стоит выход.
+    expect(seen, 'экран ушёл в «читаем» и не вернётся').toEqual([]);
+    expect(read, 'пошли за ящиком без ключа').toBe(0);
+  });
+
+  it('O5: вкладку закрыли, пока читали — ответ никуда не применяется', async () => {
+    const seen = await press({ alive: () => false });
+    expect(seen.map(s => s.kind), 'состояние ставится мёртвому компоненту').toEqual(['reading']);
+    const failed = await press({
+      alive: () => false,
+      read: async () => { throw Object.assign(new Error('нет ключа'), { code: 'session_absent' }); },
+    });
+    expect(failed.map(s => s.kind)).toEqual(['reading']);
+  });
+
+  it('O6: нажатие НЕ БРОСАЕТ — отказ становится состоянием, а не исключением', async () => {
+    await expect(press({ read: async () => { throw new Error('что угодно'); } })).resolves.toBeTruthy();
   });
 });

@@ -31,7 +31,7 @@
  *     последовательность вызовов и раскладка состояния. Она не сторожится
  *     ничем, и это сказано вслух, а не выдано за проверенное.
  */
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import Link from 'next/link';
 import type { PublicClient } from 'viem';
@@ -43,13 +43,13 @@ import type { ChainChatKeys } from '@/lib/arbiterChatKey';
 import { listDisputeBox, fetchDisputeBag } from '@/lib/disputeBox';
 import { arbiterTurnOf } from '@/lib/arbiterTurn';
 import {
-  readDisputeBox, openArbiterBoxSession, isSessionAbsent,
-  arbitersBefore, deviceKeyVerdict, boxReadRefusal, BOX_READ_REFUSAL_KEYS,
+  readDisputeBox, openArbiterBoxSession, openDisputeBoxImpl,
+  arbitersBefore, deviceKeyVerdict, BOX_READ_REFUSAL_KEYS,
   attestationDateLabel,
-  type BoxReadRefusal, type DeviceKeyVerdict, type DisputeBoxReading,
+  type BoxOpenState, type BoxReadRefusal, type DeviceKeyVerdict, type DisputeBoxReading,
   type PresentedBag, type PresentedMessageView,
 } from '@/lib/arbiterPresentations';
-import { anchorOrder, firstNoResponse, type NoResponseRecord } from '@/lib/presentationAnchor';
+import { anchorOrder, firstNoResponse, type ChainAnchors } from '@/lib/presentationAnchor';
 
 /** Пока `getDetails` дела не приехал, стороны неизвестны — ссылок в чат не рисуем. */
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
@@ -69,15 +69,14 @@ export interface ArbiterPresentationsTabProps {
   getBoxPass: () => Promise<string>;
 }
 
-type BoxState =
-  | { kind: 'idle' }
-  | { kind: 'reading' }
-  | { kind: 'key_needed' }
-  // ⚠️ НЕ `message: string`. Текст ошибки транспорта человеку не показывается
-  // вовсе: он на английском, он про HTTP и он ничего не советует. Наружу едет
-  // РАЗОБРАННАЯ причина, у каждой свой ключ локали и свой совет.
-  | { kind: 'failed'; refusal: BoxReadRefusal }
-  | { kind: 'done'; reading: DisputeBoxReading; before: number | null; deviceKey: DeviceKeyVerdict };
+// ⚠️ ЧЕТЫРЕ ИСХОДА НАЖАТИЯ ОБЪЯВЛЕНЫ В МОДУЛЕ (`BoxOpenState`), а не здесь:
+// там же они и решаются. Экран добавляет к ним ровно один — `idle`, «ещё не
+// нажимали», которого решение не производит никогда.
+//
+// ⚠️ Отказ едет РАЗОБРАННОЙ причиной, не строкой: текст ошибки транспорта на
+// английском, он про HTTP и ничего не советует. У каждой причины свой ключ
+// локали и свой совет.
+type BoxState = { kind: 'idle' } | BoxOpenState;
 
 /* ─────────────────────────── чистая разметка ──────────────────────────── */
 
@@ -187,6 +186,27 @@ export function BoxSummaryView({ reading, before, deviceKey }: {
           count: reading.anchors ? reading.anchors.noResponse.length : 0,
         })}</p>
       )}
+      {/* ⚠️ ПРЕДЕЛ ПОИСКА НАЗЫВАЕТСЯ ЧИСЛАМИ (правка круга 1). Лента смотрит на
+          сутки назад, а спор с апелляцией живёт восемь; без этой строки арбитр
+          читал бы отсутствие порядка как отсутствие фактов. «Не знаю» и «не
+          смотрел так далеко» — разные вещи. */}
+      {reading.anchors && !reading.anchors.logsComplete && (
+        <p className="text-amber-300/85">
+          {t('arbiter.presentations_anchor_window', {
+            from: reading.anchors.window ? reading.anchors.window.fromBlock.toString() : '—',
+            to: reading.anchors.window ? reading.anchors.window.toBlock.toString() : '—',
+          })}
+        </p>
+      )}
+      {/* ⚠️ И ВТОРОЙ ПРЕДЕЛ — ДЛИНА СПИСКА. Он честно превращает несовпадение в
+          «не знаем» (вердикт `unread`), но САМ факт обрезки прежде не доезжал
+          до глаз: арбитр видел «не знаем» и не понимал, чего именно мы не
+          дочитали. */}
+      {reading.anchors && !reading.anchors.digestsComplete && (
+        <p className="text-amber-300/85">
+          {t('arbiter.presentations_anchor_truncated', { count: reading.anchors.digests.length })}
+        </p>
+      )}
       {/* ⚠️ «Вам ничего не предъявили» — самая опасная надпись экрана: сказанная
           не вовремя, она превращает «мы не смогли открыть» в «сторона молчала»
           (§2.3 замысла запрещает это прямым текстом). Поэтому она подавляется,
@@ -290,12 +310,13 @@ function MessageRow({ m }: { m: PresentedMessageView }) {
  * «просил, ответа нет» — на блоке M; доверия к нашему серверу для такого
  * сравнения не нужно, а без него отпечаток остаётся украшением.
  */
-export function BagAnchorView({ bag, noResponse }: {
-  bag: PresentedBag; noResponse: NoResponseRecord | null;
+export function BagAnchorView({ bag, anchors }: {
+  bag: PresentedBag; anchors: ChainAnchors | null;
 }) {
   const t = useTranslations();
   const a = bag.anchor;
-  const order = anchorOrder(a.block, noResponse ? noResponse.block : null);
+  const noResponse = firstNoResponse(anchors);
+  const order = anchorOrder(a, anchors);
   return (
     <>
       {a.verdict === 'match' && (a.block !== null
@@ -348,13 +369,25 @@ export function BagAnchorView({ bag, noResponse }: {
           {t('arbiter.presentation_anchor_order_same', { block: a.block.toString() })}
         </p>
       )}
+      {/* ⚠️ ГРОМКАЯ ПОТЕРЯ (правка круга 1). Прежде этот случай молчал, и
+          «порядок показать нечем, потому что мы не смотрели так далеко» было
+          на экране НЕОТЛИЧИМО от «отпечатка нет». Разница принципиальная:
+          второе человек обходит сам, попросив разбор. Окно ленты — сутки, окно
+          спора — четверо, с апелляцией восемь; настоящее лечение (сабграф)
+          идёт отдельной работой, а до него потеря обязана звучать. */}
+      {order === 'out_of_window' && (
+        <p className="text-[11px] text-amber-300/85 flex items-start gap-1.5">
+          <ShieldAlert className="w-3 h-3 shrink-0 mt-0.5" />
+          {t('arbiter.presentation_anchor_order_out_of_window')}
+        </p>
+      )}
     </>
   );
 }
 
 /** Одно предъявление. Чистая. */
-export function PresentationBagView({ bag, noResponse = null }: {
-  bag: PresentedBag; noResponse?: NoResponseRecord | null;
+export function PresentationBagView({ bag, anchors = null }: {
+  bag: PresentedBag; anchors?: ChainAnchors | null;
 }) {
   const t = useTranslations();
   return (
@@ -397,7 +430,7 @@ export function PresentationBagView({ bag, noResponse = null }: {
         </p>
       )}
 
-      <BagAnchorView bag={bag} noResponse={noResponse} />
+      <BagAnchorView bag={bag} anchors={anchors} />
 
       <ul className="space-y-1.5">
         {bag.messages.map(m => <MessageRow key={`${m.sender}-${m.seq}`} m={m} />)}
@@ -416,17 +449,32 @@ function DisputeBoxCard({ deal, me, chainKeys, publicClient, signChatKey, getBox
 }) {
   const t = useTranslations();
   const [state, setState] = useState<BoxState>({ kind: 'idle' });
+  /** Чтение ящика — секунды и два окна кошелька; вкладку за это время
+   *  закрывают, а вкладки арбитра переключают между спорами. */
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; };
+  }, []);
 
+  /**
+   * ⚠️ РЕШЕНИЕ ПО НАЖАТИЮ ВЫНЕСЕНО ЦЕЛИКОМ — `openDisputeBoxImpl` (правка
+   * круга 1). Здесь остаётся только сборка зависимостей: что читать и куда
+   * применять. Три исхода («ключа нет» → своя кнопка, разобранный отказ,
+   * успех), гейт «не с чем идти» и проверка «жив ли ещё» живут в модуле и
+   * меряются node-тестами (O1-O6), а не замком на текст исходника.
+   */
   const open = useCallback(async (mayCreate: boolean) => {
     const sign = signChatKey();
-    if (!me || !sign) return;
-    setState({ kind: 'reading' });
-    try {
+    await openDisputeBoxImpl({
+      ready: Boolean(me && sign),
+      alive: () => mounted.current,
+      apply: (next) => setState(next),
       // Одно нажатие — два обращения к кошельку подряд (ключ, потом пропуск).
       // Между ними обязан стоять гейт: на телефоне кошелёк уводит страницу, и
       // вторая подпись улетела бы в замёрзшую вкладку.
-      const reading = await runGatedKeyAction(
-        () => openArbiterBoxSession(me, sign, { mayCreate }),
+      read: () => runGatedKeyAction(
+        () => openArbiterBoxSession(me!, sign!, { mayCreate }),
         async ({ session }) => {
           const pass = await getBoxPass();
           const agreement = deal.agreement;
@@ -442,7 +490,7 @@ function DisputeBoxCard({ deal, me, chainKeys, publicClient, signChatKey, getBox
             },
             own: session.keypair,
             agreement,
-            me,
+            me: me!,
             publicClient,
           });
           const keys = await claimKeysFromSession(session);
@@ -453,16 +501,8 @@ function DisputeBoxCard({ deal, me, chainKeys, publicClient, signChatKey, getBox
             deviceKey: deviceKeyVerdict(keys.boxKey, chainKeys),
           };
         },
-      );
-      setState({ kind: 'done', ...reading });
-    } catch (err) {
-      // Ключа на устройстве нет — это НЕ поломка, а названная причина с
-      // отдельной кнопкой: окно подписи не должно быть неожиданностью.
-      if (isSessionAbsent(err)) { setState({ kind: 'key_needed' }); return; }
-      // Причина разбирается ЗДЕСЬ и по коду: дальше в разметку едет уже она,
-      // а не английский текст исключения.
-      setState({ kind: 'failed', refusal: boxReadRefusal(err) });
-    }
+      ),
+    });
   }, [me, signChatKey, getBoxPass, deal.agreement, publicClient, chainKeys]);
 
   return (
@@ -510,9 +550,11 @@ function DisputeBoxCard({ deal, me, chainKeys, publicClient, signChatKey, getBox
               <PresentationBagView
                 key={b.bagKey}
                 bag={b}
-                // Самая ранняя запись о молчании — с ней и сравнивается
-                // предъявление: поздние записи порядка не меняют.
-                noResponse={firstNoResponse(state.reading.anchors)}
+                // Ответ цепи едет ЦЕЛИКОМ: порядок решает `anchorOrder`, и ему
+                // нужна не только первая запись о молчании, но и то, накрыла ли
+                // лента окно — иначе «записи нет» и «не смотрели так далеко»
+                // на экране сольются.
+                anchors={state.reading.anchors}
               />
             ))}
           </div>

@@ -263,15 +263,39 @@ export function containerAnchor(
  * Порядок двух фактов цепи. ⚠️ РАДИ ЭТОГО ВСЁ И ЗАТЕВАЛОСЬ: доверия к нашему
  * серверу для такого сравнения не нужно.
  *
- * `unknown` — хотя бы одного номера нет (лента не дотянулась, записи не было).
- * Молчание тут обязательно: угаданный порядок стоит вердикта.
+ * ⚠️ «НЕ ЗНАЮ» И «НЕ СМОТРЕЛ ТАК ДАЛЕКО» — РАЗНЫЕ ВЕЩИ, И ЭТО ПРАВКА КРУГА 1.
+ * Прежде оба схлопывались в `unknown`, строка порядка просто не рисовалась, и
+ * потеря была НЕОТЛИЧИМА от «отпечатка нет». Между тем второе человек может
+ * обойти сам, попросив разбор: окно ленты — сутки, окно спора — четверо, а с
+ * апелляцией восемь, то есть к разбору апелляции отпечаток почти всегда старше
+ * окна. Настоящее лечение — сабграф, он отдельной работой; до него потеря
+ * обязана быть ГРОМКОЙ.
+ *
+ *  - `digest_first` / `record_first` / `same_block` — знаем и говорим;
+ *  - `not_anchored`  — отпечаток в цепи не найден: упорядочивать нечего, и об
+ *    этом уже сказано своей строкой (`absent`/`mismatch`);
+ *  - `chain_unread`  — цепь не отвечала вовсе;
+ *  - `no_record`     — записи «просил, ответа нет» в цепи НЕТ, и лента накрыла
+ *    всё: это ЗНАНИЕ, а не пробел, и молчать про него законно;
+ *  - `out_of_window` — ⚠️ ГРОМКАЯ ПОТЕРЯ. Отметка есть, но номер блока (свой
+ *    или чужой) остался за границей окна поиска. Сказать надо словами.
  */
-export type AnchorOrder = 'digest_first' | 'record_first' | 'same_block' | 'unknown';
+export type AnchorOrder =
+  | 'digest_first' | 'record_first' | 'same_block'
+  | 'not_anchored' | 'chain_unread' | 'no_record' | 'out_of_window';
 
-export function anchorOrder(digestBlock: bigint | null, noResponseBlock: bigint | null): AnchorOrder {
-  if (typeof digestBlock !== 'bigint' || typeof noResponseBlock !== 'bigint') return 'unknown';
-  if (digestBlock < noResponseBlock) return 'digest_first';
-  if (digestBlock > noResponseBlock) return 'record_first';
+export function anchorOrder(anchor: BagAnchor, anchors: ChainAnchors | null): AnchorOrder {
+  if (!anchors) return 'chain_unread';
+  if (anchor.verdict !== 'match') return 'not_anchored';
+  // Отпечаток отмечен, а на каком блоке — не видно: лента до него не достала.
+  if (typeof anchor.block !== 'bigint') return 'out_of_window';
+  const rec = firstNoResponse(anchors);
+  // ⚠️ «Записи нет» — знание ТОЛЬКО при накрытой ленте. Не накрыта — запись
+  // могла лежать старше окна, и выдать её отсутствие за факт значило бы
+  // соврать ровно там, где решается спор.
+  if (!rec) return anchors.logsComplete ? 'no_record' : 'out_of_window';
+  if (anchor.block < rec.block) return 'digest_first';
+  if (anchor.block > rec.block) return 'record_first';
   return 'same_block';
 }
 
