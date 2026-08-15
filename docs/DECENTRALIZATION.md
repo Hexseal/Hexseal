@@ -65,9 +65,17 @@ arbiter for cause (`ArbiterAccountabilityFacet.removeArbiterForCause`). Once
 governance is active and a successor address has been named, only that address
 may call it; the owner gets the same rejection as a stranger, and cannot take the
 power back — after handover, `setDAOAddress` accepts calls only from the sitting
-DAO address. The seating powers (`addArbiter`, `setChiefArbiter`) close at the
-same moment and the chief-arbiter role stops existing altogether; the only
-remaining way into the roster is the reputation-and-bond-gated `applyAsArbiter`.
+DAO address. Seating a new arbiter by hand (`addArbiter`) closes at that same
+moment; the only remaining way into the roster is the reputation-and-bond-gated
+`applyAsArbiter`.
+
+Naming a chief arbiter (`setChiefArbiter`) closes **earlier** — the instant
+governance becomes active, whether or not a successor has been named yet. That
+is deliberate and not a copy of the rule above: the chief-arbiter role stops
+existing the moment governance is active, because every check that admits him
+(`onlyOwnerOrChief`, in both arbiter facets) stops seeing him then. Writing the
+slot in that window would have named a chief with no powers at all, and
+`getChiefArbiter()` would have reported him to readers as if he had them.
 
 **`overturnVerdict` and `freezeVerdict` are not in that first handover**, and an
 earlier version of this document said they were. They sit behind `onlyOwnerOrDAO`
