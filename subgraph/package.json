@@ -12,5 +12,8 @@
   "dependencies": {
     "@graphprotocol/graph-cli": "^0.98.1",
     "@graphprotocol/graph-ts": "^0.38.2"
+  },
+  "overrides": {
+    "js-yaml": "^4.3.1"
   }
 }
