@@ -49,12 +49,14 @@ import "../src/JobReceiptFacet.sol";
 ///   - `buildInitCuts`/`buildRemainingCuts` wire a correct selector set to the
 ///     wrong `FacetCut.facetAddress`
 ///   - the actual `DiamondProxy` this script would produce does not end up with
-///     exactly 11 facets, exactly 180 routed selectors, and consistent
+///     exactly 11 facets, exactly 181 routed selectors, and consistent
 ///     `facetAddress(sel)` <-> `facets()` routing in both directions
 ///     (177 -> 179, 15 Aug 2026: arbiter-accountability task 1 added
 ///     getSeatedBy/getSeatedCountBy to ArbiterRegistryFacet; 179 -> 180,
 ///     same day: arbiter-accountability task 2 added getChiefBloc to cap
-///     the chief's bloc below the appeal quorum)
+///     the chief's bloc below the appeal quorum; 180 -> 181, same day:
+///     arbiter-accountability task 3 added getMaxClaimsPerArbiter to cap
+///     how many disputes an arbiter can hold open at once)
 contract DeployFullSelectorsTest is Test {
     DeployFull internal deploy;
 
@@ -290,7 +292,7 @@ contract DeployFullSelectorsTest is Test {
     //
     // This deploys all eleven real facets, builds the diamond exactly the way
     // run() does, and asserts the diamond that comes out the other end has
-    // exactly 11 facets, exactly 180 routed selectors, and that
+    // exactly 11 facets, exactly 181 routed selectors, and that
     // facetAddress(sel) and facets() agree with each other in both directions.
     // This is the only check in the suite that would catch a selector set
     // wired to the wrong facet address — diamondCut() itself does not validate
@@ -334,7 +336,7 @@ contract DeployFullSelectorsTest is Test {
                 );
             }
         }
-        assertEq(totalRouted, 180, "diamond should route exactly 180 selectors total");
+        assertEq(totalRouted, 181, "diamond should route exactly 181 selectors total");
 
         // Reverse direction: facetAddresses() must report exactly the same set
         // of addresses facets() reported them under.

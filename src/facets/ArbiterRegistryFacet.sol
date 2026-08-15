@@ -255,6 +255,15 @@ contract ArbiterRegistryFacet {
 
     uint256 private constant DEFAULT_ARBITER_FLOOR = 10_000_000; // 10 USDC (6 decimals)
 
+    // ── Потолок споров в руках (arbiter-accountability, задача 3) ──
+    /// Сколько споров арбитр держит одновременно. Ограничивает ферму сборов —
+    /// арбитр зарабатывает долю сбора с КАЖДОГО спора независимо от того,
+    /// куда решил, значит «набрать много и решать наугад» — доход без
+    /// работы. Потолок считает ЧИСЛО, а не сумму: сумму назначает создатель
+    /// сделки, и любой потолок по ней наследовал бы её недоверенность.
+    /// Утверждено владельцем 15 августа 2026.
+    uint256 private constant MAX_CLAIMS_PER_ARBITER = 10;
+
     // -------- EVENTS --------
 
     event ArbiterAdded(address indexed arbiter);
@@ -405,6 +414,9 @@ contract ArbiterRegistryFacet {
     /// ставленники решают исход любой апелляции, а после передачи сноса
     /// голосованию — и исход любого сноса, включая его собственный.
     error ChiefBlocWouldReachQuorum(uint256 bloc, uint256 quorum);
+
+    // ── Потолок споров в руках (arbiter-accountability, задача 3) ──
+    error TooManyOpenClaims(uint256 held, uint256 cap);
 
     // -------- MODIFIERS --------
 
@@ -662,6 +674,12 @@ contract ArbiterRegistryFacet {
         ArbiterRegistryStorage.Data storage d = ArbiterRegistryStorage.data();
 
         if (!d.isArbiter[caller]) revert NotArbiter();
+
+        // Потолок проверяется до staticcall'ов в Agreement: отказывать надо
+        // дёшево, а не после четырёх чтений чужого контракта.
+        uint256 held = d.openClaimCount[caller];
+        if (held >= MAX_CLAIMS_PER_ARBITER) revert TooManyOpenClaims(held, MAX_CLAIMS_PER_ARBITER);
+
         if (boxKey == bytes32(0) || signKey == bytes32(0)) revert ZeroChatKey();
         if (d.disputeClaims[agreement] != address(0)) revert AlreadyClaimed();
 
@@ -1793,5 +1811,12 @@ contract ArbiterRegistryFacet {
     /// addArbiter не даёт этому числу дорасти до кворума для посадок директора.
     function getChiefBloc() external view returns (uint256) {
         return _chiefBloc(ArbiterRegistryStorage.data());
+    }
+
+    /// @notice Потолок споров, которые арбитр может держать одновременно.
+    /// Единственное место, где число объявлено — фронт обязан читать через
+    /// эту функцию, а не держать копию.
+    function getMaxClaimsPerArbiter() external pure returns (uint256) {
+        return MAX_CLAIMS_PER_ARBITER;
     }
 }

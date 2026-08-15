@@ -8,10 +8,10 @@ pragma solidity ^0.8.20;
 // см. test/StorageLayout.t.sol.
 //
 // Регенерирован 2026-07-25 из живых ABI (`forge inspect <Facet> methodIdentifiers`)
-// после ~40 инкрементальных апгрейдов, которые этот файл не отслеживал. Все 180
-// селекторов 11 фасетов проверены против test/DeployFullSelectors.t.sol — тот тест
+// после ~40 инкрементальных апгрейдов, которые этот файл не отслеживал. Все 181
+// селектор 11 фасетов проверены против test/DeployFullSelectors.t.sol — тот тест
 // падает, если этот файл и живые ABI разойдутся снова. Число здесь — сумма
-// литералов `new bytes4[](n)` в билдерах ниже; оно уже восьмикратно протухало (стояло
+// литералов `new bytes4[](n)` в билдерах ниже; оно уже девятикратно протухало (стояло
 // 148, когда фабрика выросла с 13 до 20; затем 159, до порога и котировки
 // платного вызова арбитра; затем 162 — цифру не поправили в том же коммите,
 // где код вырос до 167, 31 июля 2026; затем 167, когда 9 августа 2026 добавился
@@ -20,7 +20,8 @@ pragma solidity ^0.8.20;
 // затем 177, когда 15 августа 2026 приехали getSeatedBy/getSeatedCountBy —
 // провенанс посадки арбитра, задача 1 плана arbiter-accountability; затем 180,
 // когда следом же 15 августа 2026 приехал getChiefBloc — потолок запаса
-// директора, задача 2 того же плана),
+// директора, задача 2 того же плана; затем 181, когда в тот же день приехал
+// getMaxClaimsPerArbiter — потолок споров в руках, задача 3 того же плана),
 // поэтому сверяется тем же тестом.
 // Пересчитать, не полагаясь на глаз:
 //   grep -o "new bytes4\[\]([0-9]*)" script/DeployFull.s.sol \
@@ -387,9 +388,9 @@ contract DeployFull is Script {
         sels[24] = ServiceBoardFacet.getPendingRequestCount.selector;
     }
 
-    // ArbiterRegistryFacet — 67 селекторов
+    // ArbiterRegistryFacet — 68 селекторов
     function arbiterRegistryFacetSelectors() public pure returns (bytes4[] memory sels) {
-        sels = new bytes4[](67);
+        sels = new bytes4[](68);
 
         // DAO-режим
         sels[0]  = ArbiterRegistryFacet.activateDAO.selector;
@@ -492,6 +493,14 @@ contract DeployFull is Script {
         // блок размером с кворум апелляции. На живой диамонд приезжает
         // отдельным разрезом апгрейда, не этим скриптом.
         sels[66] = ArbiterRegistryFacet.getChiefBloc.selector;
+
+        // Потолок споров в руках (arbiter-accountability, задача 3,
+        // 15 августа 2026): claimDispute отказывает арбитру, который уже
+        // держит MAX_CLAIMS_PER_ARBITER открытых споров, — ферма сборов
+        // (доход без работы независимо от вердикта) не может расти
+        // числом клеймов. На живой диамонд приезжает отдельным разрезом
+        // апгрейда, не этим скриптом.
+        sels[67] = ArbiterRegistryFacet.getMaxClaimsPerArbiter.selector;
     }
 
     // DealMetadataFacet — 1 селектор
