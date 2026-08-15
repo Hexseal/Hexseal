@@ -22,6 +22,15 @@ pragma solidity ^0.8.20;
 // нигде в src/): removeArbiterForCause, addArbiter, setChiefArbiter потеряли
 // бы владельца без единого адреса, который мог бы их заменить.
 //
+// ═══ C-3 (ревью, круг правок 1, 15 августа 2026) ═══
+// setDAOAddress остался бы обходом всего храповика: activateDAO() →
+// setDAOAddress(свой_адрес) → removeArbiterForCause проходит по ветке
+// msg.sender == daoAddress — владелец вернул бы себе снос ОДНОЙ лишней
+// транзакцией, и «человек вышел» осталось бы верным только для одной из двух
+// дверей. Починено: до активации ДАО зовёт владелец (называет преемника
+// заранее), после — только ТЕКУЩИЙ daoAddress (самомиграция). Владелец,
+// пытающийся назначить адрес после активации, получает NotCurrentDaoAddress.
+//
 // Лёгкий стенд: фасет развёрнут отдельно, диамонда не нужно (тот же приём,
 // что у test/ArbiterProvenance.t.sol). В отличие от ArbiterRemovalForCause.t.sol
 // слоты добывать не пришлось — setDAOAddress/activateDAO/addArbiter/
@@ -87,5 +96,32 @@ contract ArbiterSeatingHandoverTest is Test {
         facet.setDAOAddress(address(0xDA0));
         facet.activateDAO();
         assertTrue(facet.isDaoActive(), unicode"daoAddress назначен — включение проходит");
+    }
+
+    // ---------- C-3: setDAOAddress тоже храповик ----------
+
+    function test_SetDaoAddressWorksBeforeDaoAsOwner() public {
+        facet.setDAOAddress(address(0xDA0));
+        assertEq(facet.getDAOAddress(), address(0xDA0), unicode"до ДАО владелец называет преемника как прежде");
+    }
+
+    /// Ровно та дыра, что нашло ревью (C-3): владелец после активации ДАО
+    /// пытается назначить СЕБЯ (или кого угодно) daoAddress'ом заново —
+    /// обязан получить отказ, иначе через activateDAO() → setDAOAddress(...)
+    /// → removeArbiterForCause он вернул бы себе снос лишней транзакцией.
+    function test_SetDaoAddressRevertsForOwnerAfterDao() public {
+        _activateDaoWithSuccessor(); // daoAddress = 0xDA0
+        vm.expectRevert(ArbiterRegistryFacet.NotCurrentDaoAddress.selector);
+        facet.setDAOAddress(address(0xBEEF));
+    }
+
+    /// Симметричная половина: ДЕЙСТВУЮЩИЙ daoAddress вправе мигрировать сам
+    /// себя (ДАО меняет реализацию/адрес контракта) — право не заперто
+    /// навсегда, оно принадлежит текущему держателю.
+    function test_SetDaoAddressSucceedsForCurrentDaoAfterDao() public {
+        _activateDaoWithSuccessor(); // daoAddress = 0xDA0
+        vm.prank(address(0xDA0));
+        facet.setDAOAddress(address(0xBEEF));
+        assertEq(facet.getDAOAddress(), address(0xBEEF), unicode"текущий daoAddress мигрирует сам себя");
     }
 }

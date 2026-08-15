@@ -33,6 +33,7 @@ pragma solidity ^0.8.20;
 // ============================================================
 
 import {ArbiterRegistryStorage} from "./ArbiterRegistryFacet.sol";
+import {ReputationStorage} from "./ReputationFacet.sol";
 import {OwnershipLib} from "../DiamondProxy.sol";
 
 contract ArbiterAccountabilityFacet {
@@ -45,11 +46,29 @@ contract ArbiterAccountabilityFacet {
     /// неделю.
     uint256 private constant SUSPENSION_WINDOW = 72 hours;
 
-    /// Порог серии судейских ошибок. Совпадает с MAX_ARBITER_MISTAKES в
-    /// ArbiterRegistryFacet и обязано совпадать: это одно и то же правило,
-    /// прочитанное с двух сторон. Сверяется тестом
+    /// Зеркало MAX_ARBITER_MISTAKES из ArbiterRegistryFacet — само по себе НЕ
+    /// порог сноса, а якорь, от которого MISTAKE_THRESHOLD ниже вычисляется
+    /// вычитанием. Совпадение с оригиналом сверяется тестом
     /// test_MistakeThresholdMatchesRegistry.
-    uint256 private constant MISTAKE_THRESHOLD = 3;
+    uint256 private constant MAX_ARBITER_MISTAKES_MIRROR = 3;
+
+    /// Порог РУЧНОГО сноса. СТРОГО МЕНЬШЕ автоматического демоушена — и это
+    /// не произвольный выбор, а необходимость (найдено ревью, круг правок 1,
+    /// 15 августа 2026): `_recordArbiterMistake` на достижении
+    /// MAX_ARBITER_MISTAKES В ОДНОЙ ТРАНЗАКЦИИ и снимает `isArbiter`, и
+    /// обнуляет сам счётчик. Значит в покое (между транзакциями)
+    /// `arbiterMistakeStreak` ∈ {0, 1, ..., MAX_ARBITER_MISTAKES − 1} —
+    /// значение, РАВНОЕ автоматическому порогу, никогда не переживает
+    /// транзакцию живьём. Порог сноса на равенстве был бы кодом, которого
+    /// ни один боевой путь достичь не может: `removeArbiterForCause` с
+    /// OverturnedVerdicts/Timeouts не проходил бы вообще никогда.
+    ///
+    /// −1 читается не как техническая заплатка, а как замысел: ДВЕ ошибки
+    /// подряд — владелец видит и снимает сам, с записью повода в цепи; на
+    /// ТРЕТЬЕЙ автоматика уже сделала бы то же самое без повода и без записи,
+    /// кто нажал. Ручной путь ценен именно тем, что срабатывает РАНЬШЕ
+    /// автомата, а не дублирует его в момент, когда он и так уже сработал.
+    uint256 private constant MISTAKE_THRESHOLD = MAX_ARBITER_MISTAKES_MIRROR - 1;
 
     /// XP, на который сбрасывается снятый демоушеном. Совпадает с
     /// DEMOTION_XP_RESET в ArbiterRegistryFacet. Здесь НЕ применяется —
@@ -193,23 +212,26 @@ contract ArbiterAccountabilityFacet {
         }
     }
 
+    /// Зеркало DAO_THRESHOLD из ArbiterRegistryFacet. Найдено ревью (M-9, круг
+    /// правок 1, 15 августа 2026): читать только `daoActiveManual` было
+    /// половиной правды — при органическом росте `uniqueActiveUsers` ДАО
+    /// включилась бы САМА, addArbiter/setChiefArbiter (которые зовут
+    /// isDaoActive() напрямую, в своём же контракте) уже отказывали бы, а
+    /// removeArbiterForCause продолжал бы слушаться владельца — асимметрия
+    /// между «человек вышел» и «человек ещё здесь» ровно там, где обе двери
+    /// обязаны закрываться вместе. Совпадение с оригиналом сверяется тестом
+    /// test_DaoThresholdMatchesRegistry.
+    uint256 private constant DAO_THRESHOLD_MIRROR = 100_000;
+
     /// Храповик: право сноса уезжает вместе с активацией ДАО и не
     /// возвращается — activateDAO() односторонний, флаг не гасится нигде во
-    /// всём src/.
-    ///
-    /// ⚠️ Читает только daoActiveManual, а не полный
-    /// ArbiterRegistryFacet.isDaoActive() (тот ещё и uniqueActiveUsers >=
-    /// DAO_THRESHOLD — авто-ДАО органическим ростом, без единого вызова
-    /// activateDAO()). Дублировать этот второй порог здесь означало бы новую
-    /// константу, которая может разойтись с оригиналом, ради сценария не этой
-    /// задачи: авто-ДАО — теоретический путь при сегодняшних ручных арбитрах
-    /// (решение владельца 01.08.2026, «ДАО не запускаем»). Из этого следует
-    /// узкий, но честный разрыв: addArbiter/setChiefArbiter (в
-    /// ArbiterRegistryFacet, где isDaoActive() — своя функция, вызывается
-    /// напрямую) закрылись бы по авто-порогу раньше, чем это поле. Не эта
-    /// работа.
+    /// всём src/. Полное выражение, как и ArbiterRegistryFacet.isDaoActive():
+    /// ручной флаг ИЛИ заработанный порог. ReputationStorage — чужой
+    /// неймспейс, но этот фасет уже умеет в него ходить, а раздельная
+    /// семантика с ArbiterRegistryFacet.isDaoActive() была бы новым швом.
     function _isDaoActive(ArbiterRegistryStorage.Data storage d) private view returns (bool) {
-        return d.daoActiveManual;
+        if (d.daoActiveManual) return true;
+        return ReputationStorage.data().uniqueActiveUsers >= DAO_THRESHOLD_MIRROR;
     }
 
     /// `disputeRef` читается ТОЛЬКО кодом Silence: молчание — признак по
@@ -224,6 +246,14 @@ contract ArbiterAccountabilityFacet {
     /// здесь после передачи владельцу дороги нет — иначе автоматика (только
     /// то, что видит цепь) осталась бы единственной защитой, а сговор и слив
     /// переписки стали бы неснимаемыми вовсе).
+    ///
+    /// ⚠️ «Владельцу дороги нет» держится ещё на одном замке — не только
+    /// здесь: `ArbiterRegistryFacet.setDAOAddress` после активации ДАО тоже
+    /// требует, чтобы звал ТЕКУЩИЙ daoAddress, не владелец (иначе владелец
+    /// вернул бы себе эту функцию через `activateDAO()` →
+    /// `setDAOAddress(свой_адрес)`, круг правок 1, C-3). Обе половины
+    /// обязаны запираться синхронно — починка тут без починки там ничего не
+    /// стоила бы.
     function removeArbiterForCause(
         address arbiter,
         Cause   cause,
@@ -297,25 +327,26 @@ contract ArbiterAccountabilityFacet {
         return SUSPENSION_WINDOW;
     }
 
-    /// Порог серии судейских ошибок прочитанный с этой стороны. Совпадает с
-    /// ArbiterRegistryFacet.getMaxArbiterMistakes(). Сверяется тестом
-    /// test_MistakeThresholdMatchesRegistry.
+    /// Порог РУЧНОГО сноса прочитанный с этой стороны. Строго меньше
+    /// ArbiterRegistryFacet.getMaxArbiterMistakes() — сверяется тестом
+    /// test_MistakeThresholdMatchesRegistry (равенство запрещено намеренно,
+    /// см. докстринг MISTAKE_THRESHOLD).
     function getMistakeThreshold() external pure returns (uint256) {
         return MISTAKE_THRESHOLD;
     }
 
-    function isRegisteredArbiterHere(address who) external view returns (bool) {
-        return ArbiterRegistryStorage.data().isArbiter[who];
+    /// Зеркало MAX_ARBITER_MISTAKES прочитанное отсюда — само число, не порог
+    /// сноса (тот — getMistakeThreshold(), на единицу ниже). Существует
+    /// только для того, чтобы test_MistakeThresholdMatchesRegistry мог
+    /// сверить оба конца связи `MISTAKE_THRESHOLD = MAX_ARBITER_MISTAKES − 1`
+    /// с боевым числом в ArbiterRegistryFacet, а не только друг с другом.
+    function getMaxArbiterMistakesMirror() external pure returns (uint256) {
+        return MAX_ARBITER_MISTAKES_MIRROR;
     }
 
-    function getMistakeStreakOf(address who) external view returns (uint256) {
-        return ArbiterRegistryStorage.data().arbiterMistakeStreak[who];
-    }
-
-    /// Нужен тестам, чтобы сверить смещение вложенного мэппинга. Дублирует
-    /// getNoResponseAt из ArbiterRegistryFacet намеренно: через даймонд оба
-    /// селектора ведут в одно хранилище, а в лёгком стенде фасеты разные.
-    function getNoResponseAtHere(address agreement, address arbiter) external view returns (uint256) {
-        return ArbiterRegistryStorage.data().disputeNoResponseAtBy[agreement][arbiter];
+    /// Зеркало DAO_THRESHOLD прочитанное отсюда. Сверяется тестом
+    /// test_DaoThresholdMatchesRegistry.
+    function getDaoThresholdMirror() external pure returns (uint256) {
+        return DAO_THRESHOLD_MIRROR;
     }
 }

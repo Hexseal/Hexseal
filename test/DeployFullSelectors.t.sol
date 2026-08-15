@@ -50,7 +50,7 @@ import "../src/JobReceiptFacet.sol";
 ///   - `buildInitCuts`/`buildRemainingCuts` wire a correct selector set to the
 ///     wrong `FacetCut.facetAddress`
 ///   - the actual `DiamondProxy` this script would produce does not end up with
-///     exactly 12 facets, exactly 192 routed selectors, and consistent
+///     exactly 12 facets, exactly 191 routed selectors, and consistent
 ///     `facetAddress(sel)` <-> `facets()` routing in both directions
 ///     (177 -> 179, 15 Aug 2026: arbiter-accountability task 1 added
 ///     getSeatedBy/getSeatedCountBy to ArbiterRegistryFacet; 179 -> 180,
@@ -79,7 +79,16 @@ import "../src/JobReceiptFacet.sol";
 ///     `getMistakeThreshold`, and three standalone-test-rig getters (+5) —
 ///     `addArbiter`/`setChiefArbiter` also started reverting once DAO mode is
 ///     active (owner's literal instruction: "no more manual seating"), with no
-///     selector-count effect)
+///     selector-count effect; 192 -> 191, same day, review round 1 on task 6:
+///     three of those standalone-test-rig getters
+///     (isRegisteredArbiterHere/getMistakeStreakOf/getNoResponseAtHere) turned
+///     out to be exactly the getChiefArbiterAddress mistake from task 5 —
+///     duplicates of live state already exposed by ArbiterRegistryFacet's own
+///     getters through the diamond — and were removed; two getters over
+///     ArbiterAccountabilityFacet's own local constants
+///     (getMaxArbiterMistakesMirror, getDaoThresholdMirror) were added in
+///     their place, needed for cross-checking against ArbiterRegistryFacet's
+///     real numbers and not reachable any other way — net −1)
 contract DeployFullSelectorsTest is Test {
     DeployFull internal deploy;
 
@@ -324,7 +333,7 @@ contract DeployFullSelectorsTest is Test {
     //
     // This deploys all twelve real facets, builds the diamond exactly the way
     // run() does, and asserts the diamond that comes out the other end has
-    // exactly 12 facets, exactly 192 routed selectors, and that
+    // exactly 12 facets, exactly 191 routed selectors, and that
     // facetAddress(sel) and facets() agree with each other in both directions.
     // This is the only check in the suite that would catch a selector set
     // wired to the wrong facet address — diamondCut() itself does not validate
@@ -369,7 +378,7 @@ contract DeployFullSelectorsTest is Test {
                 );
             }
         }
-        assertEq(totalRouted, 192, "diamond should route exactly 192 selectors total");
+        assertEq(totalRouted, 191, "diamond should route exactly 191 selectors total");
 
         // Reverse direction: facetAddresses() must report exactly the same set
         // of addresses facets() reported them under.

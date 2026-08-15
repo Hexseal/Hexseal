@@ -463,6 +463,13 @@ contract ArbiterRegistryFacet {
     /// addArbiter/setChiefArbiter: вход только через applyAsArbiter (по гейту),
     /// роль директора упраздняется вместе с активацией ДАО.
     error SeatingHandedOver();
+    /// setDAOAddress после активации ДАО: назвать преемника может только уже
+    /// действующий daoAddress (самомиграция), не владелец. Без этого гейта
+    /// владелец мог бы вернуть себе снос по поводу лишней транзакцией —
+    /// activateDAO() → setDAOAddress(свой_адрес) → removeArbiterForCause по
+    /// ветке msg.sender == daoAddress — и «человек вышел» осталось бы верным
+    /// только для одной из двух дверей (найдено ревью, C-3, круг правок 1).
+    error NotCurrentDaoAddress();
 
     // -------- MODIFIERS --------
 
@@ -1566,9 +1573,24 @@ contract ArbiterRegistryFacet {
         return ArbiterRegistryStorage.data().refundableBounty[who];
     }
 
-    function setDAOAddress(address dao) external onlyOwner {
+    /// До активации ДАО назначает владелец (называет преемника заранее —
+    /// activateDAO() требует, чтобы daoAddress уже был ненулевым). После
+    /// активации меняет только уже действующий daoAddress сам себя
+    /// (самомиграция) — НЕ через `onlyOwner`: тот пустил бы владельца назад
+    /// в дверь, которую он якобы навсегда закрыл (найдено ревью, C-3, круг
+    /// правок 1, 15 августа 2026). Без этого гейта owner мог бы вернуть себе
+    /// removeArbiterForCause одной лишней транзакцией:
+    /// activateDAO() → setDAOAddress(свой_адрес) → снос по ветке
+    /// msg.sender == daoAddress.
+    function setDAOAddress(address dao) external {
         if (dao == address(0)) revert ArbiterZeroAddress();
-        ArbiterRegistryStorage.data().daoAddress = dao;
+        ArbiterRegistryStorage.Data storage d = ArbiterRegistryStorage.data();
+        if (isDaoActive()) {
+            if (msg.sender != d.daoAddress) revert NotCurrentDaoAddress();
+        } else {
+            if (msg.sender != OwnershipLib.contractOwner()) revert NotOwner();
+        }
+        d.daoAddress = dao;
         emit DAOAddressSet(dao);
     }
 

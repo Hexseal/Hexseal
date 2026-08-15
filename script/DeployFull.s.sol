@@ -8,8 +8,8 @@ pragma solidity ^0.8.20;
 // см. test/StorageLayout.t.sol.
 //
 // Регенерирован 2026-07-25 из живых ABI (`forge inspect <Facet> methodIdentifiers`)
-// после ~40 инкрементальных апгрейдов, которые этот файл не отслеживал. Все 192
-// селектора 12 фасетов проверены против test/DeployFullSelectors.t.sol — тот тест
+// после ~40 инкрементальных апгрейдов, которые этот файл не отслеживал. Все 191
+// селектор 12 фасетов проверены против test/DeployFullSelectors.t.sol — тот тест
 // падает, если этот файл и живые ABI разойдутся снова. Число здесь — сумма
 // литералов `new bytes4[](n)` в билдерах ниже; оно уже двенадцатикратно протухало (стояло
 // 148, когда фабрика выросла с 13 до 20; затем 159, до порога и котировки
@@ -38,7 +38,15 @@ pragma solidity ^0.8.20;
 // ArbiterAccountabilityFacet получил removeArbiterForCause, getMistakeThreshold
 // и три тестовых геттера лёгкого стенда (+5) — заодно addArbiter/setChiefArbiter
 // стали ревертить при активном ДАО (дословное решение владельца «никаких
-// ручных»), без изменения числа селекторов), поэтому сверяется тем же тестом.
+// ручных»), без изменения числа селекторов; затем 191, в тот же день, круг
+// правок 1 ревью задачи 6: три тестовых геттера-дубля
+// (isRegisteredArbiterHere/getMistakeStreakOf/getNoResponseAtHere — ровно
+// тот дефект, что getChiefArbiterAddress в задаче 5) сняты с
+// ArbiterAccountabilityFacet, взамен добавлены два геттера СОБСТВЕННЫХ
+// констант (getMaxArbiterMistakesMirror, getDaoThresholdMirror — не дубли,
+// у ArbiterRegistryFacet таких чисел под этими именами нет), 9 против
+// прежних 10, ArbiterRegistryFacet без изменений), поэтому сверяется тем же
+// тестом.
 // Пересчитать, не полагаясь на глаз:
 //   grep -o "new bytes4\[\]([0-9]*)" script/DeployFull.s.sol \
 //     | sed 's/.*(\([0-9]*\))/\1/' | awk '{s+=$1} END {print s}'
@@ -540,17 +548,19 @@ contract DeployFull is Script {
         sels[68] = ArbiterRegistryFacet.getMaxArbiterMistakes.selector;
     }
 
-    // ArbiterAccountabilityFacet — 10 селекторов (arbiter-accountability,
+    // ArbiterAccountabilityFacet — 9 селекторов (arbiter-accountability,
     // задача 4, 15 августа 2026, пять; шестой, getChiefArbiterAddress, снят
-    // задачей 5 того же дня — см. комментарий ниже; ещё пять приехали
-    // задачей 6 того же дня: снос с поводом, порог ошибок и три тестовых
-    // геттера, дублирующих поля другого фасета в лёгком стенде, где фасеты
-    // развёрнуты раздельно). Отдельный фасет, не дописка в
-    // ArbiterRegistryFacet: тот занимал 21 227 из 24 576 байт (86.4%), запаса
-    // не хватало. Делит тот же ArbiterRegistryStorage namespace — переноса
-    // данных нет.
+    // задачей 5 того же дня — см. комментарий ниже; задача 6 того же дня
+    // добавила пять (снос с поводом + четыре view), круг правок 1 ревью
+    // задачи 6 снял три тестовых геттера-дубля (isRegisteredArbiterHere,
+    // getMistakeStreakOf, getNoResponseAtHere — ровно тот дефект, что
+    // getChiefArbiterAddress в задаче 5) и добавил два зеркальных геттера
+    // констант (getMaxArbiterMistakesMirror, getDaoThresholdMirror) —
+    // 10 → 7 → 9). Отдельный фасет, не дописка в ArbiterRegistryFacet: тот
+    // занимал 21 227 из 24 576 байт (86.4%), запаса не хватало. Делит тот же
+    // ArbiterRegistryStorage namespace — переноса данных нет.
     function arbiterAccountabilityFacetSelectors() public pure returns (bytes4[] memory sels) {
-        sels = new bytes4[](10);
+        sels = new bytes4[](9);
         sels[0] = ArbiterAccountabilityFacet.suspendArbiter.selector;
         sels[1] = ArbiterAccountabilityFacet.liftSuspension.selector;
         sels[2] = ArbiterAccountabilityFacet.isSuspended.selector;
@@ -570,18 +580,20 @@ contract DeployFull is Script {
         // verifiedByChain=false. Право сноса уезжает владельцу вместе с
         // активацией ДАО и передаётся daoAddress — не запирается в пустоту.
         sels[5] = ArbiterAccountabilityFacet.removeArbiterForCause.selector;
-        sels[6] = ArbiterAccountabilityFacet.getMistakeThreshold.selector;
 
-        // Тестовые геттеры (та же причина, что у снятой getChiefArbiterAddress
-        // выше, но эти ТРИ оставлены смонтированными, а не сняты): лёгкий
-        // стенд test/ArbiterRemovalForCause.t.sol разворачивает этот фасет
-        // ОТДЕЛЬНО от ArbiterRegistryFacet, и getMistakeStreakOf/getNoResponseAtHere/
-        // isRegisteredArbiterHere сверяют смещения слотов и итог removeArbiterForCause
-        // на этом стенде — своих одноимённых геттеров с других полей того же
-        // namespace у ArbiterRegistryFacet для этого фасета нет.
-        sels[7] = ArbiterAccountabilityFacet.isRegisteredArbiterHere.selector;
-        sels[8] = ArbiterAccountabilityFacet.getMistakeStreakOf.selector;
-        sels[9] = ArbiterAccountabilityFacet.getNoResponseAtHere.selector;
+        // Зеркальные геттеры констант (круг правок 1 ревью задачи 6):
+        // getMistakeThreshold — порог РУЧНОГО сноса (MAX_ARBITER_MISTAKES − 1,
+        // строго ниже автоматического — иначе OverturnedVerdicts/Timeouts
+        // недостижимы, C-1). getMaxArbiterMistakesMirror/getDaoThresholdMirror
+        // — локальные зеркала чисел ArbiterRegistryFacet, нужны тестам, чтобы
+        // сверить обе половины связи с боевыми числами, а не только друг с
+        // другом. Это НЕ дубли снятых трёх выше: те читали ЖИВОЕ СОСТОЯНИЕ,
+        // уже доступное через ArbiterRegistryFacet (тот же дефект, что
+        // getChiefArbiterAddress); эти читают СОБСТВЕННЫЕ приватные константы
+        // фасета, которые больше ниоткуда не достать.
+        sels[6] = ArbiterAccountabilityFacet.getMistakeThreshold.selector;
+        sels[7] = ArbiterAccountabilityFacet.getMaxArbiterMistakesMirror.selector;
+        sels[8] = ArbiterAccountabilityFacet.getDaoThresholdMirror.selector;
     }
 
     // DealMetadataFacet — 1 селектор

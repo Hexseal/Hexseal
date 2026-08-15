@@ -982,8 +982,12 @@ contract DiamondTest is Test {
     // testResignAsArbiterRefundsBondAndClearsStatus выше — resignAsArbiter
     // переживает эту задачу и зовёт тот же хелпер очистки места. Форфейт
     // бонда при сносе по поводу (обратное поведение: не возврат, а изъятие
-    // в банк арбитров) — новое поведение removeArbiterForCause, покрыто
-    // test/ArbiterRemovalForCause.t.sol.
+    // в банк арбитров) — новое поведение removeArbiterForCause. ⚠️ При
+    // первом проходе задачи 6 здесь стояла та же фраза «покрыто», а покрытия
+    // не было ни строчки (ревью, C-2, круг правок 1) — теперь действительно
+    // покрыто именованным test_RemovalForCauseForfeitsTheBond в
+    // test/ArbiterRemovalForCause.t.sol (проверяет getArbiterBond → 0,
+    // getVaultBalance выросший ровно на форфейт, bondForfeited в событии).
 
     function testClaimDisputeIncrementsOpenClaimCount() public {
         address cli = address(uint160(46000));

@@ -139,6 +139,20 @@ occurrences: 4
   другом — владельческие операции гейслесс не бывают принципиально (см.
   шапку раздела).
 
+=== src/facets/ArbiterRegistryFacet.sol :: ArbiterRegistryFacet.setDAOAddress ===
+occurrences: 2
+не гейслесс, потому что: владельческая функция, но НЕ через модификатор
+  onlyOwner (ревью, C-3, круг правок 1, 15 августа 2026) — она сама храповик:
+  до активации ДАО зовёт владелец, после — только ТЕКУЩИЙ daoAddress
+  (самомиграция). Два сырых обращения — обе ветки одной проверки
+  (`msg.sender != d.daoAddress` / `msg.sender != OwnershipLib.contractOwner()`).
+  Без этого гейта владелец мог бы вернуть себе removeArbiterForCause одной
+  лишней транзакцией: activateDAO() → setDAOAddress(свой_адрес) → снос по
+  ветке msg.sender == daoAddress. Гейслесс-путь этой функции не нужен и был
+  бы опасен по той же причине, что и у onlyOwner-проверок выше: доверять
+  хвосту calldata в проверке владельца/daoAddress значит отдать роль
+  форвардеру.
+
 === src/facets/ArbiterRegistryFacet.sol :: ArbiterRegistryFacet.clearStuckVerdict ===
 occurrences: 1
 не гейслесс, потому что: аварийная очистка застрявшего вердикта, только владелец.
