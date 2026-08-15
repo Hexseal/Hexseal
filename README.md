@@ -259,6 +259,23 @@ In other words the machine code is unchanged; only the metadata fingerprint
 moved. The next deployment re-verifies with the new header and the difference
 disappears.
 
+⚠️ **Since 15 August 2026 there is a second, larger difference, and it is not
+cosmetic.** Everything above was compiled against an OpenZeppelin snapshot from
+August 2025; the repository now pins **OpenZeppelin v5.7.0**. Our own `src/`
+files did not change, so a file-to-file diff still shows the one header line —
+but the verified source on Basescan carries the *old* OpenZeppelin alongside it,
+and a rebuild from today's tree produces different bytes for anything that
+imports it. Measured across all 52 compiled contracts: 38 identical, six with
+the same length but a moved metadata hash, and three genuinely smaller —
+`MinimalForwarder` by 2102 bytes (EIP-712 dropped its long-name fallback path),
+`DealMetadataFacet` by 132 and `SVGRenderer` by 10 (a rewritten Base64).
+
+What that does **not** change: the on-chain metadata a wallet shows you. That
+was measured too — the rendered `tokenURI` bytes are identical before and after,
+only cheaper to produce (a deal's render went from 2 458 260 to 2 146 017 gas).
+The lock that proves it is `test/MetadataRenderSnapshot.t.sol`, written for this
+upgrade because nothing had been checking that output at all.
+
 **Facet addresses are deliberately not listed here.** They change with every upgrade and a stale table sends people to abandoned deployments. Ask the chain instead — `facets()` on the proxy (EIP-2535 loupe) is the source of truth; the app itself reads the proxy address from configuration for the same reason.
 
 ## Documentation

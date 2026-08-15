@@ -42,17 +42,15 @@ upstream on the reader's own machine.
 
 | Path | What | Pinned at | Licence | Where the text lives |
 |---|---|---|---|---|
-| `lib/openzeppelin-contracts/` | OpenZeppelin Contracts | `e8745a6a` (2025-08-12) | MIT | `lib/openzeppelin-contracts/LICENSE` |
-| `lib/forge-std/` | Forge Standard Library | `0c71116a` (2025-08-12) | MIT **OR** Apache-2.0, at your option | `lib/forge-std/LICENSE-MIT`, `lib/forge-std/LICENSE-APACHE` |
+| `lib/openzeppelin-contracts/` | OpenZeppelin Contracts | **v5.7.0** (`cab19933`, 2026-07-29) | MIT | `lib/openzeppelin-contracts/LICENSE` |
+| `lib/forge-std/` | Forge Standard Library | **v1.16.2** (`bf647bd6`, 2026-06-30) | MIT **OR** Apache-2.0, at your option | `lib/forge-std/LICENSE-MIT`, `lib/forge-std/LICENSE-APACHE` |
 
-⚠️ **Both pins are `master` commits, not release tags** — measured, not assumed: the
-working trees were diffed against every upstream tag and against upstream history, and
-they match those two commits with zero differences. OpenZeppelin's own `package.json`
-says `5.4.0`, and this document said so too until 15 August 2026, but the code sits
-*after* the v5.4.0 tag: it carries the July 2025 audit PDF and CHANGELOG entries that
-the tag does not. forge-std likewise sits between v1.10.0 (31 July 2025) and v1.11.0.
-Anyone answering "which version of OpenZeppelin?" for an audit should quote the commit
-id, not the version string.
+Both pins are **release tags**, and that is checkable rather than claimed:
+`git -C lib/<name> describe --tags --exact-match` prints the version above for each.
+It is worth checking, because it was false until 15 August 2026: both dependencies sat
+on arbitrary `master` commits from **12 August 2025**, a year stale, while
+OpenZeppelin's `package.json` — and this document — said "5.4.0". The code was in fact
+*past* the v5.4.0 tag. The history is in `docs/OPEN-ITEMS.md` item 59.
 
 ### Nested inside OpenZeppelin's own tree
 
@@ -70,7 +68,7 @@ byte-for-byte comparison against what is already verified on Basescan.
 
 | Path | What | Pinned at | Licence | Where the text lives |
 |---|---|---|---|---|
-| `lib/openzeppelin-contracts/lib/forge-std/` | Forge Standard Library (OZ's copy) | `3b20d60d` (v1.9.6) | MIT OR Apache-2.0 | `…/lib/forge-std/LICENSE-MIT`, `…/LICENSE-APACHE` |
+| `lib/openzeppelin-contracts/lib/forge-std/` | Forge Standard Library (OZ's copy) | `1801b054` (v1.14.0) | MIT OR Apache-2.0 | `…/lib/forge-std/LICENSE-MIT`, `…/LICENSE-APACHE` |
 | `lib/openzeppelin-contracts/lib/erc4626-tests/` | ERC-4626 property tests | `232ff9ba` (v0.1.1) | **AGPL-3.0** | `lib/openzeppelin-contracts/lib/erc4626-tests/LICENSE` |
 | `lib/openzeppelin-contracts/lib/halmos-cheatcodes/` | Halmos cheatcodes | `7328abe1` | **AGPL-3.0** | `lib/openzeppelin-contracts/lib/halmos-cheatcodes/LICENSE` |
 | `lib/openzeppelin-contracts/contracts/vendor/compound/` | Compound interfaces | — | BSD-3-Clause | `lib/openzeppelin-contracts/contracts/vendor/compound/LICENSE` |

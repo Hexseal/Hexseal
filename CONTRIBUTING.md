@@ -89,7 +89,7 @@ the pull request and say why:
 
 | Suite | Expected |
 |---|---|
-| `forge test` | **669 passing** |
+| `forge test` | **672 passing** |
 | `relayer && npm test` | **44 files, 955 tests** |
 | `frontend && npm test` | **144 files, 2558 tests** |
 | `frontend && npm run build` | builds |
