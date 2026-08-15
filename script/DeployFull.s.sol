@@ -385,7 +385,7 @@ contract DeployFull is Script {
 
     // ArbiterRegistryFacet — 64 селектора
     function arbiterRegistryFacetSelectors() public pure returns (bytes4[] memory sels) {
-        sels = new bytes4[](64);
+        sels = new bytes4[](66);
 
         // DAO-режим
         sels[0]  = ArbiterRegistryFacet.activateDAO.selector;
@@ -476,6 +476,12 @@ contract DeployFull is Script {
         sels[61] = ArbiterRegistryFacet.getPresentationDigests.selector;
         sels[62] = ArbiterRegistryFacet.getPresentationDigestCount.selector;
         sels[63] = ArbiterRegistryFacet.getPresentationDigestsPage.selector;
+
+        // Провенанс посадки: кто посадил арбитра (15 августа 2026). На живой
+        // диамонд эти два приезжают отдельным разрезом апгрейда, не этим
+        // скриптом — см. следующую задачу плана.
+        sels[64] = ArbiterRegistryFacet.getSeatedBy.selector;
+        sels[65] = ArbiterRegistryFacet.getSeatedCountBy.selector;
     }
 
     // DealMetadataFacet — 1 селектор

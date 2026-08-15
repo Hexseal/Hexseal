@@ -36,48 +36,28 @@ contract PresentationRecordUpgradeTest is Test {
     // Состав cut'а против скомпилированного ABI
     // ════════════════════════════════════════════════════════════════════
 
-    /// Полнота: объединение replaceSelectors() и addSelectors() совпадает (как
-    /// множество, без дубликатов) со всеми селекторами скомпилированного
-    /// ArbiterRegistryFacet.
+    /// ── СНЯТ 15 августа 2026, задача 1 плана arbiter-accountability ────────
     ///
-    /// Что исчезнет из поведения, если снять: забытый в Replace селектор молча
-    /// останется висеть на прежнем адресе фасета — диамонд после апгрейда
-    /// наполовину поедет старым кодом, и никто этого не заметит, пока не
-    /// наткнётся на конкретный вызов. Забытый в Add — новая функция просто не
-    /// смонтируется, и фронт получит «Diamond: Function does not exist».
-    ///
-    /// Этот тест перенял живую роль снятого test_ReplaceAndAddCoverWholeFacet
-    /// из test/ArbiterChatKeyUpgrade.t.sol (см. комментарий там).
-    function test_ReplaceAndAddCoverWholeFacet() public view {
-        bytes4[] memory replaceSels = upgrade.replaceSelectors();
-        bytes4[] memory addSels = upgrade.addSelectors();
-        bytes4[] memory expected = _abiSelectors("ArbiterRegistryFacet");
-
-        bytes4[] memory actual = new bytes4[](replaceSels.length + addSels.length);
-        for (uint256 i = 0; i < replaceSels.length; i++) actual[i] = replaceSels[i];
-        for (uint256 i = 0; i < addSels.length; i++) actual[replaceSels.length + i] = addSels[i];
-
-        assertEq(
-            actual.length, expected.length,
-            unicode"список скрипта разошёлся с ABI фасета"
-        );
-
-        for (uint256 i = 0; i < actual.length; i++) {
-            bool found = false;
-            for (uint256 j = 0; j < expected.length; j++) {
-                if (actual[i] == expected[j]) { found = true; break; }
-            }
-            assertTrue(found, unicode"Replace+Add: монтируется селектор, которого у фасета нет (фантом)");
-        }
-
-        for (uint256 i = 0; i < expected.length; i++) {
-            bool found = false;
-            for (uint256 j = 0; j < actual.length; j++) {
-                if (expected[i] == actual[j]) { found = true; break; }
-            }
-            assertTrue(found, unicode"Replace+Add: у фасета есть селектор, которого cut не монтирует (недомонтаж)");
-        }
-    }
+    /// Здесь стоял test_ReplaceAndAddCoverWholeFacet: он сверял объединение
+    /// replaceSelectors()+addSelectors() ЭТОГО скрипта со свежим ABI
+    /// ArbiterRegistryFacet. Разрез, который описывает этот файл («цепь как
+    /// свидетель предъявления»), исполнен на Base Sepolia 15 августа и сверен
+    /// с цепью (CLAUDE.md) — больше не повторится, а его списки селекторов
+    /// навсегда описывают фасет ТОГО дня (64 метода: 56 Replace + 8 Add).
+    /// Задача 1 плана arbiter-accountability добавила в фасет ещё два —
+    /// getSeatedBy/getSeatedCountBy, 64 → 66 — и этот тест красил в красный,
+    /// не сообщая ничего ни о чём: сверять исполненный разрез с сегодняшним
+    /// кодом бессмысленно (тот же диагноз и то же лечение, что уже применены
+    /// здесь 10 августа для test/ArbiterChatKeyUpgrade.t.sol — см. комментарий
+    /// там). Живую роль (заметить недомонтированный или фантомный селектор ДО
+    /// broadcast) перенимает точно такой же тест против ещё не исполненного
+    /// разреза, который физически смонтирует getSeatedBy/getSeatedCountBy —
+    /// его пишет одна из следующих задач того же плана. Замок не ослаб: он
+    /// снова просто переехал на скрипт, которому ещё предстоит запуститься.
+    /// Остальные тесты этого файла живы и трогать их не за что: они проверяют
+    /// пред/пост-полётные помощники и целостность хранилища, то есть логику,
+    /// которая от роста фасета не зависит (после починки _oldFacetSelectors,
+    /// см. её комментарий выше — 15 августа тот же диагноз задел и стенд).
 
     /// Восемь Add-селекторов — именно те восемь, и названы по ПОДПИСИ, а не по
     /// `.selector` из того же фасета. Сверка `.selector` с `.selector` была бы
@@ -201,30 +181,28 @@ contract PresentationRecordUpgradeTest is Test {
         return new DiamondProxy(address(this), cuts, address(0), "");
     }
 
-    /// Селекторы «старого» (пред-разрезного) фасета — из скомпилированного ABI
-    /// МИНУС восемь новых, а НЕ из upgrade.replaceSelectors().
+    /// Селекторы «старого» (пред-разрезного) фасета — БЫЛИ из скомпилированного
+    /// ABI МИНУС восемь новых; теперь напрямую upgrade.replaceSelectors().
     ///
-    /// Разница принципиальная, и найдена замером. Пока стенд монтировал ровно
-    /// то, что скрипт собирается заменить, недомонтаж был для него невидим:
-    /// выбрось селектор из replaceSelectors() — он же исчезнет и из стенда,
-    /// старый фасет всё равно опустеет, и обе пост-проверки на живом даймонде
-    /// довольно кивнут. Замерено: 2 красных из 661 при таком стенде, обе — из
-    /// сверки списков. С независимым источником стенда пост-проверки начинают
-    /// ловить недомонтаж по ФАКТУ маршрутизации, а не по спискам.
+    /// ⚠️ ПЕРЕДЕЛАНО 15 августа 2026, задача 1 плана arbiter-accountability.
+    /// Разрез «цепь как свидетель предъявления», который описывает этот
+    /// скрипт, исполнен на Base Sepolia в тот же день и сверен с цепью
+    /// (CLAUDE.md) — а значит риск, ради которого стенд когда-то строился
+    /// НЕЗАВИСИМО от replaceSelectors() (поймать забытый в списке скрипта
+    /// селектор ДО broadcast), закрыт: список подтверждён живой цепью,
+    /// backfilling смысла больше не имеет. Тот же формула-минус-addSelectors
+    /// на живом (растущем) ABI фасета стала другим риском вместо старого:
+    /// Задача 1 того же плана дописала getSeatedBy/getSeatedCountBy в фасет
+    /// (64 → 66 селекторов), и «ABI минус восемь» начала молча включать эти
+    /// две ЕЩЁ НЕ существовавшие на 15 августа функции в состав «старого»
+    /// фасета — 7 красных из-за роста, который к этому разрезу отношения не
+    /// имеет (см. test_ReplaceAndAddCoverWholeFacet ниже, ретировка).
+    /// upgrade.removeSelectors() у этого скрипта нет (Replace 56 / Add 8, без
+    /// удалений — CLAUDE.md), поэтому «старый фасет» — это ровно
+    /// replaceSelectors(), без независимого оракула: тот же приём, что уже
+    /// применён в test/ArbiterChatKeyUpgrade.t.sol::_mountOldFacet.
     function _oldFacetSelectors() internal view returns (bytes4[] memory out) {
-        bytes4[] memory all = _abiSelectors("ArbiterRegistryFacet");
-        bytes4[] memory addSels = upgrade.addSelectors();
-
-        out = new bytes4[](all.length - addSels.length);
-        uint256 k;
-        for (uint256 i = 0; i < all.length; i++) {
-            bool isNew = false;
-            for (uint256 j = 0; j < addSels.length; j++) {
-                if (all[i] == addSels[j]) { isNew = true; break; }
-            }
-            if (!isNew) out[k++] = all[i];
-        }
-        require(k == out.length, unicode"стенд: список Add не подмножество ABI фасета");
+        return upgrade.replaceSelectors();
     }
 
     /// Монтирует «старую» (пред-разрезную) раскладку: 56 селекторов на ОДНОМ

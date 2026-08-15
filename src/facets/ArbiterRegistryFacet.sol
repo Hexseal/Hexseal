@@ -194,6 +194,21 @@ library ArbiterRegistryStorage {
         // ни удаления, ни переписывания: запись, которую можно снять,
         // доказывает ровно ничего.
         mapping(address => bytes32[]) presentationDigests;
+        // ── Ответственность ручных арбитров, 15 августа 2026 ────────────────
+        //
+        // ⚠️ ДОПИСАНО В КОНЕЦ. Порядок и типы полей выше не трогать: раскладка
+        // append-only, гейт script/check-storage-structs.sh.
+
+        /// Кто посадил этого арбитра. `address(0)` — самозапись через
+        /// applyAsArbiter. Нужен для двух вещей сразу: честно показать
+        /// читателю цепи, что за ручным арбитром не стоит ни залога, ни гейта
+        /// по XP, и посчитать блок директора.
+        mapping(address => address) seatedBy;
+
+        /// Сколько арбитров ЭТОЙ посадки сидят прямо сейчас. Ведётся
+        /// инкрементом при посадке и декрементом при любом уходе — иначе
+        /// потолок запаса директора обходится циклом «посадил-снял».
+        mapping(address => uint256) seatedCountBy;
     }
 
     function data() internal pure returns (Data storage d) {
@@ -243,6 +258,9 @@ contract ArbiterRegistryFacet {
     // -------- EVENTS --------
 
     event ArbiterAdded(address indexed arbiter);
+    /// Посадка с указанием того, кто нажал. `ArbiterAdded` остаётся ради
+    /// совместимости сабграфа v2.3.0, который уже в цепи и его читает.
+    event ArbiterSeated(address indexed arbiter, address indexed by, bool selfService);
     event ArbiterRemoved(address indexed arbiter);
     event ChiefArbiterSet(address indexed prev, address indexed next);
     event DisputeClaimCommitted(address indexed arbiter, bytes32 indexed commitment);
@@ -444,6 +462,9 @@ contract ArbiterRegistryFacet {
 
         emit ArbiterAdded(caller);
         emit ArbiterApplied(caller);
+        // Самозапись: seatedBy остаётся нулём — это и есть признак «сел сам».
+        // Событие всё равно шлём, чтобы у читателя был один поток вместо двух.
+        emit ArbiterSeated(caller, address(0), true);
     }
 
     /// @notice Самостоятельный выход из статуса арбитра, без штрафа. Возвращает бонд
@@ -475,6 +496,8 @@ contract ArbiterRegistryFacet {
             require(ok, "ArbiterRegistry: bond refund failed");
         }
 
+        _clearSeat(d, caller);
+
         emit ArbiterResigned(caller, bond);
     }
 
@@ -491,6 +514,11 @@ contract ArbiterRegistryFacet {
         if (d.isArbiter[arbiter]) revert AlreadyArbiter();
         d.isArbiter[arbiter] = true;
         d.arbiterList.push(arbiter);
+
+        d.seatedBy[arbiter] = msg.sender;
+        d.seatedCountBy[msg.sender]++;
+        emit ArbiterSeated(arbiter, msg.sender, false);
+
         emit ArbiterAdded(arbiter);
     }
 
@@ -514,6 +542,8 @@ contract ArbiterRegistryFacet {
             bool ok = IUSDCFull(usdc).transfer(arbiter, bond);
             require(ok, "ArbiterRegistry: bond refund failed");
         }
+
+        _clearSeat(d, arbiter);
 
         emit ArbiterRemoved(arbiter);
     }
@@ -1003,6 +1033,18 @@ contract ArbiterRegistryFacet {
         }
     }
 
+    /// Снимает провенанс и уменьшает счётчик посадившего. Зовётся из КАЖДОГО
+    /// пути выхода из корпуса: ручного снятия, самостоятельного увольнения и
+    /// автоматического разжалования. Пропусти любой — и потолок запаса
+    /// директора обходится циклом «посадил-снял-посадил».
+    function _clearSeat(ArbiterRegistryStorage.Data storage d, address arbiterAddr) private {
+        address seater = d.seatedBy[arbiterAddr];
+        if (seater != address(0) && d.seatedCountBy[seater] > 0) {
+            d.seatedCountBy[seater]--;
+        }
+        delete d.seatedBy[arbiterAddr];
+    }
+
     /// @notice Общий счётчик судейских ошибок для overturnVerdict и notifyArbiterTimeout.
     /// На 3-й подряд ошибке: статус снят, XP жёстко сброшен на DEMOTION_XP_RESET (не
     /// вычитание — одна и та же точка приземления вне зависимости от прежнего баланса),
@@ -1035,6 +1077,8 @@ contract ArbiterRegistryFacet {
                     break;
                 }
             }
+
+            _clearSeat(d, arbiterAddr);
 
             emit ArbiterDemoted(arbiterAddr);
         }
@@ -1701,5 +1745,16 @@ contract ArbiterRegistryFacet {
         uint256 floor_ = getArbiterFloor();
 
         return arbiterGets >= floor_ ? 0 : floor_ - arbiterGets;
+    }
+
+    /// @notice Кто посадил этого арбитра. `address(0)` — самозапись через
+    /// applyAsArbiter (нет ни залога, ни гейта по XP за ручной посадкой).
+    function getSeatedBy(address arbiter) external view returns (address) {
+        return ArbiterRegistryStorage.data().seatedBy[arbiter];
+    }
+
+    /// @notice Сколько арбитров этой посадки сидят прямо сейчас.
+    function getSeatedCountBy(address seater) external view returns (uint256) {
+        return ArbiterRegistryStorage.data().seatedCountBy[seater];
     }
 }
