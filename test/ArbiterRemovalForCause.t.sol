@@ -837,8 +837,14 @@ contract ArbiterRemovalForCauseTest is Test {
     /// Гейслесс-путь ЭТОЙ копии _msgSender() целиком: подпись, форвардер,
     /// релеер третьим адресом.
     ///
+    /// ⚠️ ПЕРЕИМЕНОВАН правкой C (16 августа 2026). Звался
+    /// `test_MsgSenderMatchesRegistry` — имя обещало сверку двух копий, которой
+    /// тест не делает и никогда не делал; его же докстринг ниже это опровергал.
+    /// Имя приведено к тому, что тест проверяет на самом деле.
+    ///
     /// ⚠️ Финальный обзор ветки, M-3 (16 августа 2026): этот тест НЕ сверяет
-    /// две копии между собой, хотя его имя и прежний докстринг это обещали —
+    /// две копии между собой, хотя его прежнее имя и прежний докстринг это
+    /// обещали —
     /// он гоняет только respondToRemoval, и правка в оригинале
     /// (ArbiterRegistryFacet._msgSender) не покраснела бы здесь ничем. Его
     /// настоящая ценность в другом и она не пропадает: он сверяет ответ с
@@ -859,7 +865,7 @@ contract ArbiterRemovalForCauseTest is Test {
     /// настоящий EIP-712-запрос, настоящая подпись, настоящий `fwd.execute()`
     /// от третьего адреса (не арбитр, не форвардер) — как это реально делает
     /// релеер.
-    function test_MsgSenderMatchesRegistry() public {
+    function test_RespondToRemovalThroughForwarderCreditsHuman() public {
         uint256 arbiterPk = 0xCA11;
         address arb = vm.addr(arbiterPk);
         address relayer = address(0x9999); // третий адрес: не арбитр, не форвардер
@@ -982,7 +988,8 @@ contract ArbiterRemovalForCauseTest is Test {
     /// смещение, что уже утверждено test/DisputeNoResponse.t.sol,
     /// test/ArbiterChatKey.t.sol и test/BoardsFixture.sol. Читаем-сверяем
     /// сразу же: при неверном смещении vm.store молча пишет в чужое поле, и
-    /// test_MsgSenderMatchesRegistry проверял бы совсем не то, о чём его имя.
+    /// test_RespondToRemovalThroughForwarderCreditsHuman проверял бы совсем не
+    /// то, о чём его имя.
     function _setForwarder(address facet, address forwarder) internal {
         bytes32 slot = bytes32(uint256(FactoryStorage.FACTORY_STORAGE_POSITION) + 3);
         vm.store(facet, slot, bytes32(uint256(uint160(forwarder))));

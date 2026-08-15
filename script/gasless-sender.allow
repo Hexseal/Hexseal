@@ -65,11 +65,25 @@ occurrences: 2
 occurrences: 2
 не гейслесс, потому что: то же тело правила (задача 8, 15 августа 2026, право
   ответа снятого) — форвардер читается из того же общего FactoryStorage, что и
-  у ArbiterRegistryFacet._msgSender. Копия обязана совпадать с той побайтно:
-  фасеты диамонда не наследуются друг от друга, общего базового контракта нет,
-  сверяется тестом test_MsgSenderMatchesRegistry (test/ArbiterRemovalForCause.t.sol).
-  Единственный вызывающий её пользовательский путь этого фасета — respondToRemoval;
-  до этой задачи файл не реализовывал _msgSender вовсе и числился «вне области».
+  у ArbiterRegistryFacet._msgSender. Фасеты диамонда не наследуются друг от
+  друга, общего базового контракта нет, поэтому тело здесь копия.
+  ⚠️ Побайтной сверки двух копий НЕТ и не заводилось (финальный обзор ветки,
+  M-3, 16 августа 2026): прежняя редакция этой записи обещала её и называла
+  сторожем test_MsgSenderMatchesRegistry — обещание было ложным дважды. Как
+  обстоит дело на самом деле: каждая копия доказана НЕЗАВИСИМО и против
+  ВНЕШНЕЙ правды — адреса подписанта, а не соседнего фасета. Здешнюю гоняет
+  через настоящий форвардер test_RespondToRemovalThroughForwarderCreditsHuman
+  (test/ArbiterRemovalForCause.t.sol), реестровую — пять её гейслесс-путей
+  (fundDispute, withdrawDisputeBounty, recordNoResponse, recordPresentationDigest,
+  setArbiterChatKey); порча оригинала даёт 6 красных, порча копии — 2. Разъезд
+  ПАРЫ ловит дифференциал test_MsgSenderAgreesAcrossBothFacetsOnOneForwarder
+  (test/ArbiterRemovalForCauseIntegration.t.sol) — единственное место, где обе
+  реализации работают на одном даймонде с одним форвардером и одним
+  подписантом. Расхождение, не меняющее поведения, вреда не наносит;
+  расхождение, меняющее поведение, краснеет и без сверки текста.
+  Единственный вызывающий эту копию пользовательский путь фасета —
+  respondToRemoval; до задачи 8 файл не реализовывал _msgSender вовсе и
+  числился «вне области».
 
 === src/facets/ArbiterRegistryFacet.sol :: ArbiterRegistryFacet._msgSender ===
 occurrences: 2
