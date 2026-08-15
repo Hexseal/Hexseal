@@ -216,7 +216,12 @@ contract ArbiterSuspensionTest is Test {
     function _advanceToSubmittedVerdict(MockAgreementForFinalize agreement, bytes32 salt) internal {
         vm.prank(arbiter);
         reg.commitDisputeClaim(keccak256(abi.encodePacked(address(agreement), arbiter, salt)));
-        vm.roll(block.number + 1);
+        // vm.getBlockNumber(), а не block.number: под via_ir solc считает NUMBER
+        // неизменным внутри вызова ровно так же, как TIMESTAMP (шапка файла), и
+        // второй vm.roll в одном теле теста прыгнул бы в тот же блок — клейм
+        // получил бы CommitmentTooEarly. Одиночным вызовам хелпера это было
+        // безразлично; правка A зовёт его четырежды подряд.
+        vm.roll(vm.getBlockNumber() + 1);
 
         vm.prank(arbiter);
         reg.claimDispute(address(agreement), salt, bytes32(uint256(1)), bytes32(uint256(2)));
@@ -270,6 +275,79 @@ contract ArbiterSuspensionTest is Test {
         reg.finalizeVerdict(address(agreement));
 
         assertEq(reg.getCleanVerdicts(arbiter), 1, unicode"неперевёрнутый вердикт добавил стаж");
+    }
+
+    // ============================================================
+    //  АВТОДЕМОУШЕН ТОЖЕ ПРИОСТАНАВЛИВАЕТ (правка A, 16 августа 2026)
+    //
+    //  Дверей снятия арбитра две. Ручная (removeArbiterForCause) выставляет
+    //  приостановку с починки C-1. Автоматическая — третья судейская ошибка в
+    //  _recordArbiterMistake — до правки A её не выставляла, и это была та же
+    //  дыра на двери, которая срабатывает БЕЗ человека: finalizeVerdict
+    //  смотрит на приостановку, а не на статус, так что автоснятый доводил уже
+    //  взятые споры до денег внутри FINALIZE_DELAY, и остановить его было
+    //  нечем (suspendArbiter на неарбитре ревертит NotAnArbiter).
+    //
+    //  Оба теста доказывают ПОСЛЕДСТВИЕМ — отказом finalizeVerdict, — а не
+    //  чтением поля: поле можно выставить и не читать нигде.
+    // ============================================================
+
+    /// Доводит `arbiter` до автодемоушена настоящим путём: три перевёрнутых
+    /// вердикта подряд по трём разным сделкам. Никаких vm.store в счётчик
+    /// ошибок — иначе тест разыгрывал бы сцену, до которой боевой код мог и не
+    /// доходить.
+    function _driveToAutoDemotion() internal {
+        for (uint256 i = 0; i < 3; i++) {
+            MockAgreementForFinalize mistake =
+                new MockAgreementForFinalize(address(uint160(0xD00 + i)), address(uint160(0xE00 + i)));
+            _advanceToSubmittedVerdict(mistake, bytes32(uint256(100 + i)));
+            reg.overturnVerdict(address(mistake), false);
+        }
+    }
+
+    function test_AutoDemotedArbiterCannotFinalize() public {
+        vm.store(address(reg), OWNER_SLOT, bytes32(uint256(uint160(owner))));
+        _makeArbiterReg(arbiter);
+
+        // Спор, взятый ДО снятия: его-то автоснятый и доводил бы до денег.
+        MockAgreementForFinalize victim = new MockAgreementForFinalize(address(0xC7), address(0xE7));
+        _advanceToSubmittedVerdict(victim, bytes32(uint256(77)));
+
+        uint256 t0 = vm.getBlockTimestamp();
+        _driveToAutoDemotion();
+
+        assertFalse(reg.isRegisteredArbiter(arbiter), unicode"сцена не та: автодемоушен не сработал");
+
+        // Окно финализации прошло — единственное, что теперь стоит между
+        // снятым арбитром и котлом, это приостановка.
+        vm.warp(t0 + 24 hours);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(ArbiterRegistryFacet.ArbiterSuspendedError.selector, t0 + 72 hours)
+        );
+        reg.finalizeVerdict(address(victim));
+    }
+
+    /// Различитель: без него первый тест не отличает приостановку от «сломалось
+    /// вообще всё». После окна вердикт финализируется обычным порядком — снятый
+    /// навсегда остаётся снятым, но вечно морозить чужие деньги приостановка не
+    /// должна.
+    function test_AutoDemotedArbiterVerdictFinalizesAfterWindow() public {
+        vm.store(address(reg), OWNER_SLOT, bytes32(uint256(uint160(owner))));
+        _makeArbiterReg(arbiter);
+
+        MockAgreementForFinalize victim = new MockAgreementForFinalize(address(0xC8), address(0xE8));
+        _advanceToSubmittedVerdict(victim, bytes32(uint256(78)));
+
+        uint256 t0 = vm.getBlockTimestamp();
+        _driveToAutoDemotion();
+
+        assertFalse(reg.isRegisteredArbiter(arbiter), unicode"сцена не та: автодемоушен не сработал");
+
+        vm.warp(t0 + 72 hours);
+        reg.finalizeVerdict(address(victim));
+
+        assertEq(reg.getCleanVerdicts(arbiter), 1, unicode"после окна вердикт исполнился обычным порядком");
     }
 
     function _makeArbiter(ArbiterAccountabilityFacet f, address who) internal {

@@ -52,11 +52,13 @@ contract ArbiterAccountabilityFacet {
 
     // -------- CONSTANTS --------
 
-    /// Сколько держит приостановка, если её не сняли раньше. Утверждено
-    /// владельцем 15 августа 2026: окно финализации — сутки, окно апелляции —
-    /// четверо; трое суток хватает разобраться и не держит честные стороны
-    /// неделю.
-    uint256 private constant SUSPENSION_WINDOW = 72 hours;
+    // Окно приостановки (SUSPENSION_WINDOW, 72 часа) переехало в
+    // ArbiterRegistryStorage 16 августа 2026 (финальный обзор ветки, правка A).
+    // Причина — там же, у объявления: приостановку выставляют ДВЕ двери в ДВУХ
+    // файлах (removeArbiterForCause здесь и автодемоушен в
+    // ArbiterRegistryFacet._recordArbiterMistake), и копия числа во втором была
+    // бы тем же классом дефекта, что разобранный в этой ветке M-3. Значение не
+    // менялось, getSuspensionWindow() ниже отдаёт его по-прежнему.
 
     /// Зеркало MAX_ARBITER_MISTAKES из ArbiterRegistryFacet — само по себе НЕ
     /// порог сноса, а якорь, от которого MISTAKE_THRESHOLD ниже вычисляется
@@ -286,7 +288,7 @@ contract ArbiterAccountabilityFacet {
 
         // От ТЕКУЩЕГО момента, а не прибавкой к прежнему сроку: иначе два
         // нажатия подряд держат чужие деньги шесть суток вместо трёх.
-        uint256 until = block.timestamp + SUSPENSION_WINDOW;
+        uint256 until = block.timestamp + ArbiterRegistryStorage.SUSPENSION_WINDOW;
         d.suspendedUntil[arbiter] = until;
         emit ArbiterSuspended(arbiter, msg.sender, until);
     }
@@ -491,7 +493,7 @@ contract ArbiterAccountabilityFacet {
         // остаётся снятым, но его вердикты после окна финализируются обычным
         // порядком — вечная заморозка чужих денег ценой одного сноса была бы
         // новым оружием, а не защитой.
-        d.suspendedUntil[arbiter] = block.timestamp + SUSPENSION_WINDOW;
+        d.suspendedUntil[arbiter] = block.timestamp + ArbiterRegistryStorage.SUSPENSION_WINDOW;
 
         uint256 len = d.arbiterList.length;
         for (uint256 i = 0; i < len; i++) {
@@ -638,8 +640,11 @@ contract ArbiterAccountabilityFacet {
         return ArbiterRegistryStorage.data().suspendedUntil[arbiter];
     }
 
+    /// Единственный публичный геттер окна приостановки — и он остаётся здесь
+    /// после переноса константы в ArbiterRegistryStorage (правка A, 16 августа
+    /// 2026): селектор фасета не трогается, число то же самое.
     function getSuspensionWindow() external pure returns (uint256) {
-        return SUSPENSION_WINDOW;
+        return ArbiterRegistryStorage.SUSPENSION_WINDOW;
     }
 
     /// Порог РУЧНОГО сноса прочитанный с этой стороны. Строго меньше

@@ -55,6 +55,27 @@ library ArbiterRegistryStorage {
     /// keccak256(abi.encode(uint256(keccak256("hexseal.arbiterregistry.storage")) - 1)) & ~bytes32(uint256(0xff))
     bytes32 constant POSITION = 0xaae71de0594cbcb5434f0ab7f7501c1be178552bf788b418a1c2624ba9718d00;
 
+    /// Сколько держит приостановка арбитра, если её не сняли раньше. Утверждено
+    /// владельцем 15 августа 2026: окно финализации — сутки, окно апелляции —
+    /// четверо; трое суток хватает разобраться и не держит честные стороны
+    /// неделю.
+    ///
+    /// ⚠️ ЖИВЁТ В БИБЛИОТЕКЕ, А НЕ В ФАСЕТЕ (финальный обзор ветки, правка A,
+    /// 16 августа 2026). Приостановку выставляют ДВЕ двери в ДВУХ разных
+    /// файлах: ручной снос (ArbiterAccountabilityFacet.removeArbiterForCause) и
+    /// автодемоушен (ArbiterRegistryFacet._recordArbiterMistake). Копия числа во
+    /// втором файле создала бы ровно тот класс дефекта, который эта же ветка
+    /// разбирала как M-3: два значения, обещание «они совпадают», и ничего, что
+    /// покраснеет при расхождении. Здесь копий не остаётся и сверять нечего —
+    /// оба фасета читают одно объявление.
+    ///
+    /// Наружу отдаётся через ArbiterAccountabilityFacet.getSuspensionWindow() —
+    /// единственный публичный геттер этого числа, и он обязан продолжать отдавать
+    /// то же самое: перенос менял МЕСТО объявления, а не значение.
+    ///
+    /// Константы в хранилище не лежат: `Data` ниже этим объявлением не двигается.
+    uint256 internal constant SUSPENSION_WINDOW = 72 hours;
+
     struct PendingVerdict {
         address arbiter;        // кто подал вердикт
         bool    clientWins;     // результат
@@ -1438,6 +1459,25 @@ contract ArbiterRegistryFacet {
             // нажал кнопку. Публичная запись ArbiterDemoted против настоящего
             // адреса вечна ровно так же, как ArbiterRemovedForCause.
             d.removedAt[arbiterAddr] = block.timestamp;
+
+            // ⚠️ АВТОСНЯТИЕ ТОЖЕ ПРИОСТАНАВЛИВАЕТ (финальный обзор ветки,
+            // правка A, 16 августа 2026). Ровно тот же сценарий, ради которого
+            // чинили C-1 в removeArbiterForCause, — только на двери, которая
+            // срабатывает БЕЗ человека.
+            //
+            // finalizeVerdict гейтится ПРИОСТАНОВКОЙ, а не статусом
+            // (_requireNotSuspended(d, v.arbiter)), а submitVerdict — КЛЕЙМОМ.
+            // Автодемоушен ни disputeClaims, ни openClaimCount не трогает (и
+            // ручной снос тоже — это осознанно одинаково). Значит без этой
+            // строки автоснятый спокойно доводил уже взятые споры до денег
+            // внутри 24-часового FINALIZE_DELAY, и остановить его было нечем:
+            // suspendArbiter ревертит NotAnArbiter на том, кто уже не арбитр.
+            //
+            // Окно — то же самое и из ТОГО ЖЕ объявления, что у ручного сноса
+            // (ArbiterRegistryStorage.SUSPENSION_WINDOW): копия числа здесь
+            // была бы вторым значением, про которое обещано, что оно совпадает,
+            // и ничем не сторожится — класс M-3 этой же ветки.
+            d.suspendedUntil[arbiterAddr] = block.timestamp + ArbiterRegistryStorage.SUSPENSION_WINDOW;
 
             uint256 forfeited = d.arbiterBond[arbiterAddr];
             if (forfeited > 0) {
