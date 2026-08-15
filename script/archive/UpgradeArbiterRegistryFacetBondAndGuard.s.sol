@@ -44,7 +44,7 @@ contract UpgradeArbiterRegistryFacetBondAndGuard is Script {
         bytes4[] memory replaceSels = new bytes4[](35);
         replaceSels[0]  = ArbiterRegistryFacet.setChiefArbiter.selector;
         replaceSels[1]  = ArbiterRegistryFacet.addArbiter.selector;
-        replaceSels[2]  = ArbiterRegistryFacet.removeArbiter.selector;
+        replaceSels[2]  = bytes4(0x3487e08c) /* removeArbiter(address), удалена 15 августа 2026 (задача 6 arbiter-accountability) */;
         replaceSels[3]  = ArbiterRegistryFacet.commitDisputeClaim.selector;
         replaceSels[4]  = bytes4(keccak256("claimDispute(address,bytes32)")) /* frozen: old 2-arg selector, historical cut */;
         replaceSels[5]  = ArbiterRegistryFacet.releaseDisputeClaim.selector;

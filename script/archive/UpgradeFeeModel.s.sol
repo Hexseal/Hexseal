@@ -552,7 +552,7 @@ contract UpgradeFeeModel is Script {
         sels[2]  = ArbiterRegistryFacet.resignAsArbiter.selector;
         sels[3]  = ArbiterRegistryFacet.setChiefArbiter.selector;
         sels[4]  = ArbiterRegistryFacet.addArbiter.selector;
-        sels[5]  = ArbiterRegistryFacet.removeArbiter.selector;
+        sels[5]  = bytes4(0x3487e08c) /* removeArbiter(address), удалена 15 августа 2026 (задача 6 arbiter-accountability) */;
         sels[6]  = ArbiterRegistryFacet.commitDisputeClaim.selector;
         sels[7]  = bytes4(keccak256("claimDispute(address,bytes32)")) /* frozen: old 2-arg selector, historical cut */;
         sels[8]  = ArbiterRegistryFacet.releaseDisputeClaim.selector;

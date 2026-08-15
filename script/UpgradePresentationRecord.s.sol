@@ -377,7 +377,7 @@ contract UpgradePresentationRecord is Script {
         // Admin: управление арбитрами
         sels[3]  = ArbiterRegistryFacet.setChiefArbiter.selector;
         sels[4]  = ArbiterRegistryFacet.addArbiter.selector;
-        sels[5]  = ArbiterRegistryFacet.removeArbiter.selector;
+        sels[5]  = bytes4(0x3487e08c) /* removeArbiter(address), удалена 15 августа 2026 (задача 6 arbiter-accountability) */;
 
         // Клейм спора (commit-reveal)
         sels[6]  = ArbiterRegistryFacet.commitDisputeClaim.selector;

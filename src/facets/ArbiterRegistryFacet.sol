@@ -228,6 +228,18 @@ library ArbiterRegistryStorage {
         bytes32 pos = POSITION;
         assembly { d.slot := pos }
     }
+
+    /// Снимает провенанс и уменьшает счётчик посадившего. Живёт в БИБЛИОТЕКЕ,
+    /// а не в фасете, потому что зовётся из обоих: ArbiterRegistryFacet (уход,
+    /// разжалование) и ArbiterAccountabilityFacet (снос по поводу). Две копии
+    /// разошлись бы при первой же правке.
+    function clearSeat(Data storage d, address arbiterAddr) internal {
+        address seater = d.seatedBy[arbiterAddr];
+        if (seater != address(0) && d.seatedCountBy[seater] > 0) {
+            d.seatedCountBy[seater]--;
+        }
+        delete d.seatedBy[arbiterAddr];
+    }
 }
 
 // ---------- FACET ----------
@@ -283,7 +295,9 @@ contract ArbiterRegistryFacet {
     /// Посадка с указанием того, кто нажал. `ArbiterAdded` остаётся ради
     /// совместимости сабграфа v2.3.0, который уже в цепи и его читает.
     event ArbiterSeated(address indexed arbiter, address indexed by, bool selfService);
-    event ArbiterRemoved(address indexed arbiter);
+    // ArbiterRemoved удалено вместе с removeArbiter (15 августа 2026, задача 6):
+    // единственный emit-сайт исчез вместе с функцией. Замена —
+    // ArbiterAccountabilityFacet.ArbiterRemovedForCause.
     event ChiefArbiterSet(address indexed prev, address indexed next);
     event DisputeClaimCommitted(address indexed arbiter, bytes32 indexed commitment);
     event DisputeClaimed(address indexed agreement, address indexed arbiter);
@@ -438,6 +452,18 @@ contract ArbiterRegistryFacet {
     /// одну транзакцию, а весь денежный контур наказания становится надписью.
     error ArbiterSuspendedError(uint256 until);
 
+    // ── Передача корпуса ДАО (arbiter-accountability, задача 6, 15 августа
+    // 2026): дословное решение владельца — «никаких ручных», «человек должен
+    // выйти и остаться только даймонд, который пропускает по гейту» ──
+    /// activateDAO() односторонний и не гасится нигде: включить его, не назначив
+    /// daoAddress, значит осиротить корпус одной транзакцией — автоматика ловит
+    /// только то, что видит цепь, а посадка/снятие человеком станут недоступны
+    /// никому.
+    error DaoAddressNotSet();
+    /// addArbiter/setChiefArbiter: вход только через applyAsArbiter (по гейту),
+    /// роль директора упраздняется вместе с активацией ДАО.
+    error SeatingHandedOver();
+
     // -------- MODIFIERS --------
 
     modifier onlyOwner() {
@@ -472,7 +498,14 @@ contract ArbiterRegistryFacet {
 
     // -------- DAO MODE --------
 
+    /// Требует уже назначенного daoAddress. Без этой проверки владелец мог бы
+    /// включить ДАО раньше, чем назначил его адрес, и осиротить корпус одной
+    /// транзакцией: activateDAO() необратим (флаг не гасится нигде в src/), а
+    /// removeArbiterForCause/addArbiter/setChiefArbiter после активации уже не
+    /// пускают владельца — не по злому умыслу, а просто перепутав порядок
+    /// вызовов setDAOAddress/activateDAO.
     function activateDAO() external onlyOwner {
+        if (ArbiterRegistryStorage.data().daoAddress == address(0)) revert DaoAddressNotSet();
         ArbiterRegistryStorage.data().daoActiveManual = true;
         emit DAOActivated(msg.sender);
     }
@@ -535,20 +568,31 @@ contract ArbiterRegistryFacet {
             require(ok, "ArbiterRegistry: bond refund failed");
         }
 
-        _clearSeat(d, caller);
+        ArbiterRegistryStorage.clearSeat(d, caller);
 
         emit ArbiterResigned(caller, bond);
     }
 
     // -------- ADMIN: MANAGE ARBITERS --------
 
+    /// Роль директора упраздняется вместе с активацией ДАО (дословное решение
+    /// владельца, задача 6, 15 августа 2026: «никаких ручных», «человек должен
+    /// выйти и остаться только даймонд, который пропускает по гейту»). Храповик:
+    /// isDaoActive() необратим, назначить нового директора после активации
+    /// нельзя уже никому.
     function setChiefArbiter(address arbiter) external onlyOwner {
+        if (isDaoActive()) revert SeatingHandedOver();
         ArbiterRegistryStorage.Data storage d = ArbiterRegistryStorage.data();
         emit ChiefArbiterSet(d.chiefArbiter, arbiter);
         d.chiefArbiter = arbiter;
     }
 
+    /// Вход в корпус арбитров при активном ДАО — только через applyAsArbiter
+    /// (самозапись по гейту XP/cleanStreak/бонда). Дословное решение владельца,
+    /// задача 6, 15 августа 2026: «никаких ручных» — ни владелец, ни директор
+    /// больше не сажают арбитров, когда ДАО включено.
     function addArbiter(address arbiter) external onlyOwnerOrChief {
+        if (isDaoActive()) revert SeatingHandedOver();
         ArbiterRegistryStorage.Data storage d = ArbiterRegistryStorage.data();
         if (d.isArbiter[arbiter]) revert AlreadyArbiter();
 
@@ -572,31 +616,11 @@ contract ArbiterRegistryFacet {
         emit ArbiterAdded(arbiter);
     }
 
-    function removeArbiter(address arbiter) external onlyOwnerOrChief {
-        ArbiterRegistryStorage.Data storage d = ArbiterRegistryStorage.data();
-        if (!d.isArbiter[arbiter]) revert NotAnArbiter();
-        d.isArbiter[arbiter] = false;
-        uint256 len = d.arbiterList.length;
-        for (uint256 i = 0; i < len; i++) {
-            if (d.arbiterList[i] == arbiter) {
-                d.arbiterList[i] = d.arbiterList[len - 1];
-                d.arbiterList.pop();
-                break;
-            }
-        }
-
-        uint256 bond = d.arbiterBond[arbiter];
-        if (bond > 0) {
-            d.arbiterBond[arbiter] = 0;
-            address usdc = FactoryStorage.store().usdc;
-            bool ok = IUSDCFull(usdc).transfer(arbiter, bond);
-            require(ok, "ArbiterRegistry: bond refund failed");
-        }
-
-        _clearSeat(d, arbiter);
-
-        emit ArbiterRemoved(arbiter);
-    }
+    // removeArbiter(address) удалена 15 августа 2026. Она снимала арбитра без
+    // повода, без записи о том, кто нажал, и возвращала залог целиком — то есть
+    // снятие за дело и тихая зачистка выглядели в цепи одинаково и стоили
+    // одинаково. Замена — ArbiterAccountabilityFacet.removeArbiterForCause.
+    // Селектор удаляется из даймонда разрезом UpgradeArbiterAccountability.
 
     // -------- ARBITER: CLAIM DISPUTE --------
 
@@ -1097,18 +1121,6 @@ contract ArbiterRegistryFacet {
         }
     }
 
-    /// Снимает провенанс и уменьшает счётчик посадившего. Зовётся из КАЖДОГО
-    /// пути выхода из корпуса: ручного снятия, самостоятельного увольнения и
-    /// автоматического разжалования. Пропусти любой — и потолок запаса
-    /// директора обходится циклом «посадил-снял-посадил».
-    function _clearSeat(ArbiterRegistryStorage.Data storage d, address arbiterAddr) private {
-        address seater = d.seatedBy[arbiterAddr];
-        if (seater != address(0) && d.seatedCountBy[seater] > 0) {
-            d.seatedCountBy[seater]--;
-        }
-        delete d.seatedBy[arbiterAddr];
-    }
-
     /// Общий запрет для трёх мест: claimDispute, resignAsArbiter, finalizeVerdict.
     /// Читает то же поле, которое пишет ArbiterAccountabilityFacet.suspendArbiter —
     /// оба фасета делят один ArbiterRegistryStorage.
@@ -1162,7 +1174,7 @@ contract ArbiterRegistryFacet {
                 }
             }
 
-            _clearSeat(d, arbiterAddr);
+            ArbiterRegistryStorage.clearSeat(d, arbiterAddr);
 
             emit ArbiterDemoted(arbiterAddr);
         }
@@ -1660,6 +1672,12 @@ contract ArbiterRegistryFacet {
 
     function getMinXPToRegister() external pure returns (uint256) { return MIN_XP_TO_REGISTER; }
     function getDaoThreshold()    external pure returns (uint256) { return DAO_THRESHOLD; }
+
+    /// MAX_ARBITER_MISTAKES прочитанное с этой стороны. Совпадает с
+    /// ArbiterAccountabilityFacet.MISTAKE_THRESHOLD и обязано совпадать — одно
+    /// и то же правило серии судейских ошибок, читаемое двумя фасетами.
+    /// Сверяется test_MistakeThresholdMatchesRegistry.
+    function getMaxArbiterMistakes() external pure returns (uint256) { return MAX_ARBITER_MISTAKES; }
 
     function getChiefArbiter()  external view returns (address) { return ArbiterRegistryStorage.data().chiefArbiter; }
     function isRegisteredArbiter(address addr) external view returns (bool) { return ArbiterRegistryStorage.data().isArbiter[addr]; }

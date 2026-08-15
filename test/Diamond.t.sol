@@ -124,52 +124,51 @@ contract DiamondTest is Test {
         ownerSelectors[3] = OwnershipFacet.pendingOwner.selector;
 
         // ArbiterRegistryFacet selectors
-        bytes4[] memory arbiterSelectors = new bytes4[](44);
+        bytes4[] memory arbiterSelectors = new bytes4[](43);
         arbiterSelectors[0]  = ArbiterRegistryFacet.setChiefArbiter.selector;
         arbiterSelectors[1]  = ArbiterRegistryFacet.addArbiter.selector;
-        arbiterSelectors[2]  = ArbiterRegistryFacet.removeArbiter.selector;
-        arbiterSelectors[3]  = ArbiterRegistryFacet.commitDisputeClaim.selector;
-        arbiterSelectors[4]  = ArbiterRegistryFacet.claimDispute.selector;
-        arbiterSelectors[5]  = ArbiterRegistryFacet.releaseDisputeClaim.selector;
-        arbiterSelectors[6]  = ArbiterRegistryFacet.clearDisputeClaim.selector;
-        arbiterSelectors[7]  = ArbiterRegistryFacet.getChiefArbiter.selector;
-        arbiterSelectors[8]  = ArbiterRegistryFacet.isRegisteredArbiter.selector;
-        arbiterSelectors[9]  = ArbiterRegistryFacet.getArbiters.selector;
-        arbiterSelectors[10] = ArbiterRegistryFacet.getDisputeClaimer.selector;
-        arbiterSelectors[11] = ArbiterRegistryFacet.getArbiterDeals.selector;
-        arbiterSelectors[12] = ArbiterRegistryFacet.getClaimCommitment.selector;
+        arbiterSelectors[2]  = ArbiterRegistryFacet.commitDisputeClaim.selector;
+        arbiterSelectors[3]  = ArbiterRegistryFacet.claimDispute.selector;
+        arbiterSelectors[4]  = ArbiterRegistryFacet.releaseDisputeClaim.selector;
+        arbiterSelectors[5]  = ArbiterRegistryFacet.clearDisputeClaim.selector;
+        arbiterSelectors[6]  = ArbiterRegistryFacet.getChiefArbiter.selector;
+        arbiterSelectors[7]  = ArbiterRegistryFacet.isRegisteredArbiter.selector;
+        arbiterSelectors[8]  = ArbiterRegistryFacet.getArbiters.selector;
+        arbiterSelectors[9] = ArbiterRegistryFacet.getDisputeClaimer.selector;
+        arbiterSelectors[10] = ArbiterRegistryFacet.getArbiterDeals.selector;
+        arbiterSelectors[11] = ArbiterRegistryFacet.getClaimCommitment.selector;
         // DAO + verdict + rewards (V2/V3)
-        arbiterSelectors[13] = ArbiterRegistryFacet.activateDAO.selector;
-        arbiterSelectors[14] = ArbiterRegistryFacet.applyAsArbiter.selector;
-        arbiterSelectors[15] = ArbiterRegistryFacet.isDaoActive.selector;
-        arbiterSelectors[16] = ArbiterRegistryFacet.getMinXPToRegister.selector;
-        arbiterSelectors[17] = ArbiterRegistryFacet.getDaoThreshold.selector;
-        arbiterSelectors[18] = ArbiterRegistryFacet.submitVerdict.selector;
-        arbiterSelectors[19] = ArbiterRegistryFacet.finalizeVerdict.selector;
-        arbiterSelectors[20] = ArbiterRegistryFacet.overturnVerdict.selector;
-        arbiterSelectors[21] = ArbiterRegistryFacet.freezeVerdict.selector;
-        arbiterSelectors[22] = ArbiterRegistryFacet.unfreezeVerdict.selector;
-        arbiterSelectors[23] = ArbiterRegistryFacet.withdrawArbiterReward.selector;
-        arbiterSelectors[24] = ArbiterRegistryFacet.fundVault.selector;
-        arbiterSelectors[25] = ArbiterRegistryFacet.setRewardPerDispute.selector;
-        arbiterSelectors[26] = ArbiterRegistryFacet.setDAOAddress.selector;
-        arbiterSelectors[27] = ArbiterRegistryFacet.getPendingVerdict.selector;
-        arbiterSelectors[28] = ArbiterRegistryFacet.getArbiterReward.selector;
-        arbiterSelectors[29] = ArbiterRegistryFacet.getVaultBalance.selector;
-        arbiterSelectors[30] = ArbiterRegistryFacet.getRewardPerDispute.selector;
-        arbiterSelectors[31] = ArbiterRegistryFacet.getDAOAddress.selector;
-        arbiterSelectors[32] = ArbiterRegistryFacet.clearStuckVerdict.selector;
-        arbiterSelectors[33] = ArbiterRegistryFacet.notifyArbiterTimeout.selector;
-        arbiterSelectors[34] = ArbiterRegistryFacet.getArbiterMistakeStreak.selector;
-        arbiterSelectors[35] = ArbiterRegistryFacet.resignAsArbiter.selector;
-        arbiterSelectors[36] = ArbiterRegistryFacet.getArbiterBond.selector;
-        arbiterSelectors[37] = ArbiterRegistryFacet.getOpenClaimCount.selector;
-        arbiterSelectors[38] = ArbiterRegistryFacet.hasSubmittedVerdict.selector;
-        arbiterSelectors[39] = ArbiterRegistryFacet.raiseAppeal.selector;
-        arbiterSelectors[40] = ArbiterRegistryFacet.voteOnAppeal.selector;
-        arbiterSelectors[41] = ArbiterRegistryFacet.resolveAppeal.selector;
-        arbiterSelectors[42] = ArbiterRegistryFacet.getAppealVotes.selector;
-        arbiterSelectors[43] = ArbiterRegistryFacet.hasVotedOnAppeal.selector;
+        arbiterSelectors[12] = ArbiterRegistryFacet.activateDAO.selector;
+        arbiterSelectors[13] = ArbiterRegistryFacet.applyAsArbiter.selector;
+        arbiterSelectors[14] = ArbiterRegistryFacet.isDaoActive.selector;
+        arbiterSelectors[15] = ArbiterRegistryFacet.getMinXPToRegister.selector;
+        arbiterSelectors[16] = ArbiterRegistryFacet.getDaoThreshold.selector;
+        arbiterSelectors[17] = ArbiterRegistryFacet.submitVerdict.selector;
+        arbiterSelectors[18] = ArbiterRegistryFacet.finalizeVerdict.selector;
+        arbiterSelectors[19] = ArbiterRegistryFacet.overturnVerdict.selector;
+        arbiterSelectors[20] = ArbiterRegistryFacet.freezeVerdict.selector;
+        arbiterSelectors[21] = ArbiterRegistryFacet.unfreezeVerdict.selector;
+        arbiterSelectors[22] = ArbiterRegistryFacet.withdrawArbiterReward.selector;
+        arbiterSelectors[23] = ArbiterRegistryFacet.fundVault.selector;
+        arbiterSelectors[24] = ArbiterRegistryFacet.setRewardPerDispute.selector;
+        arbiterSelectors[25] = ArbiterRegistryFacet.setDAOAddress.selector;
+        arbiterSelectors[26] = ArbiterRegistryFacet.getPendingVerdict.selector;
+        arbiterSelectors[27] = ArbiterRegistryFacet.getArbiterReward.selector;
+        arbiterSelectors[28] = ArbiterRegistryFacet.getVaultBalance.selector;
+        arbiterSelectors[29] = ArbiterRegistryFacet.getRewardPerDispute.selector;
+        arbiterSelectors[30] = ArbiterRegistryFacet.getDAOAddress.selector;
+        arbiterSelectors[31] = ArbiterRegistryFacet.clearStuckVerdict.selector;
+        arbiterSelectors[32] = ArbiterRegistryFacet.notifyArbiterTimeout.selector;
+        arbiterSelectors[33] = ArbiterRegistryFacet.getArbiterMistakeStreak.selector;
+        arbiterSelectors[34] = ArbiterRegistryFacet.resignAsArbiter.selector;
+        arbiterSelectors[35] = ArbiterRegistryFacet.getArbiterBond.selector;
+        arbiterSelectors[36] = ArbiterRegistryFacet.getOpenClaimCount.selector;
+        arbiterSelectors[37] = ArbiterRegistryFacet.hasSubmittedVerdict.selector;
+        arbiterSelectors[38] = ArbiterRegistryFacet.raiseAppeal.selector;
+        arbiterSelectors[39] = ArbiterRegistryFacet.voteOnAppeal.selector;
+        arbiterSelectors[40] = ArbiterRegistryFacet.resolveAppeal.selector;
+        arbiterSelectors[41] = ArbiterRegistryFacet.getAppealVotes.selector;
+        arbiterSelectors[42] = ArbiterRegistryFacet.hasVotedOnAppeal.selector;
 
         // ReputationFacet selectors
         bytes4[] memory reputationSelectors = new bytes4[](8);
@@ -818,6 +817,7 @@ contract DiamondTest is Test {
     // ============ ARBITER DEMOTION ============
 
     function testApplyAsArbiterRevertsIfStreakTooLow() public {
+        ArbiterRegistryFacet(address(diamond)).setDAOAddress(address(0xDA0));
         ArbiterRegistryFacet(address(diamond)).activateDAO();
 
         address candidate = address(uint160(40000));
@@ -852,6 +852,7 @@ contract DiamondTest is Test {
     }
 
     function testApplyAsArbiterSucceedsWithBothConditions() public {
+        ArbiterRegistryFacet(address(diamond)).setDAOAddress(address(0xDA0));
         ArbiterRegistryFacet(address(diamond)).activateDAO();
 
         address candidate = address(uint160(41000));
@@ -902,6 +903,7 @@ contract DiamondTest is Test {
     }
 
     function testApplyAsArbiterPullsBond() public {
+        ArbiterRegistryFacet(address(diamond)).setDAOAddress(address(0xDA0));
         ArbiterRegistryFacet(address(diamond)).activateDAO();
         address candidate = address(uint160(45000));
         _growXP(candidate, true, 3000, 45500);
@@ -917,6 +919,7 @@ contract DiamondTest is Test {
     }
 
     function testApplyAsArbiterRevertsWithoutBondApproval() public {
+        ArbiterRegistryFacet(address(diamond)).setDAOAddress(address(0xDA0));
         ArbiterRegistryFacet(address(diamond)).activateDAO();
         address candidate = address(uint160(45100));
         _growXP(candidate, true, 3000, 45600);
@@ -927,6 +930,7 @@ contract DiamondTest is Test {
     }
 
     function testArbiterBondForfeitedOnDemotion() public {
+        ArbiterRegistryFacet(address(diamond)).setDAOAddress(address(0xDA0));
         ArbiterRegistryFacet(address(diamond)).activateDAO();
         address candidate = address(uint160(45200));
         _growXP(candidate, true, 3000, 45700);
@@ -947,6 +951,7 @@ contract DiamondTest is Test {
     }
 
     function testResignAsArbiterRefundsBondAndClearsStatus() public {
+        ArbiterRegistryFacet(address(diamond)).setDAOAddress(address(0xDA0));
         ArbiterRegistryFacet(address(diamond)).activateDAO();
         address candidate = address(uint160(45300));
         _growXP(candidate, true, 3000, 45400);
@@ -971,33 +976,14 @@ contract DiamondTest is Test {
         ArbiterRegistryFacet(address(diamond)).resignAsArbiter();
     }
 
-    function testRemoveArbiterRefundsBond() public {
-        ArbiterRegistryFacet(address(diamond)).activateDAO();
-        address candidate = address(uint160(47200));
-        _growXP(candidate, true, 3000, 47300);
-        vm.prank(candidate);
-        usdc.approve(address(diamond), ARBITER_BOND);
-        vm.prank(candidate);
-        ArbiterRegistryFacet(address(diamond)).applyAsArbiter();
-
-        uint256 balanceAfterApply = usdc.balanceOf(candidate);
-
-        ArbiterRegistryFacet(address(diamond)).removeArbiter(candidate);
-
-        assertFalse(ArbiterRegistryFacet(address(diamond)).isRegisteredArbiter(candidate));
-        assertEq(ArbiterRegistryFacet(address(diamond)).getArbiterBond(candidate), 0);
-        assertEq(usdc.balanceOf(candidate), balanceAfterApply + ARBITER_BOND);
-    }
-
-    function testRemoveArbiterNoOpsOnZeroBond() public {
-        address seeded = address(uint160(47400));
-        ArbiterRegistryFacet(address(diamond)).addArbiter(seeded);
-
-        ArbiterRegistryFacet(address(diamond)).removeArbiter(seeded);
-
-        assertFalse(ArbiterRegistryFacet(address(diamond)).isRegisteredArbiter(seeded));
-        assertEq(ArbiterRegistryFacet(address(diamond)).getArbiterBond(seeded), 0);
-    }
+    // testRemoveArbiterRefundsBond / testRemoveArbiterNoOpsOnZeroBond удалены
+    // (arbiter-accountability, задача 6, 15 августа 2026): removeArbiter
+    // снята с фасета целиком. Возврат бонда по-прежнему покрыт
+    // testResignAsArbiterRefundsBondAndClearsStatus выше — resignAsArbiter
+    // переживает эту задачу и зовёт тот же хелпер очистки места. Форфейт
+    // бонда при сносе по поводу (обратное поведение: не возврат, а изъятие
+    // в банк арбитров) — новое поведение removeArbiterForCause, покрыто
+    // test/ArbiterRemovalForCause.t.sol.
 
     function testClaimDisputeIncrementsOpenClaimCount() public {
         address cli = address(uint160(46000));
@@ -1085,6 +1071,7 @@ contract DiamondTest is Test {
     }
 
     function testResignAsArbiterRevertsWithOpenClaim() public {
+        ArbiterRegistryFacet(address(diamond)).setDAOAddress(address(0xDA0));
         ArbiterRegistryFacet(address(diamond)).activateDAO();
         address candidate = address(uint160(46600));
         _growXP(candidate, true, 3000, 46700);
@@ -1118,6 +1105,7 @@ contract DiamondTest is Test {
     }
 
     function testResignAsArbiterSucceedsAfterClaimResolved() public {
+        ArbiterRegistryFacet(address(diamond)).setDAOAddress(address(0xDA0));
         ArbiterRegistryFacet(address(diamond)).activateDAO();
         address candidate = address(uint160(46900));
         _growXP(candidate, true, 3000, 47000);
@@ -1882,16 +1870,10 @@ contract DiamondTest is Test {
         ArbiterRegistryFacet(address(diamond)).addArbiter(address(0x10));
     }
 
-    function testArbiterRegistryRemoveArbiter() public {
-        ArbiterRegistryFacet(address(diamond)).removeArbiter(arbiter);
-        assertFalse(ArbiterRegistryFacet(address(diamond)).isRegisteredArbiter(arbiter));
-        assertEq(ArbiterRegistryFacet(address(diamond)).getArbiters().length, 0);
-    }
-
-    function testArbiterRegistryRemoveRevertIfNotArbiter() public {
-        vm.expectRevert(ArbiterRegistryFacet.NotAnArbiter.selector);
-        ArbiterRegistryFacet(address(diamond)).removeArbiter(address(0x99));
-    }
+    // testArbiterRegistryRemoveArbiter / testArbiterRegistryRemoveRevertIfNotArbiter
+    // удалены (arbiter-accountability, задача 6, 15 августа 2026): removeArbiter
+    // снята с фасета целиком, замена — ArbiterAccountabilityFacet.removeArbiterForCause
+    // (test/ArbiterRemovalForCause.t.sol).
 
     function testArbiterRegistryChiefCanAdd() public {
         address chief = address(0x20);

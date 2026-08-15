@@ -137,64 +137,63 @@ contract DisputeSettlementTest is Test {
         facSels[11] = FactoryFacet.getUsdc.selector;
         facSels[12] = bytes4(0x220f72fc);
 
-        bytes4[] memory arbSels = new bytes4[](46);
+        bytes4[] memory arbSels = new bytes4[](45);
         arbSels[0]  = ArbiterRegistryFacet.setChiefArbiter.selector;
         arbSels[1]  = ArbiterRegistryFacet.addArbiter.selector;
-        arbSels[2]  = ArbiterRegistryFacet.removeArbiter.selector;
-        arbSels[3]  = ArbiterRegistryFacet.commitDisputeClaim.selector;
-        arbSels[4]  = ArbiterRegistryFacet.claimDispute.selector;
-        arbSels[5]  = ArbiterRegistryFacet.releaseDisputeClaim.selector;
-        arbSels[6]  = ArbiterRegistryFacet.clearDisputeClaim.selector;
-        arbSels[7]  = ArbiterRegistryFacet.getChiefArbiter.selector;
-        arbSels[8]  = ArbiterRegistryFacet.isRegisteredArbiter.selector;
-        arbSels[9]  = ArbiterRegistryFacet.getArbiters.selector;
-        arbSels[10] = ArbiterRegistryFacet.getDisputeClaimer.selector;
-        arbSels[11] = ArbiterRegistryFacet.getArbiterDeals.selector;
-        arbSels[12] = ArbiterRegistryFacet.getClaimCommitment.selector;
-        arbSels[13] = ArbiterRegistryFacet.activateDAO.selector;
-        arbSels[14] = ArbiterRegistryFacet.applyAsArbiter.selector;
-        arbSels[15] = ArbiterRegistryFacet.isDaoActive.selector;
-        arbSels[16] = ArbiterRegistryFacet.getMinXPToRegister.selector;
-        arbSels[17] = ArbiterRegistryFacet.getDaoThreshold.selector;
-        arbSels[18] = ArbiterRegistryFacet.submitVerdict.selector;
-        arbSels[19] = ArbiterRegistryFacet.finalizeVerdict.selector;
-        arbSels[20] = ArbiterRegistryFacet.overturnVerdict.selector;
-        arbSels[21] = ArbiterRegistryFacet.freezeVerdict.selector;
-        arbSels[22] = ArbiterRegistryFacet.unfreezeVerdict.selector;
-        arbSels[23] = ArbiterRegistryFacet.withdrawArbiterReward.selector;
-        arbSels[24] = ArbiterRegistryFacet.fundVault.selector;
-        arbSels[25] = ArbiterRegistryFacet.setRewardPerDispute.selector;
-        arbSels[26] = ArbiterRegistryFacet.setDAOAddress.selector;
-        arbSels[27] = ArbiterRegistryFacet.getPendingVerdict.selector;
-        arbSels[28] = ArbiterRegistryFacet.getArbiterReward.selector;
-        arbSels[29] = ArbiterRegistryFacet.getVaultBalance.selector;
-        arbSels[30] = ArbiterRegistryFacet.getRewardPerDispute.selector;
-        arbSels[31] = ArbiterRegistryFacet.getDAOAddress.selector;
-        arbSels[32] = ArbiterRegistryFacet.clearStuckVerdict.selector;
-        arbSels[33] = ArbiterRegistryFacet.creditDisputeFee.selector;
-        arbSels[34] = ArbiterRegistryFacet.getTreasurySlice.selector;
-        arbSels[35] = ArbiterRegistryFacet.withdrawTreasurySlice.selector;
+        arbSels[2]  = ArbiterRegistryFacet.commitDisputeClaim.selector;
+        arbSels[3]  = ArbiterRegistryFacet.claimDispute.selector;
+        arbSels[4]  = ArbiterRegistryFacet.releaseDisputeClaim.selector;
+        arbSels[5]  = ArbiterRegistryFacet.clearDisputeClaim.selector;
+        arbSels[6]  = ArbiterRegistryFacet.getChiefArbiter.selector;
+        arbSels[7]  = ArbiterRegistryFacet.isRegisteredArbiter.selector;
+        arbSels[8]  = ArbiterRegistryFacet.getArbiters.selector;
+        arbSels[9] = ArbiterRegistryFacet.getDisputeClaimer.selector;
+        arbSels[10] = ArbiterRegistryFacet.getArbiterDeals.selector;
+        arbSels[11] = ArbiterRegistryFacet.getClaimCommitment.selector;
+        arbSels[12] = ArbiterRegistryFacet.activateDAO.selector;
+        arbSels[13] = ArbiterRegistryFacet.applyAsArbiter.selector;
+        arbSels[14] = ArbiterRegistryFacet.isDaoActive.selector;
+        arbSels[15] = ArbiterRegistryFacet.getMinXPToRegister.selector;
+        arbSels[16] = ArbiterRegistryFacet.getDaoThreshold.selector;
+        arbSels[17] = ArbiterRegistryFacet.submitVerdict.selector;
+        arbSels[18] = ArbiterRegistryFacet.finalizeVerdict.selector;
+        arbSels[19] = ArbiterRegistryFacet.overturnVerdict.selector;
+        arbSels[20] = ArbiterRegistryFacet.freezeVerdict.selector;
+        arbSels[21] = ArbiterRegistryFacet.unfreezeVerdict.selector;
+        arbSels[22] = ArbiterRegistryFacet.withdrawArbiterReward.selector;
+        arbSels[23] = ArbiterRegistryFacet.fundVault.selector;
+        arbSels[24] = ArbiterRegistryFacet.setRewardPerDispute.selector;
+        arbSels[25] = ArbiterRegistryFacet.setDAOAddress.selector;
+        arbSels[26] = ArbiterRegistryFacet.getPendingVerdict.selector;
+        arbSels[27] = ArbiterRegistryFacet.getArbiterReward.selector;
+        arbSels[28] = ArbiterRegistryFacet.getVaultBalance.selector;
+        arbSels[29] = ArbiterRegistryFacet.getRewardPerDispute.selector;
+        arbSels[30] = ArbiterRegistryFacet.getDAOAddress.selector;
+        arbSels[31] = ArbiterRegistryFacet.clearStuckVerdict.selector;
+        arbSels[32] = ArbiterRegistryFacet.creditDisputeFee.selector;
+        arbSels[33] = ArbiterRegistryFacet.getTreasurySlice.selector;
+        arbSels[34] = ArbiterRegistryFacet.withdrawTreasurySlice.selector;
         // Оба нужны пути таймаута (Задача 4): hasSubmittedVerdict вызывается
         // ЖЁСТКО (не в try/catch), без него triggerArbiterTimeout ревертит
         // «Diamond: function not found» ещё до расчёта котла;
         // notifyArbiterTimeout под try/catch, но без него ветка «арбитр взялся
         // и не довёл» молча не наказывала бы арбитра, и тест шёл бы по пути,
         // которого в проде нет.
-        arbSels[36] = ArbiterRegistryFacet.hasSubmittedVerdict.selector;
-        arbSels[37] = ArbiterRegistryFacet.notifyArbiterTimeout.selector;
+        arbSels[35] = ArbiterRegistryFacet.hasSubmittedVerdict.selector;
+        arbSels[36] = ArbiterRegistryFacet.notifyArbiterTimeout.selector;
         // Задача 4b: наказание за неявку читается только отсюда — без этого
         // селектора testLateReleaseCannotDodgeTheArbiterPenalty не смог бы
         // отличить «ошибка записана» от «функции нет на диамонде».
-        arbSels[38] = ArbiterRegistryFacet.getArbiterMistakeStreak.selector;
+        arbSels[37] = ArbiterRegistryFacet.getArbiterMistakeStreak.selector;
         // Задача 1 (платный вызов арбитра): порог и котировка доплаты.
-        arbSels[39] = ArbiterRegistryFacet.setArbiterFloor.selector;
-        arbSels[40] = ArbiterRegistryFacet.getArbiterFloor.selector;
-        arbSels[41] = ArbiterRegistryFacet.quoteDisputeTopUp.selector;
+        arbSels[38] = ArbiterRegistryFacet.setArbiterFloor.selector;
+        arbSels[39] = ArbiterRegistryFacet.getArbiterFloor.selector;
+        arbSels[40] = ArbiterRegistryFacet.quoteDisputeTopUp.selector;
         // Задача 2 (платный вызов арбитра): оплата и мягкий возврат доплаты.
-        arbSels[42] = ArbiterRegistryFacet.fundDispute.selector;
-        arbSels[43] = ArbiterRegistryFacet.getDisputeBounty.selector;
-        arbSels[44] = ArbiterRegistryFacet.withdrawDisputeBounty.selector;
-        arbSels[45] = ArbiterRegistryFacet.getRefundableBounty.selector;
+        arbSels[41] = ArbiterRegistryFacet.fundDispute.selector;
+        arbSels[42] = ArbiterRegistryFacet.getDisputeBounty.selector;
+        arbSels[43] = ArbiterRegistryFacet.withdrawDisputeBounty.selector;
+        arbSels[44] = ArbiterRegistryFacet.getRefundableBounty.selector;
 
         // Задача 4: счётчик споров без вердикта. Только геттер — запись идёт
         // напрямую из ArbiterRegistryFacet в общее namespaced-хранилище, этот

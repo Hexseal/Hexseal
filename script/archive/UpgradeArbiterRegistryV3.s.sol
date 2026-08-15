@@ -52,7 +52,7 @@ contract UpgradeArbiterRegistryV3 is Script {
         // ── Replace: 18 существующих ──────────────────────────────────────────
         bytes4[] memory replaceSels = new bytes4[](18);
         replaceSels[0]  = ArbiterRegistryFacet.addArbiter.selector;
-        replaceSels[1]  = ArbiterRegistryFacet.removeArbiter.selector;
+        replaceSels[1]  = bytes4(0x3487e08c) /* removeArbiter(address), удалена 15 августа 2026 (задача 6 arbiter-accountability) */;
         replaceSels[2]  = ArbiterRegistryFacet.setChiefArbiter.selector;
         replaceSels[3]  = ArbiterRegistryFacet.getChiefArbiter.selector;
         replaceSels[4]  = ArbiterRegistryFacet.commitDisputeClaim.selector;
