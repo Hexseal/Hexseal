@@ -298,6 +298,32 @@ library ArbiterRegistryStorage {
         delete d.seatedBy[arbiterAddr];
         delete d.removalProposals[arbiterAddr];
     }
+
+    /// Стирает признаки ПРЕДЫДУЩЕГО сноса при посадке (задача 8, круг правок
+    /// 1, 15 августа 2026, Important 1 ревью). `removedAt`/`removalReply`
+    /// привязаны к АДРЕСУ, а не к конкретному событию сноса — addArbiter не
+    /// смотрит историю (только `!isDaoActive()` и `!d.isArbiter[arbiter]`), и
+    /// владелец возвращает снятого одной командой (починка ошибочного сноса
+    /// — реальный, не гипотетический сценарий при ручной посадке). Без
+    /// очистки второе обвинение против того же адреса осталось бы либо
+    /// невидимым (respondToRemoval сразу видел бы «уже отвечал» —
+    /// AlreadyAnswered на пустом месте), либо, если бы очистили только
+    /// removalReply, действующий, ещё не снятый арбитр мог бы ответить на
+    /// давно закрытое обвинение (removedAt != 0 у активного человека).
+    ///
+    /// Живёт в БИБЛИОТЕКЕ и зовётся из ОБЕИХ дверей входа —
+    /// ArbiterRegistryFacet.addArbiter (ручная посадка) и .applyAsArbiter
+    /// (самозапись после активации ДАО) — чтобы не разойтись копиями, как
+    /// clearSeat выше зовётся из всех трёх дверей выхода.
+    ///
+    /// ⚠️ Историю это НЕ трёт: события ArbiterRemovedForCause/RemovalAnswered
+    /// лежат в цепи навсегда, читатель по-прежнему видит обе стороны каждого
+    /// прошлого спора. Эти два поля — только счётчик «отвечал ли на ТЕКУЩИЙ,
+    /// ещё не отменённый снос».
+    function clearRemovalRecord(Data storage d, address arbiterAddr) internal {
+        delete d.removedAt[arbiterAddr];
+        delete d.removalReply[arbiterAddr];
+    }
 }
 
 // ---------- FACET ----------
@@ -610,6 +636,11 @@ contract ArbiterRegistryFacet {
         d.isArbiter[caller] = true;
         d.arbiterList.push(caller);
 
+        // Признаки прошлого сноса (если был) не переживают повторную посадку
+        // (задача 8, круг правок 1, Important 1) — respondToRemoval судит о
+        // ТЕКУЩЕМ статусе, не о ветхой истории.
+        ArbiterRegistryStorage.clearRemovalRecord(d, caller);
+
         emit ArbiterAdded(caller);
         emit ArbiterApplied(caller);
         // Самозапись: seatedBy остаётся нулём — это и есть признак «сел сам».
@@ -692,6 +723,12 @@ contract ArbiterRegistryFacet {
         d.seatedBy[arbiter] = msg.sender;
         d.seatedCountBy[msg.sender]++;
         emit ArbiterSeated(arbiter, msg.sender, false);
+
+        // Признаки прошлого сноса (если был) не переживают повторную посадку
+        // (задача 8, круг правок 1, Important 1) — respondToRemoval судит о
+        // ТЕКУЩЕМ статусе, не о ветхой истории. Реальный сценарий: владелец
+        // исправляет ошибочный снос одной командой addArbiter.
+        ArbiterRegistryStorage.clearRemovalRecord(d, arbiter);
 
         emit ArbiterAdded(arbiter);
     }
@@ -1274,6 +1311,13 @@ contract ArbiterRegistryFacet {
             d.isArbiter[arbiterAddr] = false;
             rep.xp[arbiterAddr] = DEMOTION_XP_RESET;
             d.arbiterMistakeStreak[arbiterAddr] = 0;
+
+            // Право ответа снятого (задача 8, Minor 2 круга правок 1, решение
+            // владельца 15 августа 2026): правило звучит одной фразой —
+            // «сняли, значит можешь ответить» — вне зависимости от того, кто
+            // нажал кнопку. Публичная запись ArbiterDemoted против настоящего
+            // адреса вечна ровно так же, как ArbiterRemovedForCause.
+            d.removedAt[arbiterAddr] = block.timestamp;
 
             uint256 forfeited = d.arbiterBond[arbiterAddr];
             if (forfeited > 0) {

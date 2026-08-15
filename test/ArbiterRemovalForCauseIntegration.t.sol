@@ -408,4 +408,97 @@ contract ArbiterRemovalForCauseIntegrationTest is Test {
             ArbiterAccountabilityFacet(address(diamond)).getRemovalProposal(arbiter);
         assertEq(proposedAtAfter, 0, unicode"автодемоушен обязан стереть предложение той же дорогой, что и снос");
     }
+
+    // ============================================================
+    //  КРУГ ПРАВОК 1 РЕВЬЮ ЗАДАЧИ 8 (15 августа 2026)
+    //
+    //  Important 1: addArbiter не смотрит историю (только !isDaoActive() и
+    //  !d.isArbiter[arbiter]) — владелец возвращает снятого одной командой,
+    //  это боевой путь починки ошибочного сноса, не гипотетический. Без
+    //  очистки removedAt/removalReply второе обвинение против того же адреса
+    //  либо навсегда остаётся без ответа (AlreadyAnswered на пустом месте),
+    //  либо действующий, ещё не снятый арбитр может ответить на давно
+    //  закрытое обвинение. Живёт здесь, не в лёгком стенде: addArbiter —
+    //  функция ArbiterRegistryFacet, respondToRemoval — ArbiterAccountabilityFacet,
+    //  обоим нужно ОДНО настоящее хранилище за одним даймондом.
+    // ============================================================
+
+    /// Cause.Collusion, не OverturnedVerdicts — снимает зависимость от
+    /// streak-порога и цикла спора, единственная переменная в тесте —
+    /// посадка/снос сами по себе.
+    function test_ReseatingClearsRemovedAtPreventingPhantomAnswer() public {
+        ArbiterAccountabilityFacet(address(diamond)).removeArbiterForCause(
+            arbiter, ArbiterAccountabilityFacet.Cause.Collusion, keccak256("evidence"), address(0)
+        );
+        assertFalse(ArbiterRegistryFacet(address(diamond)).isRegisteredArbiter(arbiter));
+
+        // Владелец чинит ошибочный снос — реальный путь, не гипотетический.
+        ArbiterRegistryFacet(address(diamond)).addArbiter(arbiter);
+        assertTrue(ArbiterRegistryFacet(address(diamond)).isRegisteredArbiter(arbiter));
+
+        vm.prank(arbiter);
+        vm.expectRevert(ArbiterAccountabilityFacet.NothingToAnswer.selector);
+        ArbiterAccountabilityFacet(address(diamond)).respondToRemoval(keccak256("late"));
+    }
+
+    /// Симметричная половина: ответил на первый снос, вернули, сняли СНОВА —
+    /// второй ответ обязан пройти, а не упереться в AlreadyAnswered от
+    /// первого. Изолирует removalReply-половину clearRemovalRecord от
+    /// removedAt-половины (предыдущий тест).
+    function test_ReseatingAndReremovalAllowsAnsweringAgain() public {
+        ArbiterAccountabilityFacet(address(diamond)).removeArbiterForCause(
+            arbiter, ArbiterAccountabilityFacet.Cause.Collusion, keccak256("first evidence"), address(0)
+        );
+        vm.prank(arbiter);
+        ArbiterAccountabilityFacet(address(diamond)).respondToRemoval(keccak256("first answer"));
+        assertEq(
+            ArbiterAccountabilityFacet(address(diamond)).getRemovalReply(arbiter),
+            keccak256("first answer"),
+            unicode"сетап: первый ответ лёг"
+        );
+
+        ArbiterRegistryFacet(address(diamond)).addArbiter(arbiter);
+
+        ArbiterAccountabilityFacet(address(diamond)).removeArbiterForCause(
+            arbiter, ArbiterAccountabilityFacet.Cause.Collusion, keccak256("second evidence"), address(0)
+        );
+
+        vm.prank(arbiter);
+        ArbiterAccountabilityFacet(address(diamond)).respondToRemoval(keccak256("second answer"));
+        assertEq(
+            ArbiterAccountabilityFacet(address(diamond)).getRemovalReply(arbiter),
+            keccak256("second answer"),
+            unicode"второй ответ обязан лечь поверх стёртого первого, не отревертить AlreadyAnswered"
+        );
+    }
+
+    // ============================================================
+    //  Minor 2 круга правок 1: автодемоушен тоже даёт право ответа
+    //
+    //  Решение владельца: правило звучит одной фразой — «сняли, значит
+    //  можешь ответить» — вне зависимости от того, человек нажал кнопку или
+    //  сработала автоматика _recordArbiterMistake. Публичная запись
+    //  ArbiterDemoted вечна ровно так же, как ArbiterRemovedForCause.
+    // ============================================================
+
+    function test_AutoDemotedArbiterCanAnswer() public {
+        _disputeAndOverturn(address(0x501), address(0x502));
+        _disputeAndOverturn(address(0x503), address(0x504));
+        _disputeAndOverturn(address(0x505), address(0x506)); // третий — демоушен
+
+        assertFalse(
+            ArbiterRegistryFacet(address(diamond)).isRegisteredArbiter(arbiter),
+            unicode"сетап: автодемоушен сработал"
+        );
+
+        bytes32 reply = keccak256(unicode"меня разжаловали автоматом, вот моя версия");
+        vm.prank(arbiter);
+        ArbiterAccountabilityFacet(address(diamond)).respondToRemoval(reply);
+
+        assertEq(
+            ArbiterAccountabilityFacet(address(diamond)).getRemovalReply(arbiter),
+            reply,
+            unicode"автодемоушен тоже даёт право ответа — та же публичная запись, тот же ответ"
+        );
+    }
 }

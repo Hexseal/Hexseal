@@ -662,23 +662,53 @@ contract ArbiterRemovalForCauseTest is Test {
         acc.respondToRemoval(keccak256("x"));
     }
 
+    bytes32 constant FWD_TYPEHASH = keccak256(
+        "ForwardRequest(address from,address to,uint256 value,uint256 gas,uint256 nonce,bytes data)"
+    );
+
     /// Две копии _msgSender() обязаны вести себя одинаково. Разойдутся —
     /// гейслесс-путь одного фасета начнёт видеть форвардер вместо человека.
+    ///
+    /// ⚠️ Круг правок 1 ревью задачи 8, Minor 3: прежняя версия пранкалась
+    /// адресом форвардера и вручную клеила хвост calldata (`abi.encodePacked`),
+    /// минуя `MinimalForwarder.execute()` и проверку подписи целиком — это
+    /// доказывало «функция правильно достаёт адрес из хвоста calldata», а не
+    /// «гейслесс-путь работает целиком: подпись, проверка, релеер». Переписан
+    /// по золотому образцу — `testFundDisputeThroughForwarderIsPaidByTheHuman`
+    /// (на который ссылается шапка check_gasless_sender.py) и
+    /// `test/DisputeNoResponse.t.sol::test_RecordNoResponse_ThroughRealForwarder_CreditsHumanNotForwarder`:
+    /// настоящий EIP-712-запрос, настоящая подпись, настоящий `fwd.execute()`
+    /// от третьего адреса (не арбитр, не форвардер) — как это реально делает
+    /// релеер.
     function test_MsgSenderMatchesRegistry() public {
+        uint256 arbiterPk = 0xCA11;
+        address arb = vm.addr(arbiterPk);
+        address relayer = address(0x9999); // третий адрес: не арбитр, не форвардер
+
+        // Свежий арбитр под этим адресом — setUp сажает только фиксированный
+        // `arbiter` (0xA1), у которого нет известного приватного ключа.
+        vm.store(address(acc), keccak256(abi.encode(arb, uint256(ARB_BASE))), bytes32(uint256(1)));
+
         MinimalForwarder fwd = new MinimalForwarder();
         _setForwarder(address(acc), address(fwd));
 
-        bytes memory payload = abi.encodePacked(
-            abi.encodeWithSelector(acc.respondToRemoval.selector, keccak256("x")),
-            arbiter
-        );
-        _setStreak(arbiter, 2);
-        acc.removeArbiterForCause(arbiter, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0), address(0));
+        _setStreak(arb, 2);
+        acc.removeArbiterForCause(arb, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0), address(0));
 
-        vm.prank(address(fwd));
-        (bool ok,) = address(acc).call(payload);
-        assertTrue(ok, unicode"вызов через форвардер обязан пройти");
-        assertEq(acc.getRemovalReply(arbiter), keccak256("x"),
+        MinimalForwarder.ForwardRequest memory req = MinimalForwarder.ForwardRequest({
+            from:  arb,
+            to:    address(acc),
+            value: 0,
+            gas:   500_000,
+            nonce: fwd.getNonce(arb),
+            data:  abi.encodeWithSelector(acc.respondToRemoval.selector, keccak256("x"))
+        });
+
+        vm.prank(relayer);
+        (bool ok, bytes memory ret) = fwd.execute(req, _signFwd(fwd, arbiterPk, req));
+        assertTrue(ok, string.concat("forwarded respondToRemoval failed: ", vm.toString(ret)));
+
+        assertEq(acc.getRemovalReply(arb), keccak256("x"),
             unicode"ответ обязан записаться ЧЕЛОВЕКУ, а не форвардеру");
     }
 
@@ -782,6 +812,30 @@ contract ArbiterRemovalForCauseTest is Test {
             forwarder,
             unicode"смещение trustedForwarder в FactoryStorage.Layout уехало"
         );
+    }
+
+    /// EIP-712-подпись ForwardRequest — дословная копия
+    /// test/DisputeNoResponse.t.sol::_signFwd (круг правок 1 ревью задачи 8,
+    /// Minor 3): тот же домен `("MinimalForwarder", "0.0.1")`, тот же typehash.
+    function _signFwd(MinimalForwarder fwd, uint256 pk, MinimalForwarder.ForwardRequest memory req)
+        internal view returns (bytes memory)
+    {
+        bytes32 structHash = keccak256(abi.encode(
+            FWD_TYPEHASH, req.from, req.to, req.value, req.gas, req.nonce, keccak256(req.data)
+        ));
+        bytes32 digest = keccak256(abi.encodePacked(
+            "\x19\x01",
+            keccak256(abi.encode(
+                keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"),
+                keccak256(bytes("MinimalForwarder")),
+                keccak256(bytes("0.0.1")),
+                block.chainid,
+                address(fwd)
+            )),
+            structHash
+        ));
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(pk, digest);
+        return abi.encodePacked(r, s, v);
     }
 
     /// MISTAKE_THRESHOLD в новом фасете обязан быть СТРОГО НИЖЕ
