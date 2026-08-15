@@ -52,8 +52,13 @@ contract WrongSuspensionWindowStub {
 contract ArbiterAccountabilityUpgradeTest is Test {
     UpgradeArbiterAccountability internal upgrade;
 
-    /// Неймспейс арбитражного хранилища — keccak256("hexseal.arbiter.storage")
-    /// по схеме ERC-7201, тот же, что в test/ArbiterRemovalForCause.t.sol.
+    /// Неймспейс арбитражного хранилища, ERC-7201 (ArbiterRegistryStorage.POSITION,
+    /// src/facets/ArbiterRegistryFacet.sol:55-56):
+    ///   keccak256(abi.encode(uint256(keccak256("hexseal.arbiterregistry.storage")) - 1))
+    ///     & ~bytes32(uint256(0xff))
+    /// Тот же, что в test/ArbiterRemovalForCause.t.sol. (Формула и строка
+    /// исправлены в комментарии кругом правок 1 — значение было верным, врало
+    /// описание.)
     bytes32 constant ARB_POS = 0xaae71de0594cbcb5434f0ab7f7501c1be178552bf788b418a1c2624ba9718d00;
 
     /// seatedBy — слот 25, seatedCountBy — 26. Не приняты на слово: смещение
@@ -138,6 +143,74 @@ contract ArbiterAccountabilityUpgradeTest is Test {
         bytes4[] memory addAll = upgrade.addSelectors();
         for (uint256 i = 0; i < abiSels.length; i++) {
             assertTrue(_contains(addAll, abiSels[i]), unicode"селектор нового фасета потерялся в общем списке Add");
+        }
+    }
+
+    /// Все 23 добавляемых селектора названы ЛИТЕРАЛЬНЫМИ ПОДПИСЯМИ, а не
+    /// `.selector` из тех же контрактов. Приём взят у соседа —
+    /// test/PresentationRecordUpgrade.t.sol:62-65: сверка `.selector` с
+    /// `.selector` тавтологична, потому что при переименовании функции обе
+    /// стороны едут вместе и тест остаётся зелёным. Здесь слева фасет, справа
+    /// текст подписи, на который завязываются фронт и релеер, — расхождение
+    /// обязано краснеть.
+    ///
+    /// Почему именно Add, а не заодно и 63 Replace: у Replace независимый
+    /// оракул уже есть и он сильнее текста — ЖИВАЯ ЦЕПЬ. Переименованная
+    /// функция даст селектор, которого в даймонде нет, и пред-полёт
+    /// checkReplaceGroup покраснеет на первом же запуске. У Add такого оракула
+    /// нет по устройству: этих селекторов в цепи не должно быть НИ ДО, НИ
+    /// ПОСЛЕ переименования, и пред-полёт одинаково доволен обоими. Значит
+    /// текстовая сверка нужна ровно там, где чейн молчит (найдено ревью круга 1,
+    /// Minor 3).
+    ///
+    /// Что исчезнет из поведения, если снять: переименование или смена подписи
+    /// (лишний аргумент, uint256 вместо bytes32) проехали бы молча — цепь
+    /// смонтировала бы новый селектор, а фронт продолжал бы звать старый и
+    /// получал «Diamond: function not found».
+    function test_AddSelectorsMatchLiteralSignatures() public view {
+        string[] memory regSigs = new string[](6);
+        regSigs[0] = "getSeatedBy(address)";
+        regSigs[1] = "getSeatedCountBy(address)";
+        regSigs[2] = "getChiefBloc()";
+        regSigs[3] = "getMaxClaimsPerArbiter()";
+        regSigs[4] = "getCleanVerdicts(address)";
+        regSigs[5] = "getMaxArbiterMistakes()";
+
+        string[] memory accSigs = new string[](17);
+        accSigs[0]  = "suspendArbiter(address)";
+        accSigs[1]  = "liftSuspension(address)";
+        accSigs[2]  = "isSuspended(address)";
+        accSigs[3]  = "getSuspendedUntil(address)";
+        accSigs[4]  = "getSuspensionWindow()";
+        accSigs[5]  = "removeArbiterForCause(address,uint8,bytes32,address)";
+        accSigs[6]  = "getMistakeThreshold()";
+        accSigs[7]  = "getMaxArbiterMistakesMirror()";
+        accSigs[8]  = "getDaoThresholdMirror()";
+        accSigs[9]  = "proposeRemoval(address,uint8,bytes32)";
+        accSigs[10] = "withdrawProposal(address)";
+        accSigs[11] = "getRemovalProposal(address)";
+        accSigs[12] = "hasLiveProposal(address)";
+        accSigs[13] = "getProposalTTL()";
+        accSigs[14] = "respondToRemoval(bytes32)";
+        accSigs[15] = "getRemovalReply(address)";
+        accSigs[16] = "getArbiterStanding(address)";
+
+        bytes4[] memory declaredReg = upgrade.addRegistrySelectors();
+        assertEq(declaredReg.length, regSigs.length, unicode"Add-реестр: число селекторов разошлось с числом подписей");
+        for (uint256 i = 0; i < regSigs.length; i++) {
+            assertTrue(
+                _contains(declaredReg, bytes4(keccak256(bytes(regSigs[i])))),
+                unicode"Add-реестр: подписи нет среди добавляемых селекторов"
+            );
+        }
+
+        bytes4[] memory declaredAcc = upgrade.addAccountabilitySelectors();
+        assertEq(declaredAcc.length, accSigs.length, unicode"Add-ответственность: число селекторов разошлось с числом подписей");
+        for (uint256 i = 0; i < accSigs.length; i++) {
+            assertTrue(
+                _contains(declaredAcc, bytes4(keccak256(bytes(accSigs[i])))),
+                unicode"Add-ответственность: подписи нет среди добавляемых селекторов"
+            );
         }
     }
 
@@ -464,6 +537,14 @@ contract ArbiterAccountabilityUpgradeTest is Test {
     /// переход виден целиком, — поэтому двойник, реально отвечающий на
     /// removeArbiter: со смонтированной-но-нереализованной функцией сравнение
     /// выродилось бы в «мертво до, мертво после» и не доказывало бы ничего.
+    ///
+    /// Разрез здесь применяется составом buildCuts() напрямую, а не через
+    /// run(): двойник по определению стоит на ДРУГОМ адресе, чем группа
+    /// Replace, а run() с круга правок 1 такое состояние отвергает пред-полётом
+    /// (Important 1 — Remove на чужом фасете оторвал бы кусок чужого фасета).
+    /// Проверяется здесь не пред-полёт, а сам факт «маршрут был — маршрута
+    /// нет»; что эту проверку зовёт именно run(), доказывает соседний
+    /// test_RunRevertsWhenNakedRemoveArbiterStillAnswers.
     function test_NakedButtonWasAliveBeforeTheCutAndDeadAfter() public {
         DiamondProxy diamond = _deployMinimalDiamond();
         (, address stubAddr) = _mountLiveLayoutWithWorkingButton(diamond);
@@ -474,8 +555,11 @@ contract ArbiterAccountabilityUpgradeTest is Test {
         );
         assertTrue(okBefore, unicode"предпосылка: до разреза голая кнопка обязана срабатывать");
 
-        _armRun(diamond);
-        upgrade.run();
+        ArbiterRegistryFacet newReg = new ArbiterRegistryFacet();
+        ArbiterAccountabilityFacet newAcc = new ArbiterAccountabilityFacet();
+        IDiamondCut(address(diamond)).diamondCut(
+            upgrade.buildCuts(address(newReg), address(newAcc)), address(0), ""
+        );
 
         (bool okAfter, ) = address(diamond).call(
             abi.encodeWithSignature("removeArbiter(address)", address(0xA1))
@@ -486,6 +570,28 @@ contract ArbiterAccountabilityUpgradeTest is Test {
             address(0),
             unicode"после разреза селектор голой кнопки не должен вести никуда"
         );
+        // И проверка скрипта на этом же мире молчит — то есть согласна с миром,
+        // а не только ревертит на лживом.
+        upgrade.assertNakedRemoveArbiterIsDead(address(diamond));
+    }
+
+    /// ⚠️ ЗАМЕР КРУГА ПРАВОК 1. Снять из run() строку
+    /// `require(removeHost == oldFacet, ...)` — покраснеет ровно этот тест.
+    ///
+    /// Мир сломан по-настоящему и без единой подмены: голая removeArbiter
+    /// смонтирована на ЧУЖОМ фасете (посторонний разрез между написанием
+    /// скрипта и днём подписи). Группа Replace при этом честна и целиком сидит
+    /// на своём адресе, все Add свободны, счёт сойдётся, и после разреза кнопка
+    /// будет честно мертва — то есть НИ ОДНА другая проверка скрипта этого не
+    /// видит. А Remove в таком мире выдёргивает селектор из чужого фасета:
+    /// разрез зелёный, чужой фасет обкусан.
+    function test_RunRevertsWhenRemoveTargetSitsOnAForeignFacet() public {
+        DiamondProxy diamond = _deployMinimalDiamond();
+        _mountLiveLayoutWithWorkingButton(diamond); // кнопка — на двойнике, не на фасете реестра
+        _armRun(diamond);
+
+        vm.expectRevert(bytes(unicode"pre-flight: removeArbiter сидит не на том фасете, что группа Replace"));
+        upgrade.run();
     }
 
     /// ⚠️ ЗАМЕР ИЗ ЗАДАНИЯ. Снять из run() строку

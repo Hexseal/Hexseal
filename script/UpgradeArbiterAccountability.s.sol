@@ -154,8 +154,19 @@ contract UpgradeArbiterAccountability is Script {
         address oldFacet = checkReplaceGroup(replaceSels, diamond);
         checkAddGroupUnmounted(addSels, diamond);
         address removeHost = checkRemoveGroupMounted(removeSels, diamond);
+        // Удаляемый селектор обязан сидеть на ТОМ ЖЕ фасете, что и вся группа
+        // Replace. Иначе Remove тихо выдернет чужой селектор с ЧУЖОГО фасета, и
+        // не заметит этого ничто: голая кнопка честно мертва, счёт +Add-Remove
+        // сходится, а assertFacetHoldsNoSelectors спрашивает только хост группы
+        // Replace. Разрез прошёл бы зелёным и попутно оторвал кусок от чужого
+        // фасета. Найдено ревью круга 1: до этой строки инвариант ПЕЧАТАЛСЯ, то
+        // есть держался на том, что человек сличит строку глазами.
+        require(
+            removeHost == oldFacet,
+            unicode"pre-flight: removeArbiter сидит не на том фасете, что группа Replace"
+        );
         console.log("Old ArbiterRegistryFacet currently mounted at:", oldFacet);
-        console.log("Naked removeArbiter currently routed to:", removeHost);
+        console.log("Naked removeArbiter currently routed to the same facet:", removeHost);
 
         uint256 selectorsBefore = totalRoutedSelectors(diamond);
         console.log("Total routed selectors BEFORE cut:", selectorsBefore);
