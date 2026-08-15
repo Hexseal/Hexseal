@@ -584,4 +584,59 @@ contract ArbiterAccountabilityFacet {
     function getProposalTTL() external pure returns (uint256) {
         return PROPOSAL_TTL;
     }
+
+    // -------- ПОЛОЖЕНИЕ АРБИТРА ОДНИМ ЧТЕНИЕМ (задача 9, 15 августа 2026) --------
+
+    /// Всё положение арбитра одним чтением. Собирать это на фронте семью-восемью
+    /// отдельными запросами нельзя: между ними проходят блоки, и картинка
+    /// расходится сама с собой — залог прочитан до сноса, а статус после.
+    ///
+    /// Набор полей шире брифа задачи (там семь: xp..openClaims) — за время
+    /// работы над планом в хранилище появилось то, чего в брифе ещё не было:
+    ///
+    /// `cleanVerdicts` — судейский стаж (сколько вердиктов дошло до
+    /// финализации неперевёрнутыми). Без него показатель не показывает
+    /// главного: именно по нему решено конвертировать ручных арбитров при
+    /// включении ДАО (см. докстринг ArbiterRegistryStorage.Data.cleanVerdicts).
+    ///
+    /// `removedAt` — момент сноса, ноль если не снимали. Экран отличает
+    /// действующего арбитра от снятого одним полем, не гадая по остальным.
+    ///
+    /// `hasLiveRemovalProposal` — висит ли прямо сейчас предложение
+    /// директора о сносе. Читается ВЫЗОВОМ hasLiveProposal(arbiter), а не
+    /// копией её формулы протухания: в этой же работе (getRemovalProposal,
+    /// круг правок 2 задачи 7) уже ловили и переделывали ровно такой
+    /// дубликат — второе место, сравнивающее `proposedAt + PROPOSAL_TTL` со
+    /// своим собственным пониманием "живо", было бы новым швом с тем же
+    /// классом дефекта.
+    ///
+    /// XP и cleanStreak читаются из ReputationStorage — чужого неймспейса,
+    /// тем же приёмом, что и _isDaoActive выше: фасет уже умеет туда ходить.
+    function getArbiterStanding(address arbiter) external view returns (
+        uint256 xp,
+        uint256 cleanStreak,
+        uint256 mistakeStreak,
+        uint256 bond,
+        address seatedBy,
+        uint256 suspendedUntil,
+        uint256 openClaims,
+        uint256 cleanVerdicts,
+        uint256 removedAt,
+        bool    hasLiveRemovalProposal
+    ) {
+        ArbiterRegistryStorage.Data storage d = ArbiterRegistryStorage.data();
+        ReputationStorage.Data storage rep = ReputationStorage.data();
+        return (
+            rep.xp[arbiter],
+            rep.cleanStreak[arbiter],
+            d.arbiterMistakeStreak[arbiter],
+            d.arbiterBond[arbiter],
+            d.seatedBy[arbiter],
+            d.suspendedUntil[arbiter],
+            d.openClaimCount[arbiter],
+            d.cleanVerdicts[arbiter],
+            d.removedAt[arbiter],
+            hasLiveProposal(arbiter)
+        );
+    }
 }

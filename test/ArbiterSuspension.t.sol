@@ -315,4 +315,125 @@ contract ArbiterSuspensionTest is Test {
         vm.expectRevert(ArbiterAccountabilityFacet.NotOwnerOrChief.selector);
         f.liftSuspension(arbiter);
     }
+
+    // ============================================================
+    //  ПОЛОЖЕНИЕ АРБИТРА ОДНИМ ЧТЕНИЕМ (задача 9, 15 августа 2026)
+    //
+    //  getArbiterStanding — один вызов вместо семи-восьми. Нужен фронту и
+    //  внешнему читателю: собирать это семью отдельными запросами нельзя —
+    //  между ними проходят блоки, и картинка расходится сама с собой (залог
+    //  прочитан до сноса, а статус после).
+    // ============================================================
+
+    /// Смещения полей, нужных getArbiterStanding, но недоступных вызывающему
+    /// через собственные функции ArbiterAccountabilityFacet: arbiterMistakeStreak/
+    /// arbiterBond/seatedBy/openClaimCount/cleanVerdicts/removedAt живут в
+    /// ArbiterRegistryStorage (той же raw-хранилищной модели, что и
+    /// suspendedUntil выше — SLOT_SUSPENDED_UNTIL = 27), а xp/cleanStreak — в
+    /// ReputationStorage, чужом неймспейсе. Добыты перебором (offset 0..40 /
+    /// 0..15, запись маркера в кандидатный слот, чтение через сам
+    /// getArbiterStanding как оракул: он использует именованные поля
+    /// структуры, слот считает компилятор, ошибиться может только перебор
+    /// снаружи) — одноразовый зонд прогнан и удалён, как предписано.
+    bytes32 constant REP_BASE            = 0xa32193c5e38bd2de27c8550f156d709eafdc63aaa4290e5e27473f2ffc097400;
+    uint256 constant SLOT_MISTAKE_STREAK = 11;
+    uint256 constant SLOT_BOND           = 12;
+    uint256 constant SLOT_OPEN_CLAIMS    = 13;
+    uint256 constant SLOT_SEATED_BY      = 25;
+    uint256 constant SLOT_CLEAN_VERDICTS = 28;
+    uint256 constant SLOT_REMOVED_AT     = 31;
+    uint256 constant SLOT_XP             = 0;
+    uint256 constant SLOT_CLEAN_STREAK   = 9;
+
+    function _storeUint(bytes32 base, uint256 offset, address who, uint256 value) internal {
+        bytes32 slot = keccak256(abi.encode(who, uint256(base) + offset));
+        vm.store(address(acc), slot, bytes32(value));
+    }
+
+    /// Ветка из брифа задачи 9: положение только что приостановленного
+    /// арбитра, остальное — нули лёгкого стенда по умолчанию. Расширена
+    /// тремя полями, которых не было в брифе (cleanVerdicts, removedAt,
+    /// hasLiveRemovalProposal) — бриф писался до того, как они появились в
+    /// хранилище (см. докстринг getArbiterStanding в самом фасете).
+    function test_StandingReturnsEverythingAtOnce() public {
+        acc.suspendArbiter(arbiter);
+
+        (
+            uint256 xp,
+            uint256 cleanStreak,
+            uint256 mistakeStreak,
+            uint256 bond,
+            address seatedBy,
+            uint256 suspendedUntil,
+            uint256 openClaims,
+            uint256 cleanVerdicts,
+            uint256 removedAt,
+            bool    hasLiveRemovalProposal
+        ) = acc.getArbiterStanding(arbiter);
+
+        assertEq(xp, 0);
+        assertEq(cleanStreak, 0);
+        assertEq(mistakeStreak, 0);
+        assertEq(bond, 0, unicode"за ручным арбитром залога нет — и это видно");
+        assertEq(seatedBy, address(0));
+        assertEq(suspendedUntil, vm.getBlockTimestamp() + 72 hours, unicode"приостановка видна тут же");
+        assertEq(openClaims, 0);
+        assertEq(cleanVerdicts, 0, unicode"судейского стажа ещё нет");
+        assertEq(removedAt, 0, unicode"не снимали — ноль, а не мусор");
+        assertFalse(hasLiveRemovalProposal, unicode"предложения о сносе не было");
+    }
+
+    /// Мутационная проба: КАЖДОЕ числовое/адресное поле получает своё
+    /// уникальное значение — подмена любого одного поля другим (например,
+    /// вернуть bond там, где должен быть cleanVerdicts) обязана уронить ровно
+    /// свой assertEq и никакой другой. hasLiveRemovalProposal — булево, у
+    /// него нет "своего числа" для подмены; прямая (захардкожен true) и
+    /// обратная (захардкожен false) порча ловятся здесь и в
+    /// test_StandingReturnsEverythingAtOnce одновременно: там ожидается
+    /// false, здесь — true.
+    function test_StandingDistinguishesEveryField() public {
+        _storeUint(REP_BASE, SLOT_XP, arbiter, 501);
+        _storeUint(REP_BASE, SLOT_CLEAN_STREAK, arbiter, 502);
+        _storeUint(ARB_BASE, SLOT_MISTAKE_STREAK, arbiter, 503);
+        _storeUint(ARB_BASE, SLOT_BOND, arbiter, 504);
+        _storeUint(ARB_BASE, SLOT_SEATED_BY, arbiter, uint256(uint160(address(0xBEEF))));
+        _storeUint(ARB_BASE, SLOT_OPEN_CLAIMS, arbiter, 506);
+        _storeUint(ARB_BASE, SLOT_CLEAN_VERDICTS, arbiter, 507);
+        _storeUint(ARB_BASE, SLOT_REMOVED_AT, arbiter, 508);
+
+        // suspendedUntil — через боевой вызов, а не маркер: значение (t0 + 72h)
+        // уже отличается от всех восьми маркеров выше на любом разумном t0.
+        acc.suspendArbiter(arbiter);
+        uint256 expectedSuspendedUntil = vm.getBlockTimestamp() + 72 hours;
+
+        // hasLiveRemovalProposal — тоже боевым вызовом: Collusion не проверяется
+        // цепью, поэтому proposeRemoval не трогает arbiterMistakeStreak (503
+        // выше остаётся нетронутым) и требует только ненулевой отпечаток.
+        vm.prank(chief);
+        acc.proposeRemoval(arbiter, ArbiterAccountabilityFacet.Cause.Collusion, bytes32(uint256(0xC0FFEE)));
+
+        (
+            uint256 xp,
+            uint256 cleanStreak,
+            uint256 mistakeStreak,
+            uint256 bond,
+            address seatedBy,
+            uint256 suspendedUntil,
+            uint256 openClaims,
+            uint256 cleanVerdicts,
+            uint256 removedAt,
+            bool    hasLiveRemovalProposal
+        ) = acc.getArbiterStanding(arbiter);
+
+        assertEq(xp, 501, "xp");
+        assertEq(cleanStreak, 502, "cleanStreak");
+        assertEq(mistakeStreak, 503, "mistakeStreak");
+        assertEq(bond, 504, "bond");
+        assertEq(seatedBy, address(0xBEEF), "seatedBy");
+        assertEq(suspendedUntil, expectedSuspendedUntil, "suspendedUntil");
+        assertEq(openClaims, 506, "openClaims");
+        assertEq(cleanVerdicts, 507, "cleanVerdicts");
+        assertEq(removedAt, 508, "removedAt");
+        assertTrue(hasLiveRemovalProposal, "hasLiveRemovalProposal");
+    }
 }

@@ -50,7 +50,7 @@ import "../src/JobReceiptFacet.sol";
 ///   - `buildInitCuts`/`buildRemainingCuts` wire a correct selector set to the
 ///     wrong `FacetCut.facetAddress`
 ///   - the actual `DiamondProxy` this script would produce does not end up with
-///     exactly 12 facets, exactly 198 routed selectors, and consistent
+///     exactly 12 facets, exactly 199 routed selectors, and consistent
 ///     `facetAddress(sel)` <-> `facets()` routing in both directions
 ///     (177 -> 179, 15 Aug 2026: arbiter-accountability task 1 added
 ///     getSeatedBy/getSeatedCountBy to ArbiterRegistryFacet; 179 -> 180,
@@ -104,7 +104,18 @@ import "../src/JobReceiptFacet.sol";
 ///     `respondToRemoval` and `getRemovalReply` (+2) — the facet's first
 ///     gasless function, so it also grew its own `_msgSender()` (see
 ///     script/gasless-sender.allow); the new `removalReply`/`removedAt`
-///     fields are storage layout only, not selectors)
+///     fields are storage layout only, not selectors; 198 -> 199, same day,
+///     task 9 of the same plan: `getArbiterStanding` — the arbiter's whole
+///     standing in one read (xp, cleanStreak, mistakeStreak, bond, seatedBy,
+///     suspendedUntil, openClaims, cleanVerdicts, removedAt,
+///     hasLiveRemovalProposal) instead of seven-plus separate calls that
+///     could straddle a block boundary — bond read before a removal, status
+///     read after. ArbiterAccountabilityFacet gained one selector (+1, 16 ->
+///     17); the field set is wider than the task brief, which predates
+///     `cleanVerdicts` and `removedAt` landing in storage — both are read
+///     into the return tuple, plus `hasLiveRemovalProposal` via a call to
+///     the facet's own `hasLiveProposal`, not a copy of its formula. No new
+///     storage fields, ArbiterRegistryFacet unchanged)
 contract DeployFullSelectorsTest is Test {
     DeployFull internal deploy;
 
@@ -394,7 +405,7 @@ contract DeployFullSelectorsTest is Test {
                 );
             }
         }
-        assertEq(totalRouted, 198, "diamond should route exactly 198 selectors total");
+        assertEq(totalRouted, 199, "diamond should route exactly 199 selectors total");
 
         // Reverse direction: facetAddresses() must report exactly the same set
         // of addresses facets() reported them under.

@@ -8,7 +8,7 @@ pragma solidity ^0.8.20;
 // см. test/StorageLayout.t.sol.
 //
 // Регенерирован 2026-07-25 из живых ABI (`forge inspect <Facet> methodIdentifiers`)
-// после ~40 инкрементальных апгрейдов, которые этот файл не отслеживал. Все 196
+// после ~40 инкрементальных апгрейдов, которые этот файл не отслеживал. Все 199
 // селектор 12 фасетов проверены против test/DeployFullSelectors.t.sol — тот тест
 // падает, если этот файл и живые ABI разойдутся снова. Число здесь — сумма
 // литералов `new bytes4[](n)` в билдерах ниже; оно уже двенадцатикратно протухало (стояло
@@ -59,7 +59,16 @@ pragma solidity ^0.8.20;
 // ArbiterAccountabilityFacet получил respondToRemoval и getRemovalReply (+2,
 // 16 против прежних 14) — она же первая гейслесс-функция фасета, потребовала
 // собственный _msgSender() (см. script/gasless-sender.allow); новые поля
-// removalReply/removedAt — только раскладка хранилища, не селекторы.
+// removalReply/removedAt — только раскладка хранилища, не селекторы; затем
+// 199, в тот же день, задача 9 того же плана: getArbiterStanding — всё
+// положение арбитра одним чтением вместо семи-восьми отдельных запросов,
+// между которыми проходят блоки и картинка расходится сама с собой.
+// ArbiterAccountabilityFacet получил один селектор (+1, 17 против прежних
+// 16); набор полей шире брифа задачи — за время работы над планом в
+// хранилище появились cleanVerdicts и removedAt, которых бриф не знал, оба
+// добавлены в возврат функции, плюс hasLiveRemovalProposal (вызовом
+// hasLiveProposal, не копией формулы) — новых полей хранилища задача не
+// потребовала, ArbiterRegistryFacet без изменений.
 // Пересчитать, не полагаясь на глаз:
 //   grep -o "new bytes4\[\]([0-9]*)" script/DeployFull.s.sol \
 //     | sed 's/.*(\([0-9]*\))/\1/' | awk '{s+=$1} END {print s}'
@@ -561,7 +570,7 @@ contract DeployFull is Script {
         sels[68] = ArbiterRegistryFacet.getMaxArbiterMistakes.selector;
     }
 
-    // ArbiterAccountabilityFacet — 16 селекторов (arbiter-accountability,
+    // ArbiterAccountabilityFacet — 17 селекторов (arbiter-accountability,
     // задача 4, 15 августа 2026, пять; шестой, getChiefArbiterAddress, снят
     // задачей 5 того же дня — см. комментарий ниже; задача 6 того же дня
     // добавила пять (снос с поводом + четыре view), круг правок 1 ревью
@@ -572,12 +581,17 @@ contract DeployFull is Script {
     // 10 → 7 → 9; задача 7 того же дня добавила предложение директора
     // (proposeRemoval/withdrawProposal/hasLiveProposal/getRemovalProposal/
     // getProposalTTL, +5 → 14); задача 8 того же дня добавила право ответа
-    // снятого (respondToRemoval/getRemovalReply, +2 → 16). Отдельный фасет,
+    // снятого (respondToRemoval/getRemovalReply, +2 → 16); задача 9 того же
+    // дня добавила getArbiterStanding (+1 → 17) — всё положение арбитра
+    // одним чтением (xp, cleanStreak, mistakeStreak, bond, seatedBy,
+    // suspendedUntil, openClaims, cleanVerdicts, removedAt,
+    // hasLiveRemovalProposal), вместо семи-восьми отдельных запросов,
+    // которые могли разойтись между собой на блок. Отдельный фасет,
     // не дописка в ArbiterRegistryFacet: тот занимал 21 227 из 24 576 байт
     // (86.4%), запаса не хватало. Делит тот же ArbiterRegistryStorage
     // namespace — переноса данных нет.
     function arbiterAccountabilityFacetSelectors() public pure returns (bytes4[] memory sels) {
-        sels = new bytes4[](16);
+        sels = new bytes4[](17);
         sels[0] = ArbiterAccountabilityFacet.suspendArbiter.selector;
         sels[1] = ArbiterAccountabilityFacet.liftSuspension.selector;
         sels[2] = ArbiterAccountabilityFacet.isSuspended.selector;
@@ -631,6 +645,11 @@ contract DeployFull is Script {
         // человек), читает отправителя через собственный _msgSender().
         sels[14] = ArbiterAccountabilityFacet.respondToRemoval.selector;
         sels[15] = ArbiterAccountabilityFacet.getRemovalReply.selector;
+
+        // Положение арбитра одним чтением (задача 9, 15 августа 2026): один
+        // view вместо семи-восьми отдельных запросов, которые между собой
+        // могли разойтись на блок — залог прочитан до сноса, а статус после.
+        sels[16] = ArbiterAccountabilityFacet.getArbiterStanding.selector;
     }
 
     // DealMetadataFacet — 1 селектор
