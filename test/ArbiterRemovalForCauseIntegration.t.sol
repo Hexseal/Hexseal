@@ -730,16 +730,29 @@ contract ArbiterRemovalForCauseIntegrationTest is Test {
         ArbiterAccountabilityFacet(address(diamond)).respondToRemoval(keccak256("phantom"));
     }
 
-    /// ⚠️ ЗНАЕМЫЙ ШОВ, зафиксирован намеренно (финальный обзор ветки, M-4).
-    /// Уборка едина на обе двери входа, поэтому самозапись снимает и
-    /// приостановку, которую оставил снос (C-1). Значит снятый по поводу, если
-    /// ДАО активна и у него хватает XP/серии, покупает досрочную разморозку
-    /// своих вердиктов ценой свежего залога в 50 USDC поверх только что
-    /// сожжённого. До активации ДАО путь мёртв целиком (applyAsArbiter ревертит
-    /// DAONotActive). Тест НЕ одобряет это поведение — он делает его видимым и
-    /// мутируемым: решение о поведении за владельцем, см. отчёт финального
-    /// обзора.
-    function test_SelfRegistrationAlsoClearsSuspensionKnownSeam() public {
+    // ============================================================
+    //  ШОВ M-4 × САМОЗАПИСЬ — ЗАКРЫТ ПАРАМЕТРОМ (решение владельца, 16 августа)
+    //
+    //  Первая редакция M-4 стирала suspendedUntil в БИБЛИОТЕЧНОЙ уборке, общей
+    //  на обе двери входа, — и тем открывала дыру ровно в C-1: снятый по поводу
+    //  платил свежие 50 USDC залога, возвращался самозаписью и финализировал
+    //  вердикты, взятые ДО сноса, не дожидаясь 72 часов.
+    //
+    //  Закрыто не второй копией функции, а явным параметром liftSuspension:
+    //  addArbiter передаёт true, applyAsArbiter — false. Довод в одну фразу:
+    //  приостановку накладывает не арбитр, значит и снимать её не ему.
+    //
+    //  Два теста ниже сторожат РАЗНЫЕ стороны параметра, и нужны оба: один
+    //  ловит `true` там, где должно быть `false`, другой — наоборот.
+    // ============================================================
+
+    /// Сторона `false`. Самозапись возвращает в корпус, но приостановку НЕ
+    /// гасит — и доказывается это поведением, а не чтением поля: вернувшийся
+    /// человек по-прежнему не может увести свой вердикт через финализацию.
+    function test_SelfRegistrationDoesNotLiftSuspension() public {
+        address agreementAddr = _disputeAndSubmit(address(0x607), address(0x608));
+
+        uint256 removedAtTs = vm.getBlockTimestamp();
         ArbiterAccountabilityFacet(address(diamond)).removeArbiterForCause(
             arbiter, ArbiterAccountabilityFacet.Cause.Collusion, keccak256("evidence"), address(0)
         );
@@ -749,10 +762,50 @@ contract ArbiterRemovalForCauseIntegrationTest is Test {
         _grantSelfRegistrationGate(arbiter);
         vm.prank(arbiter);
         ArbiterRegistryFacet(address(diamond)).applyAsArbiter();
+        assertTrue(
+            ArbiterRegistryFacet(address(diamond)).isRegisteredArbiter(arbiter),
+            unicode"сетап: самозапись прошла — в корпус он вернулся"
+        );
 
+        assertTrue(
+            ArbiterAccountabilityFacet(address(diamond)).isSuspended(arbiter),
+            unicode"самозапись НЕ снимает приостановку: накладывал её не он"
+        );
+
+        // Главное последствие, ради которого параметр и заведён: окно C-1
+        // держит, несмотря на возврат. Купить разморозку за свежий залог
+        // нельзя.
+        uint256 until = removedAtTs + ArbiterAccountabilityFacet(address(diamond)).getSuspensionWindow();
+        vm.warp(removedAtTs + 24 hours);
+        vm.expectRevert(
+            abi.encodeWithSelector(ArbiterRegistryFacet.ArbiterSuspendedError.selector, until)
+        );
+        ArbiterRegistryFacet(address(diamond)).finalizeVerdict(agreementAddr);
+    }
+
+    /// Сторона `true`. Ту же приостановку снимает ПОСАДКА ВЛАДЕЛЬЦЕМ — он
+    /// отменяет собственное решение, и вернуть человека немым было бы ровно той
+    /// дырой, ради которой M-4 заводилась. Тот же спор, тот же момент, что и в
+    /// тесте выше: единственная разница — какая дверь входа сработала.
+    function test_OwnerReseatingLiftsTheSuspensionSelfRegistrationKeeps() public {
+        address agreementAddr = _disputeAndSubmit(address(0x609), address(0x60A));
+
+        uint256 removedAtTs = vm.getBlockTimestamp();
+        ArbiterAccountabilityFacet(address(diamond)).removeArbiterForCause(
+            arbiter, ArbiterAccountabilityFacet.Cause.Collusion, keccak256("evidence"), address(0)
+        );
+
+        ArbiterRegistryFacet(address(diamond)).addArbiter(arbiter);
         assertFalse(
             ArbiterAccountabilityFacet(address(diamond)).isSuspended(arbiter),
-            unicode"самозапись снимает приостановку той же уборкой — знаемый шов, не случайность"
+            unicode"владелец отменяет своё же решение — приостановка уходит с ним"
+        );
+
+        vm.warp(removedAtTs + 24 hours);
+        ArbiterRegistryFacet(address(diamond)).finalizeVerdict(agreementAddr);
+        assertTrue(
+            ArbiterRegistryFacet(address(diamond)).getPendingVerdict(agreementAddr).finalized,
+            unicode"снос отменён владельцем — вердикт возвращённого арбитра исполняется обычным порядком"
         );
     }
 
