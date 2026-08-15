@@ -14,7 +14,7 @@ pragma solidity ^0.8.20;
 // поэтому владельца сажаем прямой записью в слот.
 
 import "forge-std/Test.sol";
-import {ArbiterRegistryFacet, ArbiterRegistryStorage} from "../src/facets/ArbiterRegistryFacet.sol";
+import {ArbiterRegistryFacet} from "../src/facets/ArbiterRegistryFacet.sol";
 
 contract ArbiterProvenanceTest is Test {
     ArbiterRegistryFacet facet;
@@ -24,8 +24,6 @@ contract ArbiterProvenanceTest is Test {
     address seat1;
     address seat2;
 
-    /// База неймспейса ArbiterRegistryStorage — ArbiterRegistryStorage.POSITION.
-    bytes32 constant ARB_BASE = 0xaae71de0594cbcb5434f0ab7f7501c1be178552bf788b418a1c2624ba9718d00;
     /// Слот владельца даймонда — DiamondStorage.POSITION + 4
     /// (OwnershipLib.contractOwner() → DiamondStorage.Layout.contractOwner,
     /// пятое поле struct Layout: mapping/mapping/array/mapping занимают слоты
