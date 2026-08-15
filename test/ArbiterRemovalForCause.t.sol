@@ -596,6 +596,16 @@ contract ArbiterRemovalForCauseTest is Test {
         assertFalse(acc.hasLiveProposal(arbiter), unicode"согласовано с hasLiveProposal");
     }
 
+    /// Круг правок 2, шов: `proposedAt == 0` (ни разу не предлагали, а не
+    /// "предлагали и протухло") — единственный случай, где формула-копия и
+    /// вызов `hasLiveProposal` реально способны разойтись (протухшую запись
+    /// с настоящим `proposedAt` обе формы читают одинаково: сравнение с TTL
+    /// само даёт false). Тест ставит именно эту границу.
+    function test_GetRemovalProposalLiveFieldFalseForNeverProposed() public {
+        (, , , , bool live) = acc.getRemovalProposal(arbiter);
+        assertFalse(live, unicode"на арбитра ни разу не предлагали — live обязано быть false");
+    }
+
     // ---------- ХЕЛПЕРЫ ----------
 
     function _isArbiterRaw(address who) internal view returns (bool) {

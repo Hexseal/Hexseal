@@ -496,9 +496,13 @@ contract ArbiterAccountabilityFacet {
     /// Чтение записи целиком, включая архивную (протухшую или уже
     /// исполненную — она читается отсюда, пока не перезаписана новой или не
     /// удалена). Пятое поле `live` (улучшение, круг правок 1, 15 августа
-    /// 2026) — та же формула, что и в `hasLiveProposal`, здесь же: раньше
-    /// вызывающий был обязан ПОМНИТЬ вызвать `hasLiveProposal` отдельно,
-    /// прочитав докстринг, — защита, держащаяся на том, что человек прочтёт
+    /// 2026; починка круга правок 2 — тот же день) — ВЫЗОВ `hasLiveProposal`,
+    /// а не копия её формулы: у ответа «живо ли предложение» один хозяин,
+    /// разойтись со строгостью сравнения или проверкой `proposedAt` внутри
+    /// этого файла невозможно структурно, не только по факту сегодняшнего
+    /// совпадения текста. Раньше вызывающий был обязан ПОМНИТЬ вызвать
+    /// `hasLiveProposal` отдельно, прочитав докстринг, — защита, держащаяся
+    /// на том, что человек прочтёт
     /// комментарий, в этом проекте не защита. Селектор функции от типа
     /// возврата не зависит, каскад деплоя не тронут.
     function getRemovalProposal(address arbiter)
@@ -506,8 +510,7 @@ contract ArbiterAccountabilityFacet {
     {
         ArbiterRegistryStorage.RemovalProposal storage p =
             ArbiterRegistryStorage.data().removalProposals[arbiter];
-        bool isLive = p.proposedAt != 0 && block.timestamp < p.proposedAt + PROPOSAL_TTL;
-        return (p.cause, p.evidenceDigest, p.proposedAt, p.by, isLive);
+        return (p.cause, p.evidenceDigest, p.proposedAt, p.by, hasLiveProposal(arbiter));
     }
 
     function getProposalTTL() external pure returns (uint256) {
