@@ -64,8 +64,9 @@ No test files found, exiting with code 1
 
 The file exists and passes under `npm test`. `npx` found no local `vitest`, so it fetched
 a **different major version** (4.x) into its own cache; the relayer's runner — the one this
-repository is written against — is **2.1.9**. You get red output that has nothing to do
-with your change.
+repository is written against — is **3.2.7**. You get red output that has nothing to do
+with your change. (The measurement above was taken while the runner was 2.1.9; the version
+moved on 15 August 2026, the trap did not.)
 
 The same applies to `npx tsc`: use `npm run type-check`, which calls
 `node node_modules/typescript/bin/tsc` by path.
@@ -90,8 +91,8 @@ the pull request and say why:
 | Suite | Expected |
 |---|---|
 | `forge test` | **672 passing** |
-| `relayer && npm test` | **44 files, 955 tests** |
-| `frontend && npm test` | **144 files, 2558 tests** |
+| `relayer && npm test` | **45 files, 1015 tests** |
+| `frontend && npm test` | **148 files, 2761 tests** |
 | `frontend && npm run build` | builds |
 
 `npm run build` is not optional busywork: it is the only thing that catches Next.js's
