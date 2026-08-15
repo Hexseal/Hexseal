@@ -372,6 +372,148 @@ contract ArbiterRemovalForCauseTest is Test {
         acc.removeArbiterForCause(arbiter, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0), address(0));
     }
 
+    // ============================================================
+    //  ПРЕДЛОЖЕНИЕ ДИРЕКТОРА (задача 7, 15 августа 2026)
+    //
+    //  Директор не сносит — он предлагает. Предложение ложится в цепь
+    //  отдельной записью с его адресом, и владелец соглашается отдельной.
+    //  Значит в ленте видно И кто предложил, И кто согласился.
+    //
+    //  Предложение ПРОТУХАЕТ: иначе оно висит в хранилище вечным обвинением
+    //  против работающего арбитра, и «предложение есть» перестаёт значить
+    //  «претензия жива».
+    // ============================================================
+
+    function test_ChiefProposes() public {
+        _setChief(chief);
+        bytes32 digest = keccak256(unicode"докладная");
+        uint256 t0 = vm.getBlockTimestamp();
+
+        vm.expectEmit(true, true, true, true, address(acc));
+        emit ArbiterAccountabilityFacet.RemovalProposed(
+            arbiter, chief, ArbiterAccountabilityFacet.Cause.Leak, digest, t0
+        );
+
+        vm.prank(chief);
+        acc.proposeRemoval(arbiter, ArbiterAccountabilityFacet.Cause.Leak, digest);
+
+        (uint8 c, bytes32 dg, uint256 at, address by) = acc.getRemovalProposal(arbiter);
+        assertEq(c, uint8(ArbiterAccountabilityFacet.Cause.Leak));
+        assertEq(dg, digest);
+        assertEq(at, t0);
+        assertEq(by, chief);
+    }
+
+    function test_ProposalExpires() public {
+        _setChief(chief);
+        vm.prank(chief);
+        acc.proposeRemoval(arbiter, ArbiterAccountabilityFacet.Cause.Leak, keccak256("x"));
+
+        vm.warp(vm.getBlockTimestamp() + 14 days);
+        assertFalse(acc.hasLiveProposal(arbiter), unicode"через 14 суток предложение протухло");
+    }
+
+    function test_ProposalIsLiveUntilTheLastSecond() public {
+        _setChief(chief);
+        vm.prank(chief);
+        acc.proposeRemoval(arbiter, ArbiterAccountabilityFacet.Cause.Leak, keccak256("x"));
+
+        vm.warp(vm.getBlockTimestamp() + 14 days - 1);
+        assertTrue(acc.hasLiveProposal(arbiter), unicode"за секунду до конца ещё живо");
+    }
+
+    function test_ChiefWithdrawsHisOwnProposal() public {
+        _setChief(chief);
+        vm.startPrank(chief);
+        acc.proposeRemoval(arbiter, ArbiterAccountabilityFacet.Cause.Leak, keccak256("x"));
+        acc.withdrawProposal(arbiter);
+        vm.stopPrank();
+        assertFalse(acc.hasLiveProposal(arbiter), unicode"передумал — отозвал");
+    }
+
+    function test_StrangerCannotPropose() public {
+        vm.prank(address(0x5A));
+        vm.expectRevert(ArbiterAccountabilityFacet.NotOwnerOrChief.selector);
+        acc.proposeRemoval(arbiter, ArbiterAccountabilityFacet.Cause.Leak, keccak256("x"));
+    }
+
+    /// Второе требование контроллера сверх брифа: код заверяемый — отпечаток
+    /// обязателен УЖЕ на этапе предложения, не только при исполнении.
+    function test_ProposeUnverifiableWithoutEvidenceIsRefused() public {
+        _setChief(chief);
+        vm.prank(chief);
+        vm.expectRevert(ArbiterAccountabilityFacet.EvidenceRequired.selector);
+        acc.proposeRemoval(arbiter, ArbiterAccountabilityFacet.Cause.Collusion, bytes32(0));
+    }
+
+    /// Проверяемые цепью коды (OverturnedVerdicts/Timeouts/Silence) на этапе
+    /// предложения НЕ проверяются намеренно: streak здесь ниже порога, а
+    /// предложение всё равно проходит — признак может появиться уже после
+    /// того, как директор предупредил.
+    function test_ProposeVerifiableCauseDoesNotCheckTheStreakYet() public {
+        _setChief(chief);
+        // streak НЕ выставлен — ниже MISTAKE_THRESHOLD (и вообще ноль).
+        vm.prank(chief);
+        acc.proposeRemoval(arbiter, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0));
+        assertTrue(acc.hasLiveProposal(arbiter), unicode"проверяемый код не сверяется на этапе предложения");
+    }
+
+    /// Владелец предлагает наравне с директором — onlyOwnerOrChief пускает
+    /// обоих, не только директора.
+    function test_OwnerCanAlsoPropose() public {
+        acc.proposeRemoval(arbiter, ArbiterAccountabilityFacet.Cause.Leak, keccak256("x"));
+        (, , , address by) = acc.getRemovalProposal(arbiter);
+        assertEq(by, owner);
+    }
+
+    /// Владелец может отозвать предложение, положенное директором — оба
+    /// ходят под одним модификатором, право отзыва не привязано к тому, кто
+    /// именно предложил.
+    function test_OwnerWithdrawsChiefsProposal() public {
+        _setChief(chief);
+        vm.prank(chief);
+        acc.proposeRemoval(arbiter, ArbiterAccountabilityFacet.Cause.Leak, keccak256("x"));
+
+        acc.withdrawProposal(arbiter);
+        assertFalse(acc.hasLiveProposal(arbiter), unicode"владелец снял чужое предложение");
+    }
+
+    /// Второе предложение перезаписывает первое — претензия одна, а не
+    /// очередь претензий.
+    function test_SecondProposalOverwritesFirst() public {
+        _setChief(chief);
+        vm.startPrank(chief);
+        acc.proposeRemoval(arbiter, ArbiterAccountabilityFacet.Cause.Leak, keccak256("first"));
+        acc.proposeRemoval(arbiter, ArbiterAccountabilityFacet.Cause.Other, keccak256("second"));
+        vm.stopPrank();
+
+        (uint8 c, bytes32 dg, , ) = acc.getRemovalProposal(arbiter);
+        assertEq(c, uint8(ArbiterAccountabilityFacet.Cause.Other));
+        assertEq(dg, keccak256("second"));
+    }
+
+    /// Успешный снос очищает предложение — иначе оно пережило бы уже снятого
+    /// арбитра и висело бы против него бессмысленным обвинением.
+    function test_RemovalClearsTheProposal() public {
+        _setChief(chief);
+        vm.prank(chief);
+        acc.proposeRemoval(arbiter, ArbiterAccountabilityFacet.Cause.Leak, keccak256("x"));
+        assertTrue(acc.hasLiveProposal(arbiter), unicode"сетап: предложение живо");
+
+        _setStreak(arbiter, 2);
+        acc.removeArbiterForCause(arbiter, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0), address(0));
+
+        assertFalse(acc.hasLiveProposal(arbiter), unicode"снос обязан стереть предложение");
+    }
+
+    /// Предложение на несуществующего арбитра не кладётся — та же проверка,
+    /// что и у самого сноса.
+    function test_ProposeRevertsIfNotAnArbiter() public {
+        address stranger = address(0xF00D);
+        vm.expectRevert(ArbiterAccountabilityFacet.NotAnArbiter.selector);
+        acc.proposeRemoval(stranger, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0));
+    }
+
     // ---------- ХЕЛПЕРЫ ----------
 
     function _isArbiterRaw(address who) internal view returns (bool) {

@@ -72,6 +72,20 @@ library ArbiterRegistryStorage {
         uint256 votesOverturn;   // голосов "перевернуть"
     }
 
+    /// Предложение директора снести арбитра (задача 7, 15 августа 2026).
+    ///
+    /// `cause` держится как `uint8`, а не как `Cause` — тот enum объявлен в
+    /// ArbiterAccountabilityFacet, и завязывать раскладку хранилища на тип из
+    /// другого файла означало бы, что переименование там двигает хранилище
+    /// здесь. Значение — тот же численный код, что уже используется в событии
+    /// ArbiterRemovedForCause.
+    struct RemovalProposal {
+        uint8   cause;
+        bytes32 evidenceDigest;
+        uint256 proposedAt;
+        address by;
+    }
+
     struct Data {
         mapping(address => bool)     isArbiter;
         address[]                    arbiterList;
@@ -222,6 +236,15 @@ library ArbiterRegistryStorage {
         /// имеет — к моменту включения ДАО у всех будет ноль. Инкремент — в
         /// той же ветке finalizeVerdict, что уже сбрасывает arbiterMistakeStreak.
         mapping(address => uint256) cleanVerdicts;
+
+        /// Предложение директора снести арбитра (задача 7, 15 августа 2026).
+        /// Хранится по адресу арбитра — одно живое предложение на человека;
+        /// второе перезаписывает первое, и это верно: претензия одна, а не
+        /// очередь претензий. Живёт ArbiterAccountabilityFacet.PROPOSAL_TTL,
+        /// затем читается как протухшее (hasLiveProposal), но не стирается
+        /// само — стирает либо withdrawProposal, либо успешный
+        /// removeArbiterForCause по тому же арбитру.
+        mapping(address => RemovalProposal) removalProposals;
     }
 
     function data() internal pure returns (Data storage d) {

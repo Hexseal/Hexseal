@@ -8,7 +8,7 @@ pragma solidity ^0.8.20;
 // см. test/StorageLayout.t.sol.
 //
 // Регенерирован 2026-07-25 из живых ABI (`forge inspect <Facet> methodIdentifiers`)
-// после ~40 инкрементальных апгрейдов, которые этот файл не отслеживал. Все 191
+// после ~40 инкрементальных апгрейдов, которые этот файл не отслеживал. Все 196
 // селектор 12 фасетов проверены против test/DeployFullSelectors.t.sol — тот тест
 // падает, если этот файл и живые ABI разойдутся снова. Число здесь — сумма
 // литералов `new bytes4[](n)` в билдерах ниже; оно уже двенадцатикратно протухало (стояло
@@ -46,7 +46,13 @@ pragma solidity ^0.8.20;
 // констант (getMaxArbiterMistakesMirror, getDaoThresholdMirror — не дубли,
 // у ArbiterRegistryFacet таких чисел под этими именами нет), 9 против
 // прежних 10, ArbiterRegistryFacet без изменений), поэтому сверяется тем же
-// тестом.
+// тестом; затем 196, в тот же день, задача 7 того же плана: предложение
+// директора — снос остаётся правом владельца (либо daoAddress после
+// передачи), директор только сигнализирует своим адресом.
+// ArbiterAccountabilityFacet получил proposeRemoval, withdrawProposal,
+// hasLiveProposal, getRemovalProposal и getProposalTTL (+5, 14 против
+// прежних 9), ArbiterRegistryFacet без изменений (новое поле
+// removalProposals — только раскладка хранилища, не селектор).
 // Пересчитать, не полагаясь на глаз:
 //   grep -o "new bytes4\[\]([0-9]*)" script/DeployFull.s.sol \
 //     | sed 's/.*(\([0-9]*\))/\1/' | awk '{s+=$1} END {print s}'
@@ -560,7 +566,7 @@ contract DeployFull is Script {
     // занимал 21 227 из 24 576 байт (86.4%), запаса не хватало. Делит тот же
     // ArbiterRegistryStorage namespace — переноса данных нет.
     function arbiterAccountabilityFacetSelectors() public pure returns (bytes4[] memory sels) {
-        sels = new bytes4[](9);
+        sels = new bytes4[](14);
         sels[0] = ArbiterAccountabilityFacet.suspendArbiter.selector;
         sels[1] = ArbiterAccountabilityFacet.liftSuspension.selector;
         sels[2] = ArbiterAccountabilityFacet.isSuspended.selector;
@@ -594,6 +600,19 @@ contract DeployFull is Script {
         sels[6] = ArbiterAccountabilityFacet.getMistakeThreshold.selector;
         sels[7] = ArbiterAccountabilityFacet.getMaxArbiterMistakesMirror.selector;
         sels[8] = ArbiterAccountabilityFacet.getDaoThresholdMirror.selector;
+
+        // Предложение директора (задача 7, 15 августа 2026): снос остаётся
+        // необратимым правом владельца (либо daoAddress после передачи) —
+        // директор кладёт в цепь только СИГНАЛЬНУЮ запись своим адресом.
+        // Исполнение (removeArbiterForCause) removalProposals не читает —
+        // владелец обязан передать код повода и отпечаток заново, своими
+        // аргументами; единственная связь — очистка предложения при успешном
+        // сносе того же арбитра.
+        sels[9]  = ArbiterAccountabilityFacet.proposeRemoval.selector;
+        sels[10] = ArbiterAccountabilityFacet.withdrawProposal.selector;
+        sels[11] = ArbiterAccountabilityFacet.hasLiveProposal.selector;
+        sels[12] = ArbiterAccountabilityFacet.getRemovalProposal.selector;
+        sels[13] = ArbiterAccountabilityFacet.getProposalTTL.selector;
     }
 
     // DealMetadataFacet — 1 селектор

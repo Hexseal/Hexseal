@@ -5,7 +5,7 @@ pragma solidity ^0.8.20;
 // HEXSEAL — ArbiterAccountabilityFacet.sol
 //
 // Ответственность ручных арбитров: приостановка, снос с поводом, предложение
-// директора, право ответа снятого.
+// директора (задача 7), право ответа снятого.
 //
 // ПОЧЕМУ ОТДЕЛЬНЫЙ ФАСЕТ, а не дописка в ArbiterRegistryFacet: тот занимает
 // 21 227 байт развёрнутого кода из 24 576 (86.4 %, замерено 15 августа 2026).
@@ -18,18 +18,23 @@ pragma solidity ^0.8.20;
 // (removeArbiterForCause) — голая removeArbiter в ArbiterRegistryFacet снята
 // целиком, потому что не записывала ни кто нажал, ни почему, и возвращала
 // залог целиком: снятие за дело и тихая зачистка выглядели в цепи одинаково
-// и стоили одинаково. Предложение директора и право ответа снятого — задел
-// следующих задач того же плана, здесь не реализованы.
+// и стоили одинаково. Задача 7 добавила предложение директора
+// (proposeRemoval/withdrawProposal): снос необратим и остаётся правом
+// владельца (либо daoAddress после передачи), а директор кладёт в цепь свою
+// СИГНАЛЬНУЮ запись отдельным адресом — в ленте видно и кто предложил, и кто
+// согласился, вместо одной записи на двоих. Право ответа снятого — задел
+// следующей задачи того же плана, здесь не реализовано.
 //
 // ⚠️ ВСЕ функции этого фасета сегодня — административные (владелец либо, до
-// активации ДАО, директор для приостановки) и читают сырой msg.sender, как
-// onlyOwnerOrChief в ArbiterRegistryFacet: владелец и директор ходят прямой
-// транзакцией, не через релеер, а гейслесс-пути у этого фасета пока нет
-// вовсе. Файл не реализует _msgSender() и учтён в script/gasless-sender.allow
-// отдельной записью «вне области». Когда сюда приедет respondToRemoval (право
-// ответа снятого, зовётся ОБЫЧНЫМ ЧЕЛОВЕКОМ через релеер), фасет обзаведётся
-// собственным _msgSender() и станет ERC-2771-файлом — тогда запись в
-// allow-файле сменит форму на per-function, как у соседей.
+// активации ДАО, директор для приостановки и предложения сноса) и читают
+// сырой msg.sender, как onlyOwnerOrChief в ArbiterRegistryFacet: владелец и
+// директор ходят прямой транзакцией, не через релеер, а гейслесс-пути у
+// этого фасета пока нет вовсе. Файл не реализует _msgSender() и учтён в
+// script/gasless-sender.allow отдельной записью «вне области». Когда сюда
+// приедет respondToRemoval (право ответа снятого, зовётся ОБЫЧНЫМ ЧЕЛОВЕКОМ
+// через релеер), фасет обзаведётся собственным _msgSender() и станет
+// ERC-2771-файлом — тогда запись в allow-файле сменит форму на per-function,
+// как у соседей.
 // ============================================================
 
 import {ArbiterRegistryStorage} from "./ArbiterRegistryFacet.sol";
@@ -76,6 +81,11 @@ contract ArbiterAccountabilityFacet {
     /// константа лежит только как якорь совпадения чисел на будущее, если
     /// решение о сбросе XP при сносе по поводу когда-нибудь примут.
     uint256 private constant DEMOTION_XP_RESET = 2500;
+
+    /// Сколько живёт предложение директора (задача 7, 15 августа 2026).
+    /// Утверждено владельцем: хватает вернуться из отпуска, мало чтобы
+    /// обвинение висело кварталами.
+    uint256 private constant PROPOSAL_TTL = 14 days;
 
     // -------- ERRORS --------
 
@@ -131,6 +141,18 @@ contract ArbiterAccountabilityFacet {
         bytes32         evidenceDigest,
         uint256         bondForfeited
     );
+
+    /// Директор предлагает снос — не исполняет. Отдельная запись своим
+    /// адресом (задача 7, 15 августа 2026): в ленте видно и кто предложил, и
+    /// кто согласился, вместо одной записи на двоих.
+    event RemovalProposed(
+        address indexed arbiter,
+        address indexed by,
+        Cause   indexed cause,
+        bytes32         evidenceDigest,
+        uint256         at
+    );
+    event RemovalProposalWithdrawn(address indexed arbiter, address indexed by);
 
     // -------- MODIFIERS --------
 
@@ -303,6 +325,10 @@ contract ArbiterAccountabilityFacet {
             }
         }
 
+        // Предложение (если было) переживать снос не должно — иначе оно
+        // висело бы обвинением против уже снятого арбитра.
+        delete d.removalProposals[arbiter];
+
         emit ArbiterRemovedForCause(arbiter, msg.sender, cause, verified, evidenceDigest, forfeited);
     }
 
@@ -312,6 +338,60 @@ contract ArbiterAccountabilityFacet {
     // демоушена (_recordArbiterMistake в ArbiterRegistryFacet). XP снятого по
     // поводу остаётся как есть; расхождение с автоматическим демоушеном
     // сознательное и решается отдельной задачей, если владелец сочтёт нужным.
+
+    // -------- ПРЕДЛОЖЕНИЕ ДИРЕКТОРА (задача 7, 15 августа 2026) --------
+    //
+    // Снос необратим: он снимает статус, сжигает залог и оставляет в цепи
+    // вечное публичное обвинение против настоящего адреса. Такое не должно
+    // зависеть от одного человека, кроме владельца. Директор при этом видит
+    // работу корпуса ближе всех, и запрещать ему сигнализировать было бы
+    // глупо — отсюда разделение: он кладёт предложение в цепь СВОИМ адресом,
+    // владелец соглашается СВОИМ, вызывая обычный removeArbiterForCause.
+    //
+    // ⚠️ Связь предложения с исполнением — ТОЛЬКО очистка выше (delete в
+    // removeArbiterForCause). removeArbiterForCause не читает
+    // removalProposals ни для чего: код повода, отпечаток и ссылку на спор
+    // владелец обязан передать заново, своими аргументами. Предложение —
+    // сигнал в ленте, а не аргумент функции сноса; принять его на веру и
+    // исполнить одной кнопкой было бы обратной стороной того же риска, ради
+    // которого право сноса не отдано директору вовсе.
+    //
+    // Предложение обязано проверяться теми же правилами, что и сам снос:
+    // если код заверяемый (Collusion/Leak/Other), отпечаток доказательства
+    // обязателен уже здесь, а не только при исполнении — иначе директор
+    // клал бы в цепь пустое обвинение, которое висит две недели и ничем не
+    // подкреплено. Проверяемые коды (OverturnedVerdicts/Timeouts/Silence)
+    // цепью на этом этапе НЕ проверяются намеренно: признак может появиться
+    // уже после предложения, и требовать его заранее значило бы запретить
+    // предупреждать раньше, чем случилось.
+
+    /// Положить предложение в цепь. Одно живое предложение на арбитра —
+    /// второе перезаписывает первое (претензия одна, а не очередь).
+    function proposeRemoval(address arbiter, Cause cause, bytes32 evidenceDigest)
+        external
+        onlyOwnerOrChief
+    {
+        if (arbiter == address(0)) revert ArbiterZeroAddress();
+        ArbiterRegistryStorage.Data storage d = ArbiterRegistryStorage.data();
+        if (!d.isArbiter[arbiter]) revert NotAnArbiter();
+        if (!_isChainVerifiable(cause) && evidenceDigest == bytes32(0)) revert EvidenceRequired();
+
+        d.removalProposals[arbiter] = ArbiterRegistryStorage.RemovalProposal({
+            cause:          uint8(cause),
+            evidenceDigest: evidenceDigest,
+            proposedAt:     block.timestamp,
+            by:             msg.sender
+        });
+        emit RemovalProposed(arbiter, msg.sender, cause, evidenceDigest, block.timestamp);
+    }
+
+    /// Отозвать предложение раньше срока — своё или чужое: владелец и
+    /// директор оба ходят под onlyOwnerOrChief, и любой из двух вправе снять
+    /// запись (та же пара, что вправе её положить).
+    function withdrawProposal(address arbiter) external onlyOwnerOrChief {
+        delete ArbiterRegistryStorage.data().removalProposals[arbiter];
+        emit RemovalProposalWithdrawn(arbiter, msg.sender);
+    }
 
     // -------- VIEWS --------
 
@@ -348,5 +428,32 @@ contract ArbiterAccountabilityFacet {
     /// test_DaoThresholdMatchesRegistry.
     function getDaoThresholdMirror() external pure returns (uint256) {
         return DAO_THRESHOLD_MIRROR;
+    }
+
+    /// Живо ли предложение прямо сейчас. `proposedAt == 0` — предложения нет
+    /// вовсе (ни разу не клали, либо снято withdrawProposal/сносом). Граница
+    /// строгая, как у suspendedUntil: на самой последней секунде TTL ещё живо.
+    function hasLiveProposal(address arbiter) public view returns (bool) {
+        ArbiterRegistryStorage.RemovalProposal storage p =
+            ArbiterRegistryStorage.data().removalProposals[arbiter];
+        if (p.proposedAt == 0) return false;
+        return block.timestamp < p.proposedAt + PROPOSAL_TTL;
+    }
+
+    /// Сырое чтение записи — не смотрит на TTL. Протухшее предложение
+    /// (hasLiveProposal == false) всё ещё читается отсюда, пока его не
+    /// перезаписали новым или не удалили: это архивная запись, а не
+    /// действующая претензия, и вызывающий обязан сам свериться с
+    /// hasLiveProposal, если разница ему важна.
+    function getRemovalProposal(address arbiter)
+        external view returns (uint8 cause, bytes32 evidenceDigest, uint256 proposedAt, address by)
+    {
+        ArbiterRegistryStorage.RemovalProposal storage p =
+            ArbiterRegistryStorage.data().removalProposals[arbiter];
+        return (p.cause, p.evidenceDigest, p.proposedAt, p.by);
+    }
+
+    function getProposalTTL() external pure returns (uint256) {
+        return PROPOSAL_TTL;
     }
 }

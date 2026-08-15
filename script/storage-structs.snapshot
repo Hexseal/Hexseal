@@ -109,6 +109,11 @@ mapping(address=>bytes32) arbiterSignKey
 mapping(address=>mapping(address=>uint256)) disputeClaimedAtBy
 mapping(address=>mapping(address=>uint256)) disputeNoResponseAtBy
 mapping(address=>bytes32[]) presentationDigests
+mapping(address=>address) seatedBy
+mapping(address=>uint256) seatedCountBy
+mapping(address=>uint256) suspendedUntil
+mapping(address=>uint256) cleanVerdicts
+mapping(address=>RemovalProposal) removalProposals
 
 === src/facets/ArbiterRegistryFacet.sol :: ArbiterRegistryStorage.PendingVerdict ===
 address arbiter
@@ -124,6 +129,12 @@ address appellant
 uint256 appealDeadline
 uint256 votesUphold
 uint256 votesOverturn
+
+=== src/facets/ArbiterRegistryFacet.sol :: ArbiterRegistryStorage.RemovalProposal ===
+uint8 cause
+bytes32 evidenceDigest
+uint256 proposedAt
+address by
 
 === src/facets/JobBoardFacet.sol :: JobBoardStorage.Job ===
 address client
