@@ -662,12 +662,191 @@ contract ArbiterRemovalForCauseTest is Test {
         acc.respondToRemoval(keccak256("x"));
     }
 
+    // ============================================================
+    //  ФИНАЛЬНЫЙ ОБЗОР ВЕТКИ, I-5 (16 августа 2026)
+    //
+    //  ЧЕТВЁРТОЕ НЕПРОВЕРЯЕМОЕ МЕСТО: значения перечисления поводов.
+    //
+    //  `Cause` хранится числом (uint8 в RemovalProposal), летит indexed-топиком
+    //  в трёх событиях (ArbiterRemovedForCause, RemovalProposed,
+    //  RemovalProposalConsumed) и отдаётся наружу как uint8 из
+    //  getRemovalProposal. Сверки самих ЧИСЕЛ не было ни одной: оба места,
+    //  которые выглядели проверкой — `assertEq(c, uint8(Cause.Leak))` в
+    //  test_ChiefProposalIsReadable и `assertEq(c, uint8(Cause.Other))` в
+    //  test_SecondProposalOverwritesTheFirst — сравнивают перечисление с самим
+    //  собой и переживают ЛЮБУЮ перестановку членов.
+    //
+    //  Цена перестановки или вставки члена в середину: все уже лежащие в цепи
+    //  предложения молча меняют смысл, и все прошлые логи обвинений тоже —
+    //  «снят за слив переписки» превращается в «снят за сговор» задним числом.
+    //  Это вечная публичная запись против настоящего адреса, отозвать её
+    //  нельзя.
+    // ============================================================
+
+    /// Литералы прибиты. Дописывать новые коды можно только В КОНЕЦ — как поля
+    /// в Diamond Storage, и ровно по той же причине.
+    function test_CauseCodesArePinnedToTheirNumbers() public {
+        assertEq(uint8(ArbiterAccountabilityFacet.Cause.OverturnedVerdicts), 0, "OverturnedVerdicts");
+        assertEq(uint8(ArbiterAccountabilityFacet.Cause.Timeouts),           1, "Timeouts");
+        assertEq(uint8(ArbiterAccountabilityFacet.Cause.Silence),            2, "Silence");
+        assertEq(uint8(ArbiterAccountabilityFacet.Cause.Collusion),          3, "Collusion");
+        assertEq(uint8(ArbiterAccountabilityFacet.Cause.Leak),               4, "Leak");
+        assertEq(uint8(ArbiterAccountabilityFacet.Cause.Other),              5, "Other");
+    }
+
+    /// Вторая половина того же замка: граница «проверяется цепью / заверяется
+    /// отпечатком» проходит между кодами 2 и 3, и это не косметика —
+    /// _isChainVerifiable перечисляет первые три поимённо. Перестановка,
+    /// уронившая первый тест, обязана уронить и этот, если она переносит член
+    /// через границу; проверяется БОЕВЫМ путём (флаг verifiedByChain в
+    /// событии), а не повторным чтением того же перечисления.
+    function test_ChainVerifiableBorderSitsBetweenSilenceAndCollusion() public {
+        _setStreak(arbiter, 2);
+        vm.expectEmit(true, true, true, true, address(acc));
+        emit ArbiterAccountabilityFacet.ArbiterRemovedForCause(
+            arbiter, owner, ArbiterAccountabilityFacet.Cause.Timeouts, true, bytes32(0), 0
+        );
+        acc.removeArbiterForCause(arbiter, ArbiterAccountabilityFacet.Cause.Timeouts, bytes32(0), address(0));
+
+        address second = address(0xA2);
+        vm.store(address(acc), keccak256(abi.encode(second, uint256(ARB_BASE))), bytes32(uint256(1)));
+        vm.expectEmit(true, true, true, true, address(acc));
+        emit ArbiterAccountabilityFacet.ArbiterRemovedForCause(
+            second, owner, ArbiterAccountabilityFacet.Cause.Collusion, false, keccak256("e"), 0
+        );
+        acc.removeArbiterForCause(second, ArbiterAccountabilityFacet.Cause.Collusion, keccak256("e"), address(0));
+    }
+
+    // ============================================================
+    //  ФИНАЛЬНЫЙ ОБЗОР ВЕТКИ, I-2 (16 августа 2026)
+    //
+    //  «Директор упраздняется при ДАО» было неправдой: setChiefArbiter —
+    //  ЕДИНСТВЕННЫЙ писатель слота и единственный способ его обнулить, а
+    //  задача 6 закрыла её при активном ДАО. Сидящий директор оставался в
+    //  слоте навсегда со всеми правами onlyOwnerOrChief. Починено в самом
+    //  модификаторе — обеих его копий, по фасету на каждую.
+    //
+    //  Здесь — половина ArbiterAccountabilityFacet (четыре функции).
+    //  Половина ArbiterRegistryFacet (addArbiter) — в
+    //  test/ArbiterSeatingHandover.t.sol.
+    // ============================================================
+
+    function test_ChiefCanSuspendBeforeDao() public {
+        _setChief(chief);
+        vm.prank(chief);
+        acc.suspendArbiter(arbiter);
+        assertTrue(acc.isSuspended(arbiter), unicode"до ДАО директор работает как прежде");
+    }
+
+    function test_ChiefLosesSuspendAfterDao() public {
+        _setChief(chief);
+        _activateDAO();
+        vm.prank(chief);
+        vm.expectRevert(ArbiterAccountabilityFacet.NotOwnerOrChief.selector);
+        acc.suspendArbiter(arbiter);
+    }
+
+    function test_ChiefLosesLiftSuspensionAfterDao() public {
+        _setChief(chief);
+        _activateDAO();
+        vm.prank(chief);
+        vm.expectRevert(ArbiterAccountabilityFacet.NotOwnerOrChief.selector);
+        acc.liftSuspension(arbiter);
+    }
+
+    function test_ChiefLosesProposeRemovalAfterDao() public {
+        _setChief(chief);
+        _activateDAO();
+        vm.prank(chief);
+        vm.expectRevert(ArbiterAccountabilityFacet.NotOwnerOrChief.selector);
+        acc.proposeRemoval(arbiter, ArbiterAccountabilityFacet.Cause.Leak, keccak256("x"));
+    }
+
+    /// Четвёртая дверь. Важна отдельно: без неё несменяемый директор,
+    /// потерявший право КЛАСТЬ предложение, сохранял бы право СНИМАТЬ чужое —
+    /// то есть гасить обвинения владельца против своих ставленников.
+    function test_ChiefLosesWithdrawProposalAfterDao() public {
+        _setChief(chief);
+        acc.proposeRemoval(arbiter, ArbiterAccountabilityFacet.Cause.Leak, keccak256("x"));
+        _activateDAO();
+        vm.prank(chief);
+        vm.expectRevert(ArbiterAccountabilityFacet.NotOwnerOrChief.selector);
+        acc.withdrawProposal(arbiter);
+    }
+
+    /// Заработанный порог обязан упразднять директора ТАК ЖЕ, как ручной флаг:
+    /// модификатор читает _isDaoActive (полное выражение), а не daoActiveManual.
+    /// Без этой половины владелец, никогда не звавший activateDAO(), жил бы с
+    /// действующим директором и после того, как ДАО включилась сама.
+    function test_ChiefLosesPowerOnEarnedDaoToo() public {
+        _setChief(chief);
+        _setUniqueActiveUsers(acc.getDaoThresholdMirror());
+        vm.prank(chief);
+        vm.expectRevert(ArbiterAccountabilityFacet.NotOwnerOrChief.selector);
+        acc.suspendArbiter(arbiter);
+    }
+
+    /// Контроль, что модификатор закрылся не для всех: приостановка обратима и
+    /// протухает сама, владелец её не теряет и после передачи сноса.
+    function test_OwnerKeepsSuspendAfterDao() public {
+        _setChief(chief);
+        _activateDAO();
+        acc.suspendArbiter(arbiter);
+        assertTrue(acc.isSuspended(arbiter), unicode"владелец не теряет приостановку никогда");
+    }
+
+    // ============================================================
+    //  ФИНАЛЬНЫЙ ОБЗОР ВЕТКИ, C-1 (16 августа 2026)
+    //
+    //  Снос ВЫСТАВЛЯЕТ приостановку: без неё сильная мера была слабее слабой
+    //  (submitVerdict гейтится клеймом, а не статусом, и suspendArbiter на
+    //  снятом уже ревертит NotAnArbiter). Здесь — только сама отметка; то, что
+    //  она реально держит финализацию, доказывается связкой трёх задач на
+    //  настоящем даймонде в test/ArbiterRemovalForCauseIntegration.t.sol.
+    // ============================================================
+
+    function test_RemovalForCauseSuspendsTheRemoved() public {
+        uint256 t0 = vm.getBlockTimestamp();
+        _setStreak(arbiter, 2);
+        assertEq(acc.getSuspendedUntil(arbiter), 0, unicode"сетап: приостановки не было");
+
+        acc.removeArbiterForCause(arbiter, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0), address(0));
+
+        assertEq(
+            acc.getSuspendedUntil(arbiter), t0 + acc.getSuspensionWindow(),
+            unicode"снос обязан подразумевать приостановку — окно то же, что у suspendArbiter"
+        );
+        assertTrue(acc.isSuspended(arbiter), unicode"снятый приостановлен прямо сейчас");
+    }
+
+    /// Приостановка от сноса протухает сама, как всякая другая: снятый
+    /// навсегда остаётся снятым, но вечно морозить чужие деньги ценой одного
+    /// сноса — новое оружие, а не защита.
+    function test_RemovalSuspensionExpiresByItself() public {
+        _setStreak(arbiter, 2);
+        acc.removeArbiterForCause(arbiter, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0), address(0));
+
+        vm.warp(vm.getBlockTimestamp() + acc.getSuspensionWindow());
+        assertFalse(acc.isSuspended(arbiter), unicode"на границе окна отпустило");
+    }
+
     bytes32 constant FWD_TYPEHASH = keccak256(
         "ForwardRequest(address from,address to,uint256 value,uint256 gas,uint256 nonce,bytes data)"
     );
 
-    /// Две копии _msgSender() обязаны вести себя одинаково. Разойдутся —
-    /// гейслесс-путь одного фасета начнёт видеть форвардер вместо человека.
+    /// Гейслесс-путь ЭТОЙ копии _msgSender() целиком: подпись, форвардер,
+    /// релеер третьим адресом.
+    ///
+    /// ⚠️ Финальный обзор ветки, M-3 (16 августа 2026): этот тест НЕ сверяет
+    /// две копии между собой, хотя его имя и прежний докстринг это обещали —
+    /// он гоняет только respondToRemoval, и правка в оригинале
+    /// (ArbiterRegistryFacet._msgSender) не покраснела бы здесь ничем. Его
+    /// настоящая ценность в другом и она не пропадает: он сверяет ответ с
+    /// ВНЕШНЕЙ правдой — с адресом подписанта vm.addr(arbiterPk), — а значит
+    /// ловит одинаковую порчу, внесённую в ОБА тела сразу, чего не может ни
+    /// один дифференциал. Настоящая сверка пары живёт в
+    /// test/ArbiterRemovalForCauseIntegration.t.sol::
+    /// test_MsgSenderAgreesAcrossBothFacetsOnOneForwarder.
     ///
     /// ⚠️ Круг правок 1 ревью задачи 8, Minor 3: прежняя версия пранкалась
     /// адресом форвардера и вручную клеила хвост calldata (`abi.encodePacked`),

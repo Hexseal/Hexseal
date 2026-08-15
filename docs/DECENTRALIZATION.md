@@ -23,6 +23,7 @@ is itself set by the owner) on the Diamond at Base Sepolia.
 | **Reserve withdrawal gate is bypassable** | `Treasury` + Diamond owner | The gate holds against a manually flipped "DAO is active" flag, but not against the Diamond owner — three routes, the cheapest costing ~31,700 gas, and not visible through the Diamond's own function list. Found by our own review; recorded in `docs/OPEN-ITEMS.md`. |
 | **Protocol settings** | `setFeeRecipient`, `setTrustedForwarder`, `setAgreementDeployer`, `setDAOAddress` | Where fees go, which forwarder is trusted, which deployer clones agreements. |
 | **Arbiter roster at launch** | `ArbiterRegistryFacet` | Arbiters are curated by hand for now. This is not a backdoor — it is the absence of population. A dispute needs someone to judge it, and self-service registration is gated on reputation nobody has yet. |
+| **Suspend or remove an arbiter** | `ArbiterAccountabilityFacet` | `suspendArbiter` stops an arbiter for 72 hours; it is reversible and expires on its own. `removeArbiterForCause` is not: it takes the seat, burns the 50 USDC bond into the arbiter vault, and writes a permanent public accusation against a real address. Removal also suspends, so the removed arbiter cannot rush his pending verdicts through while the owner is still looking at them. A chief arbiter, if one is appointed, shares the suspension powers and may *propose* a removal, but never execute one. |
 
 **And one half that is not on-chain at all.** The presentation box, the chat key
 directory and encrypted attachments live on our relayer. If that server is lost,
@@ -58,14 +59,28 @@ The owner key moves to a multisig, and privileged calls execute only after a
 delay. The delay matters more than the multisig: it is what lets anyone see a
 change coming and leave if they disagree with it. No mainnet launch without this.
 
-**Stage 3 — with population. `overturnVerdict` goes first.**
-The first power handed to community governance is the ability to overturn an
-arbiter, because while one person holds it, arbitration is not real arbitration.
-Freezing follows. The trigger is measured, not declared: the protocol already
-counts unique settled counterparties (`getUniqueActiveUsers`) against a threshold
-(`DAO_THRESHOLD`), and the same earned number already gates reserve withdrawal.
-Governance activates on that count — on people who actually completed deals, not
-on a flag someone flips.
+**Stage 3 — with population. Arbiter removal goes first, and it is already wired.**
+The first power that actually leaves the owner's key is the ability to remove an
+arbiter for cause (`ArbiterAccountabilityFacet.removeArbiterForCause`). Once
+governance is active and a successor address has been named, only that address
+may call it; the owner gets the same rejection as a stranger, and cannot take the
+power back — after handover, `setDAOAddress` accepts calls only from the sitting
+DAO address. The seating powers (`addArbiter`, `setChiefArbiter`) close at the
+same moment and the chief-arbiter role stops existing altogether; the only
+remaining way into the roster is the reputation-and-bond-gated `applyAsArbiter`.
+
+**`overturnVerdict` and `freezeVerdict` are not in that first handover**, and an
+earlier version of this document said they were. They sit behind `onlyOwnerOrDAO`
+— a modifier that admits the owner *always*. It puts a DAO address *beside* the
+owner, not in place of him, so no event hands those two over on its own. Doing it
+means replacing the modifier, which is Stage 4 work. Until then the honest
+statement is the one in the table above: a single key can still overturn a
+verdict.
+
+The trigger is measured, not declared: the protocol counts unique settled
+counterparties (`getUniqueActiveUsers`) against a threshold (`DAO_THRESHOLD`),
+and the same earned number gates reserve withdrawal. There is also a manual
+switch, and it is described honestly two sections down.
 
 **Stage 4 — last. Settings, then the upgrade key itself.**
 Fee recipient, forwarder and deployer move under governance; `diamondCut` is the
@@ -79,8 +94,18 @@ final power to go, once the contracts have been audited and have stopped changin
   is contradicted by a line of code, the documentation is wrong and gets fixed.
 - **We will not remove the upgrade key before an audit**, to avoid trading a
   fixable bug for an unfixable one.
-- **We will not activate governance on a flag.** The threshold is an earned count
-  of real counterparties, and the code already works that way.
+- **We will not call a flag "the community deciding".** This bullet used to read
+  "we will not activate governance on a flag", and the code contradicts it:
+  `ArbiterRegistryFacet.activateDAO()` is exactly such a flag, the owner can flip
+  it, and flipping it hands over arbiter removal and closes the seating doors —
+  governance, in the sense this document uses the word. It exists so that a real
+  governance contract can take over before the earned count arrives, it refuses
+  to fire until a successor address has been named, and it is one-way: no
+  function anywhere in `src/` clears it. What stands is the narrower claim: the
+  trigger we consider legitimate is the earned count of real counterparties
+  (`getUniqueActiveUsers` against `DAO_THRESHOLD`), the same number that gates
+  reserve withdrawal — and while a successor exists, the earned count closes the
+  same doors by itself, with no transaction from us at all.
 
 ---
 

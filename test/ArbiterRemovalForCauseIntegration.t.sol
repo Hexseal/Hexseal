@@ -34,6 +34,7 @@ pragma solidity ^0.8.20;
 // и removeArbiterForCause (ArbiterAccountabilityFacet).
 
 import "forge-std/Test.sol";
+import {MinimalForwarder} from "../src/MinimalForwarder.sol";
 import "../src/DiamondProxy.sol";
 import "../src/RegistryFacet.sol";
 import "../src/FactoryFacet.sol";
@@ -499,6 +500,372 @@ contract ArbiterRemovalForCauseIntegrationTest is Test {
             ArbiterAccountabilityFacet(address(diamond)).getRemovalReply(arbiter),
             reply,
             unicode"автодемоушен тоже даёт право ответа — та же публичная запись, тот же ответ"
+        );
+    }
+
+    // ============================================================
+    //  ФИНАЛЬНЫЙ ОБЗОР ВЕТКИ, C-1 (16 августа 2026)
+    //
+    //  СНОС БЫЛ СЛАБЕЕ ПРИОСТАНОВКИ И ВДОБАВОК ЗАКРЫВАЛ ДВЕРЬ, КОТОРАЯ СПАСАЛА.
+    //
+    //  Связка ТРЁХ задач, и ни одна поодиночке её не показывает — поэтому
+    //  тесты живут здесь, на настоящем даймонде, а не в лёгком стенде:
+    //
+    //    задача 6 — removeArbiterForCause снимает статус, но не трогает ни
+    //               disputeClaims, ни openClaimCount, ни suspendedUntil;
+    //    исходный
+    //    код     — submitVerdict гейтится КЛЕЙМОМ (`disputeClaims[agreement]
+    //               != caller`), а не статусом: снятый по-прежнему подаёт
+    //               вердикты по всем взятым спорам;
+    //    задача 4 — suspendArbiter ревертит NotAnArbiter на уже снятом, то
+    //               есть после сноса приостановить его уже НЕЛЬЗЯ.
+    //
+    //  Итог до правки: владелец находит сговор, жмёт «снести по поводу» — и
+    //  тем самым отпирает подкупленному арбитру последнюю дверь. Тот подаёт
+    //  вердикты, через сутки любой прохожий их финализирует, котлы уходят
+    //  подкупившей стороне. Инверсия замысла: слабая мера деньги держала,
+    //  сильная — нет.
+    //
+    //  Починка: снос ПОДРАЗУМЕВАЕТ приостановку. `_requireNotSuspended` в
+    //  finalizeVerdict читает АРБИТРА ВЕРДИКТА (v.arbiter), а не вызывающего —
+    //  проверено по коду, — значит одна строка в removeArbiterForCause реально
+    //  морозит вердикты снятого на те же 72 часа, за которые владелец успевает
+    //  пройтись overturnVerdict/freezeVerdict.
+    // ============================================================
+
+    /// Тот же цикл, что _disputeAndOverturn, но останавливается на ПОДАННОМ
+    /// вердикте: именно это состояние — «вердикт подан, финализация ждёт
+    /// FINALIZE_DELAY» — и есть окно, в которое снос обязан успеть.
+    function _disputeAndSubmit(address cli, address exec) internal returns (address agreementAddr) {
+        usdc.mint(cli, 1_000_000 * 10 ** 6);
+        vm.prank(cli);
+        usdc.approve(address(diamond), 10 * 10 ** 6);
+        vm.prank(cli);
+        agreementAddr = FactoryFacet(address(diamond)).deployAgreement(
+            cli, exec, arbiter, AMOUNT, DEADLINE, TERMS, 0
+        );
+        vm.prank(cli);
+        usdc.approve(agreementAddr, AMOUNT);
+        vm.prank(cli);
+        Agreement(agreementAddr).fund();
+        vm.prank(exec);
+        Agreement(agreementAddr).activate();
+        vm.prank(cli);
+        Agreement(agreementAddr).raiseDispute();
+
+        _claimDisputeAs(agreementAddr, arbiter);
+
+        vm.prank(arbiter);
+        ArbiterRegistryFacet(address(diamond)).submitVerdict(agreementAddr, true);
+    }
+
+    /// Сценарий целиком. Cause.Collusion — сговор: ровно тот повод, ради
+    /// которого сильная мера и существует, и он не требует счётчика ошибок
+    /// (единственная переменная теста — сам снос).
+    function test_RemovedForCauseCannotFinalizeHisVerdictWithinTheWindow() public {
+        address agreementAddr = _disputeAndSubmit(address(0x601), address(0x602));
+
+        uint256 removedAtTs = vm.getBlockTimestamp();
+        ArbiterAccountabilityFacet(address(diamond)).removeArbiterForCause(
+            arbiter, ArbiterAccountabilityFacet.Cause.Collusion, keccak256("chat log"), address(0)
+        );
+        assertFalse(
+            ArbiterRegistryFacet(address(diamond)).isRegisteredArbiter(arbiter),
+            unicode"сетап: снос состоялся"
+        );
+
+        uint256 until = removedAtTs + ArbiterAccountabilityFacet(address(diamond)).getSuspensionWindow();
+
+        // FINALIZE_DELAY = 24 часа прошло, окно приостановки (72 часа) — нет.
+        // Ровно тот момент, в который до правки котёл уходил подкупившей
+        // стороне.
+        vm.warp(removedAtTs + 24 hours);
+        vm.expectRevert(
+            abi.encodeWithSelector(ArbiterRegistryFacet.ArbiterSuspendedError.selector, until)
+        );
+        ArbiterRegistryFacet(address(diamond)).finalizeVerdict(agreementAddr);
+    }
+
+    /// Вторая половина: приостановка от сноса протухает сама. Снятый навсегда
+    /// остаётся снятым, но вердикт, который никто не отменил и не заморозил за
+    /// 72 часа, исполняется обычным порядком — иначе один снос морозил бы
+    /// деньги честных сторон навечно, и это было бы новым оружием.
+    function test_RemovedForCauseCanFinalizeAfterTheWindow() public {
+        address agreementAddr = _disputeAndSubmit(address(0x603), address(0x604));
+
+        uint256 removedAtTs = vm.getBlockTimestamp();
+        ArbiterAccountabilityFacet(address(diamond)).removeArbiterForCause(
+            arbiter, ArbiterAccountabilityFacet.Cause.Collusion, keccak256("chat log"), address(0)
+        );
+
+        vm.warp(
+            removedAtTs + ArbiterAccountabilityFacet(address(diamond)).getSuspensionWindow()
+        );
+        ArbiterRegistryFacet(address(diamond)).finalizeVerdict(agreementAddr);
+
+        assertTrue(
+            ArbiterRegistryFacet(address(diamond)).getPendingVerdict(agreementAddr).finalized,
+            unicode"после окна вердикт исполняется — приостановка временная и здесь тоже"
+        );
+    }
+
+    /// Контроль, что тест выше различает причины отказа: тот же спор, тот же
+    /// момент — но БЕЗ сноса финализация проходит. Без этого «ревертит на
+    /// 24 часах» могло бы означать что угодно (не прошёл FINALIZE_DELAY,
+    /// сломался мок), а не «держит приостановка».
+    function test_WithoutRemovalTheSameVerdictFinalizesAtTwentyFourHours() public {
+        address agreementAddr = _disputeAndSubmit(address(0x605), address(0x606));
+
+        vm.warp(vm.getBlockTimestamp() + 24 hours);
+        ArbiterRegistryFacet(address(diamond)).finalizeVerdict(agreementAddr);
+
+        assertTrue(
+            ArbiterRegistryFacet(address(diamond)).getPendingVerdict(agreementAddr).finalized,
+            unicode"без сноса тот же вердикт на тех же 24 часах исполняется"
+        );
+    }
+
+    // ============================================================
+    //  ФИНАЛЬНЫЙ ОБЗОР ВЕТКИ, M-4 (16 августа 2026)
+    //
+    //  Приостановка не стиралась НИ ОДНОЙ дверью выхода и не стиралась при
+    //  повторной посадке. С появлением C-1 (снос выставляет приостановку) это
+    //  стало прямым противоречием собственному правилу ветки: «признаки
+    //  прошлого сноса не переживают повторную посадку». Владелец, чинящий
+    //  ошибочный снос одной командой addArbiter, возвращал бы человека с
+    //  недожитой приостановкой — тот молча не может ни клеймить, ни
+    //  финализировать, ни уволиться.
+    // ============================================================
+
+    /// Доказывается ПОВЕДЕНИЕМ, а не чтением поля: возвращённый арбитр обязан
+    /// смочь уволиться, а resignAsArbiter — одна из трёх дверей, которые
+    /// приостановка запирает (_requireNotSuspended). Читать getSuspendedUntil
+    /// было бы слабее: ноль там мог бы значить и «стёрли», и «никогда не
+    /// писали».
+    function test_ReseatingByOwnerClearsTheSuspensionLeftByRemoval() public {
+        ArbiterAccountabilityFacet(address(diamond)).removeArbiterForCause(
+            arbiter, ArbiterAccountabilityFacet.Cause.Collusion, keccak256("evidence"), address(0)
+        );
+        assertTrue(
+            ArbiterAccountabilityFacet(address(diamond)).isSuspended(arbiter),
+            unicode"сетап: снос оставил приостановку (C-1)"
+        );
+
+        // Владелец разобрался и чинит ошибочный снос — боевой путь.
+        ArbiterRegistryFacet(address(diamond)).addArbiter(arbiter);
+        assertFalse(
+            ArbiterAccountabilityFacet(address(diamond)).isSuspended(arbiter),
+            unicode"повторная посадка обязана снять недожитую приостановку"
+        );
+
+        vm.prank(arbiter);
+        ArbiterRegistryFacet(address(diamond)).resignAsArbiter();
+        assertFalse(
+            ArbiterRegistryFacet(address(diamond)).isRegisteredArbiter(arbiter),
+            unicode"возвращённый человек работает как обычный арбитр, а не как немой"
+        );
+    }
+
+    // ============================================================
+    //  ОТЛОЖЕННЫЙ ПУНКТ 3 (16 августа 2026)
+    //
+    //  Вызов clearRemovalRecord из applyAsArbiter не был покрыт ничем —
+    //  мутация давала 0 красных. Покрыта была только вторая дверь входа,
+    //  addArbiter. Это ровно та половина, которая ПЕРЕЖИВЁТ первую: после
+    //  активации ДАО addArbiter мертва (SeatingHandedOver), и самозапись
+    //  остаётся ЕДИНСТВЕННЫМ входом в корпус — то есть без замка была оставлена
+    //  дверь, которая будет работать дальше всего.
+    // ============================================================
+
+    uint256 constant SLOT_XP           = 0;
+    uint256 constant SLOT_CLEAN_STREAK = 9;
+    uint256 constant ARBITER_BOND      = 50 * 10 ** 6;
+
+    function _grantSelfRegistrationGate(address who) internal {
+        vm.store(
+            address(diamond),
+            keccak256(abi.encode(who, uint256(REP_BASE) + SLOT_XP)),
+            bytes32(uint256(10_000))
+        );
+        vm.store(
+            address(diamond),
+            keccak256(abi.encode(who, uint256(REP_BASE) + SLOT_CLEAN_STREAK)),
+            bytes32(uint256(50))
+        );
+        usdc.mint(who, ARBITER_BOND);
+        vm.prank(who);
+        usdc.approve(address(diamond), ARBITER_BOND);
+    }
+
+    /// ДАО включается ЗАРАБОТАННЫМ путём (uniqueActiveUsers >= порога), не
+    /// через activateDAO(): именно это состояние делает самозапись
+    /// единственной дверью, и именно оно наступает само, без единой
+    /// человеческой транзакции.
+    function test_SelfRegistrationClearsTheRemovalRecord() public {
+        ArbiterAccountabilityFacet(address(diamond)).removeArbiterForCause(
+            arbiter, ArbiterAccountabilityFacet.Cause.Collusion, keccak256("evidence"), address(0)
+        );
+        vm.prank(arbiter);
+        ArbiterAccountabilityFacet(address(diamond)).respondToRemoval(keccak256("my side"));
+
+        _setUniqueActiveUsers(ArbiterRegistryFacet(address(diamond)).getDaoThreshold());
+        assertTrue(ArbiterRegistryFacet(address(diamond)).isDaoActive(), unicode"сетап: ДАО активна заработанным путём");
+
+        _grantSelfRegistrationGate(arbiter);
+        vm.prank(arbiter);
+        ArbiterRegistryFacet(address(diamond)).applyAsArbiter();
+        assertTrue(ArbiterRegistryFacet(address(diamond)).isRegisteredArbiter(arbiter), unicode"сетап: самозапись прошла");
+
+        assertEq(
+            ArbiterAccountabilityFacet(address(diamond)).getRemovalReply(arbiter),
+            bytes32(0),
+            unicode"ответ на ПРОШЛЫЙ снос не переживает повторную посадку — иначе второе обвинение осталось бы без ответа навсегда"
+        );
+
+        // Вторая половина той же уборки: removedAt. Читается поведением —
+        // действующий, ещё не снятый арбитр не должен уметь «отвечать» на
+        // давно закрытое обвинение.
+        vm.prank(arbiter);
+        vm.expectRevert(ArbiterAccountabilityFacet.NothingToAnswer.selector);
+        ArbiterAccountabilityFacet(address(diamond)).respondToRemoval(keccak256("phantom"));
+    }
+
+    /// ⚠️ ЗНАЕМЫЙ ШОВ, зафиксирован намеренно (финальный обзор ветки, M-4).
+    /// Уборка едина на обе двери входа, поэтому самозапись снимает и
+    /// приостановку, которую оставил снос (C-1). Значит снятый по поводу, если
+    /// ДАО активна и у него хватает XP/серии, покупает досрочную разморозку
+    /// своих вердиктов ценой свежего залога в 50 USDC поверх только что
+    /// сожжённого. До активации ДАО путь мёртв целиком (applyAsArbiter ревертит
+    /// DAONotActive). Тест НЕ одобряет это поведение — он делает его видимым и
+    /// мутируемым: решение о поведении за владельцем, см. отчёт финального
+    /// обзора.
+    function test_SelfRegistrationAlsoClearsSuspensionKnownSeam() public {
+        ArbiterAccountabilityFacet(address(diamond)).removeArbiterForCause(
+            arbiter, ArbiterAccountabilityFacet.Cause.Collusion, keccak256("evidence"), address(0)
+        );
+        assertTrue(ArbiterAccountabilityFacet(address(diamond)).isSuspended(arbiter), unicode"сетап: снос приостановил");
+
+        _setUniqueActiveUsers(ArbiterRegistryFacet(address(diamond)).getDaoThreshold());
+        _grantSelfRegistrationGate(arbiter);
+        vm.prank(arbiter);
+        ArbiterRegistryFacet(address(diamond)).applyAsArbiter();
+
+        assertFalse(
+            ArbiterAccountabilityFacet(address(diamond)).isSuspended(arbiter),
+            unicode"самозапись снимает приостановку той же уборкой — знаемый шов, не случайность"
+        );
+    }
+
+    // ============================================================
+    //  ФИНАЛЬНЫЙ ОБЗОР ВЕТКИ, M-3 (16 августа 2026)
+    //
+    //  КОНТРОЛЬ СТЫКА ДВУХ КОПИЙ _msgSender() — не замок, и это важно.
+    //
+    //  Докстринг ArbiterAccountabilityFacet обещал, что тело «обязано совпадать
+    //  побайтно — сверяется test_MsgSenderMatchesRegistry». Обещание было
+    //  ложным: побайтной сверки нет вовсе, а названный тест гоняет через
+    //  форвардер только respondToRemoval, то есть говорит про ОДНУ копию.
+    //
+    //  Здесь — ОДИН настоящий MinimalForwarder, ОДИН даймонд, ОДНО хранилище,
+    //  ОДИН подписант, и ответы ОБЕИХ реализаций сверяются друг с другом.
+    //
+    //  ⚠️ ЧЕСТНЫЙ ЗАМЕР, чтобы этот тест не выглядел сильнее, чем он есть:
+    //  единственным красным он не бывает никогда. Порча оригинала — 6 красных,
+    //  пять из них гейслесс-пути самого реестра; порча копии — 2 красных, из них
+    //  один test_MsgSenderMatchesRegistry. Каждая копия и без него доказана
+    //  против ВНЕШНЕЙ правды — адреса подписанта. Он ловит другое: разъезд
+    //  именно ПАРЫ на общем хранилище (замер: копия читает чужое поле
+    //  FactoryStorage — 2 красных, оба про эту пару).
+    // ============================================================
+
+    bytes32 constant FWD_TYPEHASH = keccak256(
+        "ForwardRequest(address from,address to,uint256 value,uint256 gas,uint256 nonce,bytes data)"
+    );
+
+    function _signFwd(MinimalForwarder fwd, uint256 pk, MinimalForwarder.ForwardRequest memory req)
+        internal view returns (bytes memory)
+    {
+        bytes32 structHash = keccak256(abi.encode(
+            FWD_TYPEHASH, req.from, req.to, req.value, req.gas, req.nonce, keccak256(req.data)
+        ));
+        bytes32 digest = keccak256(abi.encodePacked(
+            "\x19\x01",
+            keccak256(abi.encode(
+                keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"),
+                keccak256(bytes("MinimalForwarder")),
+                keccak256(bytes("0.0.1")),
+                block.chainid,
+                address(fwd)
+            )),
+            structHash
+        ));
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(pk, digest);
+        return abi.encodePacked(r, s, v);
+    }
+
+    function _forward(MinimalForwarder fwd, uint256 pk, address from, bytes memory data) internal {
+        MinimalForwarder.ForwardRequest memory req = MinimalForwarder.ForwardRequest({
+            from:  from,
+            to:    address(diamond),
+            value: 0,
+            gas:   1_000_000,
+            nonce: fwd.getNonce(from),
+            data:  data
+        });
+        vm.prank(address(0x9999)); // релеер: третий адрес, не арбитр и не форвардер
+        (bool ok, bytes memory ret) = fwd.execute(req, _signFwd(fwd, pk, req));
+        assertTrue(ok, string.concat("forwarded call failed: ", vm.toString(ret)));
+    }
+
+    function test_MsgSenderAgreesAcrossBothFacetsOnOneForwarder() public {
+        uint256 pk = 0xCA11;
+        address human = vm.addr(pk);
+
+        MinimalForwarder fwd = new MinimalForwarder();
+        FactoryFacet(address(diamond)).setTrustedForwarder(address(fwd));
+        ArbiterRegistryFacet(address(diamond)).addArbiter(human);
+
+        // ── Реализация №1: ArbiterRegistryFacet._msgSender ──
+        // setArbiterChatKey пишет ключи ПО ОТПРАВИТЕЛЮ, и наружу они читаются
+        // по адресу. Значит промах атрибуции виден напрямую, а не только по
+        // факту реверта: ключи ушли бы форвардеру, и getArbiterChatKeys(human)
+        // вернул бы нули.
+        bytes32 boxKey  = keccak256("box");
+        bytes32 signKey = keccak256("sign");
+        _forward(
+            fwd, pk, human,
+            abi.encodeWithSelector(ArbiterRegistryFacet.setArbiterChatKey.selector, boxKey, signKey)
+        );
+        (bytes32 gotBox, bytes32 gotSign) =
+            ArbiterRegistryFacet(address(diamond)).getArbiterChatKeys(human);
+
+        // ── Реализация №2: ArbiterAccountabilityFacet._msgSender ──
+        ArbiterAccountabilityFacet(address(diamond)).removeArbiterForCause(
+            human, ArbiterAccountabilityFacet.Cause.Collusion, keccak256("evidence"), address(0)
+        );
+        bytes32 reply = keccak256("my side");
+        _forward(
+            fwd, pk, human,
+            abi.encodeWithSelector(ArbiterAccountabilityFacet.respondToRemoval.selector, reply)
+        );
+        bytes32 gotReply = ArbiterAccountabilityFacet(address(diamond)).getRemovalReply(human);
+
+        // ── Сверка пары ──
+        assertEq(gotBox,  boxKey,  unicode"реализация ArbiterRegistryFacet обязана записать ЧЕЛОВЕКУ");
+        assertEq(gotSign, signKey, unicode"реализация ArbiterRegistryFacet обязана записать ЧЕЛОВЕКУ");
+        assertEq(gotReply, reply,  unicode"реализация ArbiterAccountabilityFacet обязана записать ТОМУ ЖЕ человеку");
+
+        // Контроль: ни одна из двух не приписала работу форвардеру. Без этой
+        // половины «обе записали человеку» ещё могло бы уживаться с тем, что
+        // одна из копий пишет ОБОИМ.
+        (bytes32 fwdBox, bytes32 fwdSign) =
+            ArbiterRegistryFacet(address(diamond)).getArbiterChatKeys(address(fwd));
+        assertEq(fwdBox,  bytes32(0), unicode"форвардеру ключи не принадлежат");
+        assertEq(fwdSign, bytes32(0), unicode"форвардеру ключи не принадлежат");
+        assertEq(
+            ArbiterAccountabilityFacet(address(diamond)).getRemovalReply(address(fwd)),
+            bytes32(0),
+            unicode"форвардеру ответ не принадлежит"
         );
     }
 }
