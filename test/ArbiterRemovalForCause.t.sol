@@ -72,6 +72,8 @@ pragma solidity ^0.8.20;
 import "forge-std/Test.sol";
 import {ArbiterAccountabilityFacet} from "../src/facets/ArbiterAccountabilityFacet.sol";
 import {ArbiterRegistryFacet} from "../src/facets/ArbiterRegistryFacet.sol";
+import {FactoryStorage} from "../src/FactoryFacet.sol";
+import {MinimalForwarder} from "../src/MinimalForwarder.sol";
 
 contract ArbiterRemovalForCauseTest is Test {
     ArbiterAccountabilityFacet acc;
@@ -606,6 +608,80 @@ contract ArbiterRemovalForCauseTest is Test {
         assertFalse(live, unicode"на арбитра ни разу не предлагали — live обязано быть false");
     }
 
+    // ============================================================
+    //  ПРАВО ОТВЕТА (задача 8, 15 августа 2026)
+    //
+    //  Обвинение против настоящего адреса лежит в цепи вечно. Ответ ничего не
+    //  отменяет и ничего не возвращает — он существует, чтобы читатель цепи
+    //  видел ДВЕ записи вместо одной.
+    //
+    //  ⚠️ Единственная функция этого фасета, которая читает _msgSender(): её
+    //  зовёт обычный человек, у которого может не быть ETH. Через релеер
+    //  msg.sender это адрес форвардера, и ответ записался бы форвардеру.
+    // ============================================================
+
+    function test_RemovedArbiterAnswers() public {
+        _setStreak(arbiter, 2);
+        acc.removeArbiterForCause(arbiter, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0), address(0));
+
+        bytes32 reply = keccak256(unicode"вот переписка целиком, судите сами");
+
+        vm.expectEmit(true, false, false, true, address(acc));
+        emit ArbiterAccountabilityFacet.RemovalAnswered(arbiter, reply);
+
+        vm.prank(arbiter);
+        acc.respondToRemoval(reply);
+
+        assertEq(acc.getRemovalReply(arbiter), reply, unicode"ответ лёг в цепь");
+    }
+
+    function test_AnswerIsOnceOnly() public {
+        _setStreak(arbiter, 2);
+        acc.removeArbiterForCause(arbiter, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0), address(0));
+
+        vm.startPrank(arbiter);
+        acc.respondToRemoval(keccak256("first"));
+        vm.expectRevert(ArbiterAccountabilityFacet.AlreadyAnswered.selector);
+        acc.respondToRemoval(keccak256("second"));
+        vm.stopPrank();
+    }
+
+    function test_ZeroReplyIsRefused() public {
+        _setStreak(arbiter, 2);
+        acc.removeArbiterForCause(arbiter, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0), address(0));
+        vm.prank(arbiter);
+        vm.expectRevert(ArbiterAccountabilityFacet.ZeroDigest.selector);
+        acc.respondToRemoval(bytes32(0));
+    }
+
+    /// Отвечать может только тот, кого сняли. Иначе посторонний засыпал бы
+    /// ленту чужими «ответами».
+    function test_OnlyRemovedCanAnswer() public {
+        vm.prank(address(0x5A));
+        vm.expectRevert(ArbiterAccountabilityFacet.NothingToAnswer.selector);
+        acc.respondToRemoval(keccak256("x"));
+    }
+
+    /// Две копии _msgSender() обязаны вести себя одинаково. Разойдутся —
+    /// гейслесс-путь одного фасета начнёт видеть форвардер вместо человека.
+    function test_MsgSenderMatchesRegistry() public {
+        MinimalForwarder fwd = new MinimalForwarder();
+        _setForwarder(address(acc), address(fwd));
+
+        bytes memory payload = abi.encodePacked(
+            abi.encodeWithSelector(acc.respondToRemoval.selector, keccak256("x")),
+            arbiter
+        );
+        _setStreak(arbiter, 2);
+        acc.removeArbiterForCause(arbiter, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0), address(0));
+
+        vm.prank(address(fwd));
+        (bool ok,) = address(acc).call(payload);
+        assertTrue(ok, unicode"вызов через форвардер обязан пройти");
+        assertEq(acc.getRemovalReply(arbiter), keccak256("x"),
+            unicode"ответ обязан записаться ЧЕЛОВЕКУ, а не форвардеру");
+    }
+
     // ---------- ХЕЛПЕРЫ ----------
 
     function _isArbiterRaw(address who) internal view returns (bool) {
@@ -689,6 +765,23 @@ contract ArbiterRemovalForCauseTest is Test {
 
     function _setUniqueActiveUsers(uint256 n) internal {
         vm.store(address(acc), bytes32(uint256(REP_BASE) + SLOT_UNIQUE_ACTIVE_USERS), bytes32(n));
+    }
+
+    /// trustedForwarder — слот 3 внутри FactoryStorage.Layout (usdc(0),
+    /// feeRecipient(1), regionFee(2, mapping — свой слот), trustedForwarder(3)).
+    /// НЕ «второе поле», как ошибочно предполагал бриф задачи 8 — то же
+    /// смещение, что уже утверждено test/DisputeNoResponse.t.sol,
+    /// test/ArbiterChatKey.t.sol и test/BoardsFixture.sol. Читаем-сверяем
+    /// сразу же: при неверном смещении vm.store молча пишет в чужое поле, и
+    /// test_MsgSenderMatchesRegistry проверял бы совсем не то, о чём его имя.
+    function _setForwarder(address facet, address forwarder) internal {
+        bytes32 slot = bytes32(uint256(FactoryStorage.FACTORY_STORAGE_POSITION) + 3);
+        vm.store(facet, slot, bytes32(uint256(uint160(forwarder))));
+        assertEq(
+            address(uint160(uint256(vm.load(facet, slot)))),
+            forwarder,
+            unicode"смещение trustedForwarder в FactoryStorage.Layout уехало"
+        );
     }
 
     /// MISTAKE_THRESHOLD в новом фасете обязан быть СТРОГО НИЖЕ

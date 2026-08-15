@@ -114,6 +114,8 @@ mapping(address=>uint256) seatedCountBy
 mapping(address=>uint256) suspendedUntil
 mapping(address=>uint256) cleanVerdicts
 mapping(address=>RemovalProposal) removalProposals
+mapping(address=>bytes32) removalReply
+mapping(address=>uint256) removedAt
 
 === src/facets/ArbiterRegistryFacet.sol :: ArbiterRegistryStorage.PendingVerdict ===
 address arbiter

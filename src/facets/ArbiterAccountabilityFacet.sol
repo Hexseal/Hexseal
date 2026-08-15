@@ -25,21 +25,28 @@ pragma solidity ^0.8.20;
 // согласился, вместо одной записи на двоих. Право ответа снятого — задел
 // следующей задачи того же плана, здесь не реализовано.
 //
-// ⚠️ ВСЕ функции этого фасета сегодня — административные (владелец либо, до
-// активации ДАО, директор для приостановки и предложения сноса) и читают
-// сырой msg.sender, как onlyOwnerOrChief в ArbiterRegistryFacet: владелец и
-// директор ходят прямой транзакцией, не через релеер, а гейслесс-пути у
-// этого фасета пока нет вовсе. Файл не реализует _msgSender() и учтён в
-// script/gasless-sender.allow отдельной записью «вне области». Когда сюда
-// приедет respondToRemoval (право ответа снятого, зовётся ОБЫЧНЫМ ЧЕЛОВЕКОМ
-// через релеер), фасет обзаведётся собственным _msgSender() и станет
-// ERC-2771-файлом — тогда запись в allow-файле сменит форму на per-function,
-// как у соседей.
+// ⚠️ Задача 8 (15 августа 2026, право ответа снятого) добавила respondToRemoval
+// — ПЕРВУЮ и ЕДИНСТВЕННУЮ гейслесс-функцию этого фасета. Зовёт её снятый
+// арбитр, обычный человек, у которого может не быть ETH; на пути через
+// релеер msg.sender — адрес MinimalForwarder, а не человек. Файл теперь
+// реализует собственный _msgSender() (копия тела ArbiterRegistryFacet.
+// _msgSender, обязана совпадать побайтно — сверяется test_MsgSenderMatchesRegistry
+// в test/ArbiterRemovalForCause.t.sol) и стал ERC-2771-файлом: автопоиск
+// script/check_gasless_sender.py подхватывает его сам, а script/gasless-sender.allow
+// учитывает файл per-function, как соседние ArbiterRegistryFacet/JobBoardFacet/
+// ServiceBoardFacet, а не одной общей записью «вне области».
+//
+// ВСЕ ОСТАЛЬНЫЕ функции фасета остаются административными (владелец либо, до
+// активации ДАО, директор) и по-прежнему читают сырой msg.sender —
+// гейслесс-путь им не нужен и был бы опасен: доверять хвосту calldata в
+// проверке владельческой роли значит отдать её форвардеру. Причины —
+// поимённо, по функциям, в script/gasless-sender.allow.
 // ============================================================
 
 import {ArbiterRegistryStorage} from "./ArbiterRegistryFacet.sol";
 import {ReputationStorage} from "./ReputationFacet.sol";
 import {OwnershipLib} from "../DiamondProxy.sol";
+import {FactoryStorage} from "../FactoryFacet.sol";
 
 contract ArbiterAccountabilityFacet {
 
@@ -105,6 +112,11 @@ contract ArbiterAccountabilityFacet {
     error DisputeRefRequired();
     error DisputeRefNotApplicable();
 
+    // ── Право ответа снятого (задача 8, 15 августа 2026) ──
+    error AlreadyAnswered();
+    error NothingToAnswer();
+    error ZeroDigest();
+
     // Примечание: addArbiter/setChiefArbiter в ArbiterRegistryFacet тем же
     // решением владельца («никаких ручных», человек выходит, остаётся только
     // гейт applyAsArbiter) ревертят ошибкой SeatingHandedOver при активном
@@ -154,6 +166,11 @@ contract ArbiterAccountabilityFacet {
     );
     event RemovalProposalWithdrawn(address indexed arbiter, address indexed by);
 
+    /// Обвинение против настоящего адреса лежит в цепи вечно. Ответ ничего
+    /// не отменяет и ничего не возвращает — он существует, чтобы читатель
+    /// цепи видел ДВЕ записи вместо одной (задача 8, 15 августа 2026).
+    event RemovalAnswered(address indexed arbiter, bytes32 replyDigest);
+
     /// Стирание предложения В МОМЕНТ реального сноса — отдельно от
     /// RemovalProposalWithdrawn (тот значит «передумали», этот — «сбылось»,
     /// круг правок 1, Minor 4, 15 августа 2026). Несёт поля СТЁРТОГО
@@ -175,6 +192,23 @@ contract ArbiterAccountabilityFacet {
         if (msg.sender != OwnershipLib.contractOwner() && msg.sender != chief)
             revert NotOwnerOrChief();
         _;
+    }
+
+    // -------- ERC-2771 SENDER --------
+
+    /// Копия из ArbiterRegistryFacet — фасеты не наследуются друг от друга, и
+    /// общего базового контракта в этом проекте нет. Логика обязана совпадать
+    /// побайтно: сверяется тестом test_MsgSenderMatchesRegistry. Единственный
+    /// вызывающий её пользовательский путь — respondToRemoval; все прочие
+    /// функции фасета остаются на сыром msg.sender (владельческие, не
+    /// гейслесс — см. script/gasless-sender.allow).
+    function _msgSender() internal view returns (address sender) {
+        address forwarder = FactoryStorage.store().trustedForwarder;
+        if (msg.sender == forwarder && msg.data.length >= 20) {
+            assembly { sender := shr(96, calldataload(sub(calldatasize(), 20))) }
+        } else {
+            sender = msg.sender;
+        }
     }
 
     // -------- SUSPENSION --------
@@ -340,6 +374,11 @@ contract ArbiterAccountabilityFacet {
         d.isArbiter[arbiter] = false;
         ArbiterRegistryStorage.clearSeat(d, arbiter);
 
+        // Момент сноса — нужен, чтобы respondToRemoval (задача 8) отличал
+        // «сняли и он молчит» от «его никогда не снимали»: без этой отметки
+        // любой посторонний мог бы «ответить» на несуществующее обвинение.
+        d.removedAt[arbiter] = block.timestamp;
+
         uint256 len = d.arbiterList.length;
         for (uint256 i = 0; i < len; i++) {
             if (d.arbiterList[i] == arbiter) {
@@ -375,6 +414,35 @@ contract ArbiterAccountabilityFacet {
     // демоушена (_recordArbiterMistake в ArbiterRegistryFacet). XP снятого по
     // поводу остаётся как есть; расхождение с автоматическим демоушеном
     // сознательное и решается отдельной задачей, если владелец сочтёт нужным.
+
+    // ============================================================
+    //  ПРАВО ОТВЕТА (задача 8, 15 августа 2026)
+    //
+    //  Обвинение против настоящего адреса лежит в цепи вечно. Ответ ничего
+    //  не отменяет и ничего не возвращает — он существует, чтобы читатель
+    //  цепи видел ДВЕ записи вместо одной.
+    // ============================================================
+
+    /// ⚠️ ЕДИНСТВЕННАЯ гейслесс-функция этого фасета. Отправитель берётся через
+    /// _msgSender(), а не msg.sender: её зовёт снятый арбитр — обычный человек,
+    /// у которого может не быть ETH. На пути через релеер msg.sender это адрес
+    /// MinimalForwarder, и ответ записался бы форвардеру, а не человеку.
+    function respondToRemoval(bytes32 replyDigest) external {
+        if (replyDigest == bytes32(0)) revert ZeroDigest();
+
+        address caller = _msgSender();
+        ArbiterRegistryStorage.Data storage d = ArbiterRegistryStorage.data();
+
+        if (d.removedAt[caller] == 0) revert NothingToAnswer();
+        if (d.removalReply[caller] != bytes32(0)) revert AlreadyAnswered();
+
+        d.removalReply[caller] = replyDigest;
+        emit RemovalAnswered(caller, replyDigest);
+    }
+
+    function getRemovalReply(address arbiter) external view returns (bytes32) {
+        return ArbiterRegistryStorage.data().removalReply[arbiter];
+    }
 
     // -------- ПРЕДЛОЖЕНИЕ ДИРЕКТОРА (задача 7, 15 августа 2026) --------
     //

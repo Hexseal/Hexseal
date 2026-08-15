@@ -43,7 +43,7 @@
 # ---------------------------------------------------------------------------
 # ТЕЛО САМОГО ПРАВИЛА
 #
-# Пять одинаковых реализаций ERC-2771 (у фасетов форвардер лежит в общем
+# Шесть одинаковых реализаций ERC-2771 (у фасетов форвардер лежит в общем
 # FactoryStorage, у Agreement — в собственном слоте клона). Ровно то место, где
 # сырой msg.sender обязан быть: одно обращение сравнивает отправителя с
 # форвардером, второе — фолбэк для прямого вызова, когда хвоста в calldata нет.
@@ -60,6 +60,16 @@ occurrences: 2
 occurrences: 2
 не гейслесс, потому что: то же тело правила, что в Agreement, только форвардер
   читается из FactoryStorage (общий слот диамонда), а не из поля клона.
+
+=== src/facets/ArbiterAccountabilityFacet.sol :: ArbiterAccountabilityFacet._msgSender ===
+occurrences: 2
+не гейслесс, потому что: то же тело правила (задача 8, 15 августа 2026, право
+  ответа снятого) — форвардер читается из того же общего FactoryStorage, что и
+  у ArbiterRegistryFacet._msgSender. Копия обязана совпадать с той побайтно:
+  фасеты диамонда не наследуются друг от друга, общего базового контракта нет,
+  сверяется тестом test_MsgSenderMatchesRegistry (test/ArbiterRemovalForCause.t.sol).
+  Единственный вызывающий её пользовательский путь этого фасета — respondToRemoval;
+  до этой задачи файл не реализовывал _msgSender вовсе и числился «вне области».
 
 === src/facets/ArbiterRegistryFacet.sol :: ArbiterRegistryFacet._msgSender ===
 occurrences: 2
@@ -166,6 +176,60 @@ occurrences: 4
   ИМЕННО с msg.sender: если бы проверка роли и источник средств разошлись,
   форвардер оказался бы плательщиком. Все четыре обращения обязаны остаться
   одним и тем же адресом.
+
+# ── ArbiterAccountabilityFacet (задача 8, 15 августа 2026, разобран по
+# функциям — до этой задачи файл целиком шёл одной записью «вне области»,
+# потому что не реализовывал _msgSender вовсе; respondToRemoval теперь его
+# завела, и файл переехал в ERC-2771-категорию) ──
+
+=== src/facets/ArbiterAccountabilityFacet.sol :: ArbiterAccountabilityFacet.onlyOwnerOrChief ===
+occurrences: 2
+не гейслесс, потому что: расширение владельческой проверки на chiefArbiter,
+  то же самое, что ArbiterRegistryFacet.onlyOwnerOrChief выше — админ-роль,
+  назначаемая владельцем, гейслесс-пути у неё нет, а хвост calldata в проверке
+  роли был бы той же дырой, что и в onlyOwner.
+
+=== src/facets/ArbiterAccountabilityFacet.sol :: ArbiterAccountabilityFacet.suspendArbiter ===
+occurrences: 1
+не гейслесс, потому что: функция уже под onlyOwnerOrChief, сырой msg.sender —
+  только аргумент события ArbiterSuspended, «кто нажал». Модификатор
+  гарантирует, что это владелец либо директор: вызов через форвардер до этой
+  строки не доживает, та же логика, что у ArbiterRegistryFacet.activateDAO.
+
+=== src/facets/ArbiterAccountabilityFacet.sol :: ArbiterAccountabilityFacet.liftSuspension ===
+occurrences: 1
+не гейслесс, потому что: то же, что suspendArbiter выше — функция под
+  onlyOwnerOrChief, msg.sender аргументом события ArbiterSuspensionLifted,
+  «кто снял».
+
+=== src/facets/ArbiterAccountabilityFacet.sol :: ArbiterAccountabilityFacet.removeArbiterForCause ===
+occurrences: 3
+не гейслесс, потому что: снос по поводу — храповик передачи, НЕ через
+  onlyOwnerOrChief (директор сюда не допущен вовсе, только владелец или,
+  после передачи, daoAddress). Два обращения — обе ветки одной проверки
+  (`msg.sender != d.daoAddress` в ветке «ДАО активна», `msg.sender !=
+  OwnershipLib.contractOwner()` в ветке «ДАО не активна»), третье — msg.sender
+  аргументом события ArbiterRemovedForCause, «кто нажал». До какой из первых
+  двух проверок вызов ни дойдёт, за форвардером человека нет: прямая
+  транзакция владельца или daoAddress-контракт, гейслесс-пути здесь нет —
+  та же логика, что у ArbiterRegistryFacet.setDAOAddress.
+
+=== src/facets/ArbiterAccountabilityFacet.sol :: ArbiterAccountabilityFacet.proposeRemoval ===
+occurrences: 2
+не гейслесс, потому что: предложение директора — снос остаётся необратимым
+  правом владельца/daoAddress, но сигнализировать в цепь своим адресом может
+  и директор, под тем же onlyOwnerOrChief, что и остальные операции фасета.
+  Два обращения — запись `by: msg.sender` в RemovalProposal и msg.sender
+  аргументом события RemovalProposed. Вызов через форвардер до этих строк не
+  доживает, гейслесс-путь предложению не нужен: тот же класс административной
+  операции, что и сам снос, только на полшага раньше.
+
+=== src/facets/ArbiterAccountabilityFacet.sol :: ArbiterAccountabilityFacet.withdrawProposal ===
+occurrences: 1
+не гейслесс, потому что: то же, что proposeRemoval выше — функция под
+  onlyOwnerOrChief, msg.sender аргументом события RemovalProposalWithdrawn,
+  «кто отозвал» (отозвать может и владелец чужое предложение директора, и
+  наоборот).
 
 
 # ---------------------------------------------------------------------------
@@ -379,50 +443,6 @@ occurrences: 1
   ДАО это контракт, а не человек с кошельком. Остальные пути (distribute,
   withdrawFoundation, topUpVault) отправителя не читают вовсе — деньги уходят
   по адресам, зафиксированным при деплое.
-
-=== вне области :: src/facets/ArbiterAccountabilityFacet.sol ===
-occurrences: 10
-не гейслесс, потому что: файл НЕ реализует _msgSender() вовсе (arbiter-accountability,
-  задача 4, 15 августа 2026) — в отличие от ArbiterRegistryFacet, у этого фасета
-  сегодня нет ни одной пользовательской гейслесс-функции, только владельческие.
-  Семь обращений (задачи 4 и 6) — те же владельческие проверки, что у
-  ArbiterRegistryFacet.onlyOwner/onlyOwnerOrChief (см. раздел «ВЛАДЕЛЬЧЕСКИЕ
-  ПРОВЕРКИ» выше в этом файле), только без собственного _msgSender их нельзя
-  завести под ту же ERC-2771-категорию, форма записи для файла без _msgSender —
-  «вне области»: два — модификатор onlyOwnerOrChief (сравнение отправителя с
-  владельцем и с директором), по одному — suspendArbiter и liftSuspension
-  (msg.sender идёт аргументом события ArbiterSuspended/ArbiterSuspensionLifted,
-  «кто нажал»; модификатор гарантирует, что это владелец либо директор — вызов
-  через форвардер до этой строки не доживает). Владелец и директор ходят прямой
-  транзакцией со своего кошелька, не через релеер — гейслесс-путь этим функциям
-  не нужен и был бы опасен: доверять хвосту calldata в проверке владельческой
-  роли значит отдать её форвардеру.
-  Три (задача 6, 15 августа 2026) — removeArbiterForCause: два
-  сравнения отправителя (с daoAddress в ветке «ДАО активна», с владельцем в
-  ветке «ДАО не активна» — храповик передачи, не через onlyOwnerOrChief:
-  директор сюда не допущен вовсе) и msg.sender аргументом события
-  ArbiterRemovedForCause, «кто нажал». Та же логика: до какой из двух проверок
-  вызов ни дойдёт, за форвардером человека нет — прямая транзакция или
-  daoAddress-контракт, гейслесс-пути и здесь нет.
-  Оставшиеся три (задача 7, 15 августа 2026) — предложение директора,
-  proposeRemoval/withdrawProposal: снос необратим и остаётся правом
-  владельца/daoAddress, но предложить его в цепь своим адресом может и
-  директор — под тем же onlyOwnerOrChief, что и остальные операции этого
-  фасета. Два обращения в proposeRemoval (запись `by: msg.sender` в
-  RemovalProposal и msg.sender аргументом события RemovalProposed), одно в
-  withdrawProposal (msg.sender аргументом события RemovalProposalWithdrawn,
-  «кто отозвал» — отозвать может и владелец чужое предложение директора, и
-  наоборот). Обе функции уже под onlyOwnerOrChief — вызов через форвардер до
-  этих строк не доживает, та же логика, что у suspendArbiter/liftSuspension
-  выше. Гейслесс-путь предложению не нужен: это тот же класс административной
-  операции, что и сам снос, только на полшага раньше.
-  ВНИМАНИЕ. Когда в этот фасет приедет respondToRemoval (право ответа снятого —
-  её обязан звать ОБЫЧНЫЙ ЧЕЛОВЕК, не владелец, см. шапку файла), фасет заведёт
-  собственный _msgSender() и автопоиск подхватит его как ERC-2771 — эту запись
-  придётся снять и переписать per-function записями по образцу
-  ArbiterRegistryFacet.onlyOwner/onlyOwnerOrChief; гейт сам напомнит об этом,
-  он проверяет и обратное (протухшую запись «вне области» для файла, который
-  обзавёлся _msgSender).
 
 === вне области :: src/facets/DealMetadataFacet.sol ===
 occurrences: 0

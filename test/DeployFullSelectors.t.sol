@@ -50,7 +50,7 @@ import "../src/JobReceiptFacet.sol";
 ///   - `buildInitCuts`/`buildRemainingCuts` wire a correct selector set to the
 ///     wrong `FacetCut.facetAddress`
 ///   - the actual `DiamondProxy` this script would produce does not end up with
-///     exactly 12 facets, exactly 196 routed selectors, and consistent
+///     exactly 12 facets, exactly 198 routed selectors, and consistent
 ///     `facetAddress(sel)` <-> `facets()` routing in both directions
 ///     (177 -> 179, 15 Aug 2026: arbiter-accountability task 1 added
 ///     getSeatedBy/getSeatedCountBy to ArbiterRegistryFacet; 179 -> 180,
@@ -96,7 +96,15 @@ import "../src/JobReceiptFacet.sol";
 ///     gained `proposeRemoval`, `withdrawProposal`, `hasLiveProposal`,
 ///     `getRemovalProposal`, `getProposalTTL` (+5); ArbiterRegistryFacet
 ///     unchanged (the new `removalProposals` field is storage layout only,
-///     not a selector))
+///     not a selector); 196 -> 198, same day, task 8 of the same plan: a
+///     removed arbiter's right to reply — an accusation against a real
+///     address sits on chain forever, `respondToRemoval` lets the removed
+///     arbiter lay down their own digest next to it, undoing nothing and
+///     refunding nothing. ArbiterAccountabilityFacet gained
+///     `respondToRemoval` and `getRemovalReply` (+2) — the facet's first
+///     gasless function, so it also grew its own `_msgSender()` (see
+///     script/gasless-sender.allow); the new `removalReply`/`removedAt`
+///     fields are storage layout only, not selectors)
 contract DeployFullSelectorsTest is Test {
     DeployFull internal deploy;
 
@@ -341,7 +349,7 @@ contract DeployFullSelectorsTest is Test {
     //
     // This deploys all twelve real facets, builds the diamond exactly the way
     // run() does, and asserts the diamond that comes out the other end has
-    // exactly 12 facets, exactly 196 routed selectors, and that
+    // exactly 12 facets, exactly 198 routed selectors, and that
     // facetAddress(sel) and facets() agree with each other in both directions.
     // This is the only check in the suite that would catch a selector set
     // wired to the wrong facet address — diamondCut() itself does not validate
@@ -386,7 +394,7 @@ contract DeployFullSelectorsTest is Test {
                 );
             }
         }
-        assertEq(totalRouted, 196, "diamond should route exactly 196 selectors total");
+        assertEq(totalRouted, 198, "diamond should route exactly 198 selectors total");
 
         // Reverse direction: facetAddresses() must report exactly the same set
         // of addresses facets() reported them under.
