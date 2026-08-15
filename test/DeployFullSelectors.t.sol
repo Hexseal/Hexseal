@@ -61,7 +61,17 @@ import "../src/JobReceiptFacet.sol";
 ///     day: arbiter-accountability task 4 — ArbiterRegistryFacet sat at 86.4%
 ///     of the EIP-170 deployed-bytecode limit, so arbiter suspension shipped
 ///     as a twelfth facet, ArbiterAccountabilityFacet, sharing the same
-///     ArbiterRegistryStorage namespace — 11 facets -> 12, six new selectors)
+///     ArbiterRegistryStorage namespace — 11 facets -> 12, six new selectors;
+///     187 -> 186, same day: arbiter-accountability task 5 removed
+///     ArbiterAccountabilityFacet.getChiefArbiterAddress — it duplicated
+///     ArbiterRegistryFacet.getChiefArbiter (both selectors route to the same
+///     diamond address; the "so the frontend doesn't need to hit a second
+///     facet" justification in the task-4 brief was the plan author's own
+///     mistake, its real origin was the standalone-facet test rig); 186 -> 187,
+///     same commit: task 5 added ArbiterRegistryFacet.getCleanVerdicts, a
+///     count of non-overturned finalized verdicts per arbiter, laid down for
+///     a future "bond plus tenure" conversion when DAO mode activates — net
+///     selector count unchanged, composition did)
 contract DeployFullSelectorsTest is Test {
     DeployFull internal deploy;
 

@@ -214,6 +214,14 @@ library ArbiterRegistryStorage {
         /// Сравнение всегда строгое: `block.timestamp < suspendedUntil`, — то
         /// есть на самой границе окно уже отпустило.
         mapping(address => uint256) suspendedUntil;
+
+        /// Сколько раз вердикт арбитра дошёл до финализации неперевёрнутым.
+        /// Решение владельца, задача 5 того же плана (15 августа 2026): при
+        /// включении ДАО сидящие арбитры конвертируются «залог плюс судейский
+        /// стаж», а считать стаж было нечем. Заводить счётчик позже смысла не
+        /// имеет — к моменту включения ДАО у всех будет ноль. Инкремент — в
+        /// той же ветке finalizeVerdict, что уже сбрасывает arbiterMistakeStreak.
+        mapping(address => uint256) cleanVerdicts;
     }
 
     function data() internal pure returns (Data storage d) {
@@ -423,6 +431,13 @@ contract ArbiterRegistryFacet {
     // ── Потолок споров в руках (arbiter-accountability, задача 3) ──
     error TooManyOpenClaims(uint256 held, uint256 cap);
 
+    // ── Зубы приостановки (arbiter-accountability, задача 5) ──
+    /// Арбитр приостановлен: не берёт споров, его вердикты не финализируются,
+    /// уволиться он не может. Последнее — не мелочь: resignAsArbiter возвращает
+    /// залог целиком, и без этого запрета подозреваемый уходит с деньгами за
+    /// одну транзакцию, а весь денежный контур наказания становится надписью.
+    error ArbiterSuspendedError(uint256 until);
+
     // -------- MODIFIERS --------
 
     modifier onlyOwner() {
@@ -497,6 +512,7 @@ contract ArbiterRegistryFacet {
     function resignAsArbiter() external {
         address caller = _msgSender();
         ArbiterRegistryStorage.Data storage d = ArbiterRegistryStorage.data();
+        _requireNotSuspended(d, caller);
         if (!d.isArbiter[caller]) revert NotAnArbiter();
         if (d.openClaimCount[caller] > 0) revert HasOpenDisputeClaims();
 
@@ -684,6 +700,8 @@ contract ArbiterRegistryFacet {
         // дёшево, а не после четырёх чтений чужого контракта.
         uint256 held = d.openClaimCount[caller];
         if (held >= MAX_CLAIMS_PER_ARBITER) revert TooManyOpenClaims(held, MAX_CLAIMS_PER_ARBITER);
+
+        _requireNotSuspended(d, caller);
 
         if (boxKey == bytes32(0) || signKey == bytes32(0)) revert ZeroChatKey();
         if (d.disputeClaims[agreement] != address(0)) revert AlreadyClaimed();
@@ -962,6 +980,9 @@ contract ArbiterRegistryFacet {
         if (v.submittedAt == 0) revert NoVerdict();
         if (v.finalized) revert AlreadyFinalized();
         if (v.frozen) revert VerdictFrozenError();
+        // Проверяем АРБИТРА ВЕРДИКТА, не вызывающего: финализировать может кто
+        // угодно, а держим мы именно приостановленного судью.
+        _requireNotSuspended(d, v.arbiter);
         require(block.timestamp >= v.submittedAt + FINALIZE_DELAY, "ArbiterRegistry: finalize delay not passed");
 
         // Защита от авто-удаления в clearDisputeClaim во время этого вызова
@@ -1012,9 +1033,12 @@ contract ArbiterRegistryFacet {
         v.finalized = true;
 
         // Вердикт дошёл до финализации без overturn — судейская ошибка не подтвердилась,
-        // серия ошибок сбрасывается.
+        // серия ошибок сбрасывается. Заодно растёт судейский стаж (задача 5,
+        // 15 августа 2026): счётчик неперевёрнутых финализированных вердиктов,
+        // нужный для будущей конвертации «залог плюс стаж» при включении ДАО.
         if (!v.overturned) {
             d.arbiterMistakeStreak[v.arbiter] = 0;
+            d.cleanVerdicts[v.arbiter]++;
         }
 
         emit VerdictFinalized(agreement, v.arbiter, v.clientWins);
@@ -1083,6 +1107,14 @@ contract ArbiterRegistryFacet {
             d.seatedCountBy[seater]--;
         }
         delete d.seatedBy[arbiterAddr];
+    }
+
+    /// Общий запрет для трёх мест: claimDispute, resignAsArbiter, finalizeVerdict.
+    /// Читает то же поле, которое пишет ArbiterAccountabilityFacet.suspendArbiter —
+    /// оба фасета делят один ArbiterRegistryStorage.
+    function _requireNotSuspended(ArbiterRegistryStorage.Data storage d, address who) private view {
+        uint256 until = d.suspendedUntil[who];
+        if (block.timestamp < until) revert ArbiterSuspendedError(until);
     }
 
     /// Блок директора = арбитры его посадки, сидящие сейчас, ПЛЮС он сам, если
@@ -1823,5 +1855,13 @@ contract ArbiterRegistryFacet {
     /// эту функцию, а не держать копию.
     function getMaxClaimsPerArbiter() external pure returns (uint256) {
         return MAX_CLAIMS_PER_ARBITER;
+    }
+
+    /// @notice Сколько раз вердикт этого арбитра дошёл до финализации
+    /// неперевёрнутым. Задел под будущую конвертацию «залог плюс судейский
+    /// стаж» при включении ДАО (задача 5, 15 августа 2026) — сам перевод здесь
+    /// не реализован, только счётчик.
+    function getCleanVerdicts(address arbiterAddr) external view returns (uint256) {
+        return ArbiterRegistryStorage.data().cleanVerdicts[arbiterAddr];
     }
 }

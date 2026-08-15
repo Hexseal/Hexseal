@@ -11,7 +11,7 @@ pragma solidity ^0.8.20;
 // после ~40 инкрементальных апгрейдов, которые этот файл не отслеживал. Все 187
 // селекторов 12 фасетов проверены против test/DeployFullSelectors.t.sol — тот тест
 // падает, если этот файл и живые ABI разойдутся снова. Число здесь — сумма
-// литералов `new bytes4[](n)` в билдерах ниже; оно уже десятикратно протухало (стояло
+// литералов `new bytes4[](n)` в билдерах ниже; оно уже двенадцатикратно протухало (стояло
 // 148, когда фабрика выросла с 13 до 20; затем 159, до порога и котировки
 // платного вызова арбитра; затем 162 — цифру не поправили в том же коммите,
 // где код вырос до 167, 31 июля 2026; затем 167, когда 9 августа 2026 добавился
@@ -25,7 +25,14 @@ pragma solidity ^0.8.20;
 // затем 187, когда в тот же день ArbiterRegistryFacet упёрся в 86.4% лимита
 // EIP-170 и приостановка арбитра переехала в двенадцатый фасет,
 // ArbiterAccountabilityFacet — задача 4 того же плана, шесть новых
-// селекторов), поэтому сверяется тем же тестом.
+// селекторов; затем 186, в тот же день, когда задача 5 сняла
+// getChiefArbiterAddress из ArbiterAccountabilityFacet (дублировала
+// ArbiterRegistryFacet.getChiefArbiter, обоснование в брифе задачи 4 было
+// ошибкой автора плана — через прокси-даймонд оба селектора шли на один
+// адрес); затем снова 187, тем же коммитом задачи 5, когда в ArbiterRegistryFacet
+// приехал getCleanVerdicts — счётчик неперевёрнутых финализированных
+// вердиктов, задел под будущую конвертацию «залог плюс судейский стаж» при
+// включении ДАО), поэтому сверяется тем же тестом.
 // Пересчитать, не полагаясь на глаз:
 //   grep -o "new bytes4\[\]([0-9]*)" script/DeployFull.s.sol \
 //     | sed 's/.*(\([0-9]*\))/\1/' | awk '{s+=$1} END {print s}'
@@ -398,9 +405,9 @@ contract DeployFull is Script {
         sels[24] = ServiceBoardFacet.getPendingRequestCount.selector;
     }
 
-    // ArbiterRegistryFacet — 68 селекторов
+    // ArbiterRegistryFacet — 69 селекторов
     function arbiterRegistryFacetSelectors() public pure returns (bytes4[] memory sels) {
-        sels = new bytes4[](68);
+        sels = new bytes4[](69);
 
         // DAO-режим
         sels[0]  = ArbiterRegistryFacet.activateDAO.selector;
@@ -511,23 +518,40 @@ contract DeployFull is Script {
         // числом клеймов. На живой диамонд приезжает отдельным разрезом
         // апгрейда, не этим скриптом.
         sels[67] = ArbiterRegistryFacet.getMaxClaimsPerArbiter.selector;
+
+        // Зубы приостановки (arbiter-accountability, задача 5, 15 августа
+        // 2026): claimDispute/resignAsArbiter/finalizeVerdict теперь
+        // отказывают приостановленному арбитру. getCleanVerdicts — счётчик
+        // неперевёрнутых финализированных вердиктов, задел под будущую
+        // конвертацию «залог плюс судейский стаж» при включении ДАО. На
+        // живой диамонд приезжает отдельным разрезом апгрейда, не этим
+        // скриптом.
+        sels[68] = ArbiterRegistryFacet.getCleanVerdicts.selector;
     }
 
-    // ArbiterAccountabilityFacet — 6 селекторов (arbiter-accountability,
-    // задача 4, 15 августа 2026). Отдельный фасет, не дописка в
+    // ArbiterAccountabilityFacet — 5 селекторов (arbiter-accountability,
+    // задача 4, 15 августа 2026; шестой, getChiefArbiterAddress, снят задачей
+    // 5 того же дня — см. комментарий у sels[4] ниже). Отдельный фасет, не дописка в
     // ArbiterRegistryFacet: тот занимал 21 227 из 24 576 байт (86.4%),
     // запаса не хватало. Делит тот же ArbiterRegistryStorage namespace —
     // переноса данных нет. Сегодня реализована только приостановка — быстрая,
     // обратимая, протухающая сама за SUSPENSION_WINDOW (72 часа), если её не
     // сняли раньше.
     function arbiterAccountabilityFacetSelectors() public pure returns (bytes4[] memory sels) {
-        sels = new bytes4[](6);
+        sels = new bytes4[](5);
         sels[0] = ArbiterAccountabilityFacet.suspendArbiter.selector;
         sels[1] = ArbiterAccountabilityFacet.liftSuspension.selector;
         sels[2] = ArbiterAccountabilityFacet.isSuspended.selector;
         sels[3] = ArbiterAccountabilityFacet.getSuspendedUntil.selector;
         sels[4] = ArbiterAccountabilityFacet.getSuspensionWindow.selector;
-        sels[5] = ArbiterAccountabilityFacet.getChiefArbiterAddress.selector;
+        // getChiefArbiterAddress СНЯТА (задача 5, добавление 2, 15 августа
+        // 2026): дублировала ArbiterRegistryFacet.getChiefArbiter() — через
+        // прокси-даймонд оба селектора шли на один и тот же адрес, а
+        // обоснование «фронту не дёргать второй фасет» было ошибкой автора
+        // плана. Настоящая причина её появления — лёгкий тестовый стенд с
+        // раздельно развёрнутыми фасетами; test/ArbiterSuspension.t.sol теперь
+        // сверяет смещение слота chiefArbiter прямым vm.load, не заводя ради
+        // теста постоянный публичный селектор.
     }
 
     // DealMetadataFacet — 1 селектор

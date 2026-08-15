@@ -100,10 +100,4 @@ contract ArbiterAccountabilityFacet {
     function getSuspensionWindow() external pure returns (uint256) {
         return SUSPENSION_WINDOW;
     }
-
-    /// Нужен тестам, чтобы сверить смещение слота chiefArbiter, и фронту —
-    /// чтобы показать, кто директор, не дёргая второй фасет.
-    function getChiefArbiterAddress() external view returns (address) {
-        return ArbiterRegistryStorage.data().chiefArbiter;
-    }
 }
