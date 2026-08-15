@@ -8,10 +8,10 @@ pragma solidity ^0.8.20;
 // см. test/StorageLayout.t.sol.
 //
 // Регенерирован 2026-07-25 из живых ABI (`forge inspect <Facet> methodIdentifiers`)
-// после ~40 инкрементальных апгрейдов, которые этот файл не отслеживал. Все 181
-// селектор 11 фасетов проверены против test/DeployFullSelectors.t.sol — тот тест
+// после ~40 инкрементальных апгрейдов, которые этот файл не отслеживал. Все 187
+// селекторов 12 фасетов проверены против test/DeployFullSelectors.t.sol — тот тест
 // падает, если этот файл и живые ABI разойдутся снова. Число здесь — сумма
-// литералов `new bytes4[](n)` в билдерах ниже; оно уже девятикратно протухало (стояло
+// литералов `new bytes4[](n)` в билдерах ниже; оно уже десятикратно протухало (стояло
 // 148, когда фабрика выросла с 13 до 20; затем 159, до порога и котировки
 // платного вызова арбитра; затем 162 — цифру не поправили в том же коммите,
 // где код вырос до 167, 31 июля 2026; затем 167, когда 9 августа 2026 добавился
@@ -21,8 +21,11 @@ pragma solidity ^0.8.20;
 // провенанс посадки арбитра, задача 1 плана arbiter-accountability; затем 180,
 // когда следом же 15 августа 2026 приехал getChiefBloc — потолок запаса
 // директора, задача 2 того же плана; затем 181, когда в тот же день приехал
-// getMaxClaimsPerArbiter — потолок споров в руках, задача 3 того же плана),
-// поэтому сверяется тем же тестом.
+// getMaxClaimsPerArbiter — потолок споров в руках, задача 3 того же плана;
+// затем 187, когда в тот же день ArbiterRegistryFacet упёрся в 86.4% лимита
+// EIP-170 и приостановка арбитра переехала в двенадцатый фасет,
+// ArbiterAccountabilityFacet — задача 4 того же плана, шесть новых
+// селекторов), поэтому сверяется тем же тестом.
 // Пересчитать, не полагаясь на глаз:
 //   grep -o "new bytes4\[\]([0-9]*)" script/DeployFull.s.sol \
 //     | sed 's/.*(\([0-9]*\))/\1/' | awk '{s+=$1} END {print s}'
@@ -39,7 +42,7 @@ pragma solidity ^0.8.20;
 //                        (applyAsArbiter требует DAO-режим, которого на свежем
 //                        деплое ещё нет, а addArbiter — onlyOwnerOrChief).
 // Все четыре проверяются до единого вызова vm.startBroadcast — дешевле споткнуться
-// сразу, чем после того как скрипт уже задеплоил одиннадцать имплементаций и Diamond.
+// сразу, чем после того как скрипт уже задеплоил двенадцать имплементаций и Diamond.
 
 import "forge-std/Script.sol";
 import "forge-std/console.sol";
@@ -51,6 +54,7 @@ import "../src/AgreementDeployer.sol";
 import "../src/facets/JobBoardFacet.sol";
 import "../src/facets/ServiceBoardFacet.sol";
 import "../src/facets/ArbiterRegistryFacet.sol";
+import "../src/facets/ArbiterAccountabilityFacet.sol";
 import "../src/facets/DealMetadataFacet.sol";
 import "../src/facets/ReputationFacet.sol";
 import "../src/JobReceiptFacet.sol";
@@ -68,7 +72,7 @@ contract DeployFull is Script {
 
         // ── Pre-flight checks — все ДО единого деплоя ────────────────────────
         // Дешевле споткнуться здесь, чем после того как скрипт уже сжёг газ на
-        // одиннадцать имплементаций и сам Diamond.
+        // двенадцать имплементаций и сам Diamond.
 
         // initFactory() ревертит FactoryZeroAddress() на нулевом forwarder-е — та же
         // проверка здесь просто дешевле по месту.
@@ -124,6 +128,7 @@ contract DeployFull is Script {
         JobBoardFacet          jobBoard     = new JobBoardFacet();
         ServiceBoardFacet      serviceBoard = new ServiceBoardFacet();
         ArbiterRegistryFacet   arbiterFacet = new ArbiterRegistryFacet();
+        ArbiterAccountabilityFacet accFacet = new ArbiterAccountabilityFacet();
         DealMetadataFacet      metaFacet    = new DealMetadataFacet();
         JobReceiptFacet        receiptFacet = new JobReceiptFacet();
         ReputationFacet        repFacet     = new ReputationFacet();
@@ -138,6 +143,7 @@ contract DeployFull is Script {
         console.log("JobBoardFacet:        ", address(jobBoard));
         console.log("ServiceBoardFacet:    ", address(serviceBoard));
         console.log("ArbiterRegistryFacet: ", address(arbiterFacet));
+        console.log("ArbiterAccountabilityFacet:", address(accFacet));
         console.log("DealMetadataFacet:    ", address(metaFacet));
         console.log("JobReceiptFacet:      ", address(receiptFacet));
         console.log("ReputationFacet:      ", address(repFacet));
@@ -177,12 +183,14 @@ contract DeployFull is Script {
         );
 
         // ── 5. Добавляем остальные фасеты одним diamondCut ───────────────────
-        // Порядок: JobBoard, ServiceBoard, ArbiterRegistry, DealMetadata,
-        //          JobReceiptFacet, ReputationFacet
+        // Порядок: JobBoard, ServiceBoard, ArbiterRegistry,
+        //          ArbiterAccountability, DealMetadata, JobReceiptFacet,
+        //          ReputationFacet
         IDiamondCut.FacetCut[] memory cuts2 = buildRemainingCuts(
             address(jobBoard),
             address(serviceBoard),
             address(arbiterFacet),
+            address(accFacet),
             address(metaFacet),
             address(receiptFacet),
             address(repFacet)
@@ -251,17 +259,19 @@ contract DeployFull is Script {
         address jobBoardAddr,
         address serviceBoardAddr,
         address arbiterFacetAddr,
+        address accountabilityFacetAddr,
         address metaFacetAddr,
         address receiptFacetAddr,
         address reputationFacetAddr
     ) public pure returns (IDiamondCut.FacetCut[] memory cuts) {
-        cuts = new IDiamondCut.FacetCut[](6);
-        cuts[0] = _cut(jobBoardAddr,         IDiamondCut.FacetCutAction.Add, jobBoardFacetSelectors());
-        cuts[1] = _cut(serviceBoardAddr,     IDiamondCut.FacetCutAction.Add, serviceBoardFacetSelectors());
-        cuts[2] = _cut(arbiterFacetAddr,     IDiamondCut.FacetCutAction.Add, arbiterRegistryFacetSelectors());
-        cuts[3] = _cut(metaFacetAddr,        IDiamondCut.FacetCutAction.Add, dealMetadataFacetSelectors());
-        cuts[4] = _cut(receiptFacetAddr,     IDiamondCut.FacetCutAction.Add, jobReceiptFacetSelectors());
-        cuts[5] = _cut(reputationFacetAddr,  IDiamondCut.FacetCutAction.Add, reputationFacetSelectors());
+        cuts = new IDiamondCut.FacetCut[](7);
+        cuts[0] = _cut(jobBoardAddr,             IDiamondCut.FacetCutAction.Add, jobBoardFacetSelectors());
+        cuts[1] = _cut(serviceBoardAddr,         IDiamondCut.FacetCutAction.Add, serviceBoardFacetSelectors());
+        cuts[2] = _cut(arbiterFacetAddr,         IDiamondCut.FacetCutAction.Add, arbiterRegistryFacetSelectors());
+        cuts[3] = _cut(accountabilityFacetAddr,  IDiamondCut.FacetCutAction.Add, arbiterAccountabilityFacetSelectors());
+        cuts[4] = _cut(metaFacetAddr,            IDiamondCut.FacetCutAction.Add, dealMetadataFacetSelectors());
+        cuts[5] = _cut(receiptFacetAddr,         IDiamondCut.FacetCutAction.Add, jobReceiptFacetSelectors());
+        cuts[6] = _cut(reputationFacetAddr,      IDiamondCut.FacetCutAction.Add, reputationFacetSelectors());
     }
 
     // ── Per-facet selector arrays (ground truth: `forge inspect <Facet> methodIdentifiers`) ──
@@ -501,6 +511,23 @@ contract DeployFull is Script {
         // числом клеймов. На живой диамонд приезжает отдельным разрезом
         // апгрейда, не этим скриптом.
         sels[67] = ArbiterRegistryFacet.getMaxClaimsPerArbiter.selector;
+    }
+
+    // ArbiterAccountabilityFacet — 6 селекторов (arbiter-accountability,
+    // задача 4, 15 августа 2026). Отдельный фасет, не дописка в
+    // ArbiterRegistryFacet: тот занимал 21 227 из 24 576 байт (86.4%),
+    // запаса не хватало. Делит тот же ArbiterRegistryStorage namespace —
+    // переноса данных нет. Сегодня реализована только приостановка — быстрая,
+    // обратимая, протухающая сама за SUSPENSION_WINDOW (72 часа), если её не
+    // сняли раньше.
+    function arbiterAccountabilityFacetSelectors() public pure returns (bytes4[] memory sels) {
+        sels = new bytes4[](6);
+        sels[0] = ArbiterAccountabilityFacet.suspendArbiter.selector;
+        sels[1] = ArbiterAccountabilityFacet.liftSuspension.selector;
+        sels[2] = ArbiterAccountabilityFacet.isSuspended.selector;
+        sels[3] = ArbiterAccountabilityFacet.getSuspendedUntil.selector;
+        sels[4] = ArbiterAccountabilityFacet.getSuspensionWindow.selector;
+        sels[5] = ArbiterAccountabilityFacet.getChiefArbiterAddress.selector;
     }
 
     // DealMetadataFacet — 1 селектор

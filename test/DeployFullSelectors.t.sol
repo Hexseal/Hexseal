@@ -9,6 +9,7 @@ import "../src/FactoryFacet.sol";
 import "../src/facets/JobBoardFacet.sol";
 import "../src/facets/ServiceBoardFacet.sol";
 import "../src/facets/ArbiterRegistryFacet.sol";
+import "../src/facets/ArbiterAccountabilityFacet.sol";
 import "../src/facets/DealMetadataFacet.sol";
 import "../src/facets/ReputationFacet.sol";
 import "../src/JobReceiptFacet.sol";
@@ -49,14 +50,18 @@ import "../src/JobReceiptFacet.sol";
 ///   - `buildInitCuts`/`buildRemainingCuts` wire a correct selector set to the
 ///     wrong `FacetCut.facetAddress`
 ///   - the actual `DiamondProxy` this script would produce does not end up with
-///     exactly 11 facets, exactly 181 routed selectors, and consistent
+///     exactly 12 facets, exactly 187 routed selectors, and consistent
 ///     `facetAddress(sel)` <-> `facets()` routing in both directions
 ///     (177 -> 179, 15 Aug 2026: arbiter-accountability task 1 added
 ///     getSeatedBy/getSeatedCountBy to ArbiterRegistryFacet; 179 -> 180,
 ///     same day: arbiter-accountability task 2 added getChiefBloc to cap
 ///     the chief's bloc below the appeal quorum; 180 -> 181, same day:
 ///     arbiter-accountability task 3 added getMaxClaimsPerArbiter to cap
-///     how many disputes an arbiter can hold open at once)
+///     how many disputes an arbiter can hold open at once; 181 -> 187, same
+///     day: arbiter-accountability task 4 — ArbiterRegistryFacet sat at 86.4%
+///     of the EIP-170 deployed-bytecode limit, so arbiter suspension shipped
+///     as a twelfth facet, ArbiterAccountabilityFacet, sharing the same
+///     ArbiterRegistryStorage namespace — 11 facets -> 12, six new selectors)
 contract DeployFullSelectorsTest is Test {
     DeployFull internal deploy;
 
@@ -73,6 +78,7 @@ contract DeployFullSelectorsTest is Test {
     address constant JOB_BOARD      = address(0x1006);
     address constant SERVICE_BOARD  = address(0x1007);
     address constant ARBITER_FACET  = address(0x1008);
+    address constant ACCOUNTABILITY_FACET = address(0x100C);
     address constant META_FACET     = address(0x1009);
     address constant RECEIPT_FACET  = address(0x100A);
     address constant REPUTATION_FACET = address(0x100B);
@@ -161,6 +167,10 @@ contract DeployFullSelectorsTest is Test {
         _assertSameSelectorSet(deploy.arbiterRegistryFacetSelectors(), _abiSelectors("ArbiterRegistryFacet"), "ArbiterRegistryFacet");
     }
 
+    function testArbiterAccountabilityFacetSelectors() public view {
+        _assertSameSelectorSet(deploy.arbiterAccountabilityFacetSelectors(), _abiSelectors("ArbiterAccountabilityFacet"), "ArbiterAccountabilityFacet");
+    }
+
     function testDealMetadataFacetSelectors() public view {
         _assertSameSelectorSet(deploy.dealMetadataFacetSelectors(), _abiSelectors("DealMetadataFacet"), "DealMetadataFacet");
     }
@@ -186,7 +196,7 @@ contract DeployFullSelectorsTest is Test {
     /// count against ground truth; this test only cares about cross-facet
     /// uniqueness.
     function testNoSelectorCollisionsAcrossFacets() public view {
-        bytes4[][11] memory groups = [
+        bytes4[][12] memory groups = [
             deploy.cutFacetSelectors(),
             deploy.loupeFacetSelectors(),
             deploy.ownershipFacetSelectors(),
@@ -195,6 +205,7 @@ contract DeployFullSelectorsTest is Test {
             deploy.jobBoardFacetSelectors(),
             deploy.serviceBoardFacetSelectors(),
             deploy.arbiterRegistryFacetSelectors(),
+            deploy.arbiterAccountabilityFacetSelectors(),
             deploy.dealMetadataFacetSelectors(),
             deploy.jobReceiptFacetSelectors(),
             deploy.reputationFacetSelectors()
@@ -253,9 +264,9 @@ contract DeployFullSelectorsTest is Test {
 
     function testBuildRemainingCutsMatchesIndividualSelectors() public view {
         IDiamondCut.FacetCut[] memory cuts = deploy.buildRemainingCuts(
-            JOB_BOARD, SERVICE_BOARD, ARBITER_FACET, META_FACET, RECEIPT_FACET, REPUTATION_FACET
+            JOB_BOARD, SERVICE_BOARD, ARBITER_FACET, ACCOUNTABILITY_FACET, META_FACET, RECEIPT_FACET, REPUTATION_FACET
         );
-        assertEq(cuts.length, 6, "buildRemainingCuts: expected 6 FacetCut entries");
+        assertEq(cuts.length, 7, "buildRemainingCuts: expected 7 FacetCut entries");
 
         assertEq(cuts[0].facetAddress, JOB_BOARD);
         _assertSameSelectorSet(cuts[0].functionSelectors, deploy.jobBoardFacetSelectors(), "cuts2[0] JobBoardFacet");
@@ -266,14 +277,17 @@ contract DeployFullSelectorsTest is Test {
         assertEq(cuts[2].facetAddress, ARBITER_FACET);
         _assertSameSelectorSet(cuts[2].functionSelectors, deploy.arbiterRegistryFacetSelectors(), "cuts2[2] ArbiterRegistryFacet");
 
-        assertEq(cuts[3].facetAddress, META_FACET);
-        _assertSameSelectorSet(cuts[3].functionSelectors, deploy.dealMetadataFacetSelectors(), "cuts2[3] DealMetadataFacet");
+        assertEq(cuts[3].facetAddress, ACCOUNTABILITY_FACET);
+        _assertSameSelectorSet(cuts[3].functionSelectors, deploy.arbiterAccountabilityFacetSelectors(), "cuts2[3] ArbiterAccountabilityFacet");
 
-        assertEq(cuts[4].facetAddress, RECEIPT_FACET);
-        _assertSameSelectorSet(cuts[4].functionSelectors, deploy.jobReceiptFacetSelectors(), "cuts2[4] JobReceiptFacet");
+        assertEq(cuts[4].facetAddress, META_FACET);
+        _assertSameSelectorSet(cuts[4].functionSelectors, deploy.dealMetadataFacetSelectors(), "cuts2[4] DealMetadataFacet");
 
-        assertEq(cuts[5].facetAddress, REPUTATION_FACET);
-        _assertSameSelectorSet(cuts[5].functionSelectors, deploy.reputationFacetSelectors(), "cuts2[5] ReputationFacet");
+        assertEq(cuts[5].facetAddress, RECEIPT_FACET);
+        _assertSameSelectorSet(cuts[5].functionSelectors, deploy.jobReceiptFacetSelectors(), "cuts2[5] JobReceiptFacet");
+
+        assertEq(cuts[6].facetAddress, REPUTATION_FACET);
+        _assertSameSelectorSet(cuts[6].functionSelectors, deploy.reputationFacetSelectors(), "cuts2[6] ReputationFacet");
 
         for (uint256 i = 0; i < cuts.length; i++) {
             assertTrue(cuts[i].action == IDiamondCut.FacetCutAction.Add, "cuts2: all entries must be Add");
@@ -290,9 +304,9 @@ contract DeployFullSelectorsTest is Test {
     // ServiceBoard selectors) and none of them exercises DeployFull's actual
     // buildInitCuts/buildRemainingCuts output end to end.
     //
-    // This deploys all eleven real facets, builds the diamond exactly the way
+    // This deploys all twelve real facets, builds the diamond exactly the way
     // run() does, and asserts the diamond that comes out the other end has
-    // exactly 11 facets, exactly 181 routed selectors, and that
+    // exactly 12 facets, exactly 187 routed selectors, and that
     // facetAddress(sel) and facets() agree with each other in both directions.
     // This is the only check in the suite that would catch a selector set
     // wired to the wrong facet address — diamondCut() itself does not validate
@@ -306,6 +320,7 @@ contract DeployFullSelectorsTest is Test {
         JobBoardFacet          jobBoard     = new JobBoardFacet();
         ServiceBoardFacet      serviceBoard = new ServiceBoardFacet();
         ArbiterRegistryFacet   arbiterFacet = new ArbiterRegistryFacet();
+        ArbiterAccountabilityFacet accFacet = new ArbiterAccountabilityFacet();
         DealMetadataFacet      metaFacet    = new DealMetadataFacet();
         JobReceiptFacet        receiptFacet = new JobReceiptFacet();
         ReputationFacet        repFacet     = new ReputationFacet();
@@ -316,13 +331,13 @@ contract DeployFullSelectorsTest is Test {
         DiamondProxy diamond = new DiamondProxy(address(this), initCuts, address(0), "");
 
         IDiamondCut.FacetCut[] memory cuts2 = deploy.buildRemainingCuts(
-            address(jobBoard), address(serviceBoard), address(arbiterFacet),
+            address(jobBoard), address(serviceBoard), address(arbiterFacet), address(accFacet),
             address(metaFacet), address(receiptFacet), address(repFacet)
         );
         IDiamondCut(address(diamond)).diamondCut(cuts2, address(0), "");
 
         IDiamondLoupe.Facet[] memory facetsList = IDiamondLoupe(address(diamond)).facets();
-        assertEq(facetsList.length, 11, "diamond should end up with exactly 11 distinct facet addresses");
+        assertEq(facetsList.length, 12, "diamond should end up with exactly 12 distinct facet addresses");
 
         uint256 totalRouted;
         for (uint256 i = 0; i < facetsList.length; i++) {
@@ -336,12 +351,12 @@ contract DeployFullSelectorsTest is Test {
                 );
             }
         }
-        assertEq(totalRouted, 181, "diamond should route exactly 181 selectors total");
+        assertEq(totalRouted, 187, "diamond should route exactly 187 selectors total");
 
         // Reverse direction: facetAddresses() must report exactly the same set
         // of addresses facets() reported them under.
         address[] memory addrs = IDiamondLoupe(address(diamond)).facetAddresses();
-        assertEq(addrs.length, 11, "facetAddresses() should also report exactly 11 facets");
+        assertEq(addrs.length, 12, "facetAddresses() should also report exactly 12 facets");
         for (uint256 i = 0; i < addrs.length; i++) {
             bool found = false;
             for (uint256 j = 0; j < facetsList.length; j++) {

@@ -209,6 +209,11 @@ library ArbiterRegistryStorage {
         /// инкрементом при посадке и декрементом при любом уходе — иначе
         /// потолок запаса директора обходится циклом «посадил-снял».
         mapping(address => uint256) seatedCountBy;
+
+        /// До какого момента арбитр приостановлен. Ноль — не приостановлен.
+        /// Сравнение всегда строгое: `block.timestamp < suspendedUntil`, — то
+        /// есть на самой границе окно уже отпустило.
+        mapping(address => uint256) suspendedUntil;
     }
 
     function data() internal pure returns (Data storage d) {
