@@ -88,9 +88,11 @@ We will credit you in the fix commit unless you ask us not to.
 - Missing rate limits, missing log rotation, unbounded disk growth and similar
   availability limits **that are already listed in `docs/OPEN-ITEMS.md`**. New ones that
   are not listed there are in scope.
-- Vendored third-party code under `lib/` — report those upstream to OpenZeppelin or
-  Foundry. That directory holds 924 files we did not write and do not call from our own
-  code.
+- Third-party code under `lib/` — report those upstream to OpenZeppelin or
+  Foundry. Since 15 August 2026 that directory is two git submodules rather than 924
+  files committed here, so this repository no longer distributes any of it; the code
+  appears on your disk only after `git submodule update --init --recursive`. Either way
+  we did not write it and do not call it from our own code.
 
   **The recurring false positive, named so you can skip it.** `lib/forge-std/src/StdChains.sol`
   hardcodes default RPC URLs that contain what look like API keys — an Infura key on

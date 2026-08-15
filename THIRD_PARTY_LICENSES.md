@@ -12,7 +12,7 @@ themselves:
 |---|---|---|
 | `src/` | `// SPDX-License-Identifier: BUSL-1.1` | 15 |
 | `script/`, `test/` | `// SPDX-License-Identifier: MIT` | 90 |
-| `lib/` | whatever upstream wrote — untouched | 924 files |
+| `lib/` | whatever upstream wrote — untouched | 0 files in this repository, see below |
 
 ⚠️ The contracts already deployed to Base Sepolia were verified on Basescan **before** the
 `src/` headers changed, so their verified source differs from this repository by exactly
@@ -21,37 +21,59 @@ contracts.
 
 Two rules follow, and both are load-bearing:
 
-- **Do not edit the `SPDX-License-Identifier` header of a vendored file.** `solc` also
+- **Do not edit the `SPDX-License-Identifier` header of an upstream file.** `solc` also
   warns when it is missing, so the rule is a compiler requirement as well as a legal one.
+  Since 15 August 2026 the practical form of the rule is *do not commit anything inside a
+  submodule*: a patched submodule is a local change that no clone of this repository will
+  ever reproduce.
 - **Do not delete the licence texts listed in the "Where the text lives" column.** MIT
   requires the copyright notice to travel with the copies; Apache-2.0 requires the licence
-  text to be included on redistribution. They are in the repository for that reason, not
-  by accident.
+  text to be included on redistribution. They arrive with the submodule checkout, at the
+  paths named below.
 
-## Vendored into the repository (`lib/`, 924 tracked files)
+## Referenced as git submodules (`lib/`, 0 tracked files)
 
-`lib/` holds plain files, not git submodules, so these ship inside every clone and every
-archive of this repository.
+⚠️ **Changed on 15 August 2026.** `lib/` used to hold 924 plain files, which meant every
+clone and every `git archive` of this repository carried a full copy of OpenZeppelin and
+forge-std — including the two AGPL-3.0 trees listed further down. It is now two git
+submodules, so this repository distributes **no third-party source at all**; it records
+two commit ids, and `git submodule update --init --recursive` fetches the code from
+upstream on the reader's own machine.
 
-| Path | What | Version | Licence | Where the text lives |
+| Path | What | Pinned at | Licence | Where the text lives |
 |---|---|---|---|---|
-| `lib/openzeppelin-contracts/` | OpenZeppelin Contracts | 5.4.0 | MIT | `lib/openzeppelin-contracts/LICENSE` |
-| `lib/forge-std/` | Forge Standard Library | 1.10.0 | MIT **OR** Apache-2.0, at your option | `lib/forge-std/LICENSE-MIT`, `lib/forge-std/LICENSE-APACHE` |
+| `lib/openzeppelin-contracts/` | OpenZeppelin Contracts | `e8745a6a` (2025-08-12) | MIT | `lib/openzeppelin-contracts/LICENSE` |
+| `lib/forge-std/` | Forge Standard Library | `0c71116a` (2025-08-12) | MIT **OR** Apache-2.0, at your option | `lib/forge-std/LICENSE-MIT`, `lib/forge-std/LICENSE-APACHE` |
+
+⚠️ **Both pins are `master` commits, not release tags** — measured, not assumed: the
+working trees were diffed against every upstream tag and against upstream history, and
+they match those two commits with zero differences. OpenZeppelin's own `package.json`
+says `5.4.0`, and this document said so too until 15 August 2026, but the code sits
+*after* the v5.4.0 tag: it carries the July 2025 audit PDF and CHANGELOG entries that
+the tag does not. forge-std likewise sits between v1.10.0 (31 July 2025) and v1.11.0.
+Anyone answering "which version of OpenZeppelin?" for an audit should quote the commit
+id, not the version string.
 
 ### Nested inside OpenZeppelin's own tree
 
-OpenZeppelin vendors its own dependencies, and two of them are **AGPL-3.0**. They are
+OpenZeppelin has its own submodules, and two of them are **AGPL-3.0**. They are
 OpenZeppelin's test and symbolic-execution helpers. Nothing in `src/`, `test/` or `script/`
 imports them — checked, zero references — and they are not on any build path of this
-project. They are listed here so that a reviewer who greps the tree and finds AGPL text
-knows exactly what it is and why it is harmless.
+project. They are listed here so that a reviewer who greps a fully-initialised working tree
+and finds AGPL text knows exactly what it is and why it is harmless.
 
-| Path | What | Licence | Where the text lives |
-|---|---|---|---|
-| `lib/openzeppelin-contracts/lib/forge-std/` | Forge Standard Library (OZ's copy) | MIT OR Apache-2.0 | `…/lib/forge-std/LICENSE-MIT`, `…/LICENSE-APACHE` |
-| `lib/openzeppelin-contracts/lib/erc4626-tests/` | ERC-4626 property tests | **AGPL-3.0** | `lib/openzeppelin-contracts/lib/erc4626-tests/LICENSE` |
-| `lib/openzeppelin-contracts/lib/halmos-cheatcodes/` | Halmos cheatcodes | **AGPL-3.0** | `lib/openzeppelin-contracts/lib/halmos-cheatcodes/LICENSE` |
-| `lib/openzeppelin-contracts/contracts/vendor/compound/` | Compound interfaces | BSD-3-Clause | `lib/openzeppelin-contracts/contracts/vendor/compound/LICENSE` |
+They are initialised deliberately rather than skipped, and the reason is reproducibility,
+not necessity: `forge` builds its remapping list from whatever sits under `lib/`, and the
+remappings are part of the compiler settings that get hashed into contract metadata. Drop
+these three and the metadata hash of every compiled contract shifts, which would break a
+byte-for-byte comparison against what is already verified on Basescan.
+
+| Path | What | Pinned at | Licence | Where the text lives |
+|---|---|---|---|---|
+| `lib/openzeppelin-contracts/lib/forge-std/` | Forge Standard Library (OZ's copy) | `3b20d60d` (v1.9.6) | MIT OR Apache-2.0 | `…/lib/forge-std/LICENSE-MIT`, `…/LICENSE-APACHE` |
+| `lib/openzeppelin-contracts/lib/erc4626-tests/` | ERC-4626 property tests | `232ff9ba` (v0.1.1) | **AGPL-3.0** | `lib/openzeppelin-contracts/lib/erc4626-tests/LICENSE` |
+| `lib/openzeppelin-contracts/lib/halmos-cheatcodes/` | Halmos cheatcodes | `7328abe1` | **AGPL-3.0** | `lib/openzeppelin-contracts/lib/halmos-cheatcodes/LICENSE` |
+| `lib/openzeppelin-contracts/contracts/vendor/compound/` | Compound interfaces | — | BSD-3-Clause | `lib/openzeppelin-contracts/contracts/vendor/compound/LICENSE` |
 
 ## What `src/` actually imports
 

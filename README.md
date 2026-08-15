@@ -112,8 +112,14 @@ Windows are constants in `src/Agreement.sol:276-279`; the dispute fee (3 %, capp
 **Prerequisites:** [Foundry](https://book.getfoundry.sh/getting-started/installation), Node.js 22+ (what CI and both Dockerfiles use), a Base Sepolia wallet with test ETH, and test USDC from [faucet.circle.com](https://faucet.circle.com).
 
 ```bash
-git clone https://github.com/Hexseal/Hexseal.git
+# --recursive is required: lib/ is two git submodules (OpenZeppelin, forge-std),
+# and OpenZeppelin has three of its own. Without it, forge stops at the first
+# import with "file not found: @openzeppelin/contracts/…".
+git clone --recursive https://github.com/Hexseal/Hexseal.git
 cd Hexseal
+
+# Already cloned without it? This fixes it:
+#   git submodule update --init --recursive
 
 # Contracts
 forge build
@@ -286,8 +292,9 @@ See [`SECURITY.md`](SECURITY.md). Reports go through GitHub's **private vulnerab
   corrected.
 
 All 15 files in `src/` carry `// SPDX-License-Identifier: BUSL-1.1`. Nothing
-else does: `script/` and `test/` stay MIT, and the vendored third-party code
-under `lib/` (OpenZeppelin, forge-std) keeps its own MIT / Apache-2.0 terms and
+else does: `script/` and `test/` stay MIT, and the third-party code under `lib/`
+(OpenZeppelin, forge-std — git submodules since 15 August 2026, so this
+repository ships none of it) keeps its own MIT / Apache-2.0 terms and
 is not covered by the above — see
 [`THIRD_PARTY_LICENSES.md`](THIRD_PARTY_LICENSES.md).
 

@@ -20,6 +20,10 @@ You need [Foundry](https://getfoundry.sh) and Node.js 22 or newer. CI runs Node 
 is what both Dockerfiles use.
 
 ```bash
+# lib/ is two git submodules (OpenZeppelin, forge-std), and OpenZeppelin has three
+# of its own. Skip this and forge stops at the first import.
+git submodule update --init --recursive
+
 forge build
 
 cd relayer   && npm ci                       # FIRST — see below
@@ -85,7 +89,7 @@ the pull request and say why:
 
 | Suite | Expected |
 |---|---|
-| `forge test` | **600 passing** |
+| `forge test` | **669 passing** |
 | `relayer && npm test` | **44 files, 955 tests** |
 | `frontend && npm test` | **144 files, 2558 tests** |
 | `frontend && npm run build` | builds |
@@ -97,9 +101,9 @@ prerender and shows up in neither `next dev` nor `tsc`. It has broken a branch h
 `relayer/e2e.mjs` talks to the live Base Sepolia deployment and spends real test USDC.
 It is deliberately not part of `npm test` and must never be added to CI.
 
-## The five gates
+## The six gates
 
-These are shell scripts, they run in CI, and all five must be green:
+These are shell scripts, they run in CI, and all six must be green:
 
 | Gate | What it catches |
 |---|---|
@@ -108,6 +112,7 @@ These are shell scripts, they run in CI, and all five must be green:
 | `script/check-agreement-layout.sh` | the same append-only rule for `Agreement`, whose EIP-1167 clones all share the implementation's layout |
 | `script/check-gasless-sender.sh` | `msg.sender` read on a meta-transaction path, where it is the forwarder's address and not a person |
 | `script/check-appeal-window.sh` | the relayer's copies of the appeal windows drifting away from the contract's |
+| `script/check-submodule-pins.sh` | `foundry.lock` naming a different dependency commit than the git submodule that actually gets built |
 
 Run them from the repository root:
 
@@ -157,7 +162,8 @@ through a real forwarder.
   "added tests". Zero failures is not a pass; it means the lock is not wired up.
 - **Do not edit `src/` licence headers.** They are Solidity `SPDX-License-Identifier`
   lines and are load-bearing; see [`THIRD_PARTY_LICENSES.md`](THIRD_PARTY_LICENSES.md).
-  The same goes double for anything under `lib/`, which is vendored third-party code.
+  The same goes double for anything under `lib/`: those are git submodules, and a commit
+  inside one is a local change no other clone will ever reproduce.
 - **Commit messages** in this repository are Russian and follow
   `type(область): что изменилось`. English is accepted from contributors.
 
