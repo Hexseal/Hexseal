@@ -400,6 +400,12 @@ contract ArbiterRegistryFacet {
     /// прообраз можно показать, у нуля нет.
     error ZeroDigest();
 
+    // ── Потолок запаса директора (arbiter-accountability, задача 2) ──
+    /// Директор не может собрать блок размером с кворум апелляции: иначе его
+    /// ставленники решают исход любой апелляции, а после передачи сноса
+    /// голосованию — и исход любого сноса, включая его собственный.
+    error ChiefBlocWouldReachQuorum(uint256 bloc, uint256 quorum);
+
     // -------- MODIFIERS --------
 
     modifier onlyOwner() {
@@ -512,6 +518,17 @@ contract ArbiterRegistryFacet {
     function addArbiter(address arbiter) external onlyOwnerOrChief {
         ArbiterRegistryStorage.Data storage d = ArbiterRegistryStorage.data();
         if (d.isArbiter[arbiter]) revert AlreadyArbiter();
+
+        // Потолок касается только директора. Владелец не ограничен: он и есть
+        // тот, кто решает состав, и ограничивать его этим правилом означало бы
+        // ограничить его же способность разбавить блок директора.
+        if (msg.sender != OwnershipLib.contractOwner()) {
+            uint256 blocAfter = _chiefBloc(d) + 1;
+            if (blocAfter >= APPEAL_MIN_VOTES) {
+                revert ChiefBlocWouldReachQuorum(blocAfter, APPEAL_MIN_VOTES);
+            }
+        }
+
         d.isArbiter[arbiter] = true;
         d.arbiterList.push(arbiter);
 
@@ -1043,6 +1060,18 @@ contract ArbiterRegistryFacet {
             d.seatedCountBy[seater]--;
         }
         delete d.seatedBy[arbiterAddr];
+    }
+
+    /// Блок директора = арбитры его посадки, сидящие сейчас, ПЛЮС он сам, если
+    /// он арбитр. Второе слагаемое обязательно: setChiefArbiter не запрещает
+    /// директору быть арбитром, и двое его ставленников плюс он сам — это уже
+    /// три голоса, то есть кворум.
+    function _chiefBloc(ArbiterRegistryStorage.Data storage d) private view returns (uint256) {
+        address chief = d.chiefArbiter;
+        if (chief == address(0)) return 0;
+        uint256 bloc = d.seatedCountBy[chief];
+        if (d.isArbiter[chief]) bloc += 1;
+        return bloc;
     }
 
     /// @notice Общий счётчик судейских ошибок для overturnVerdict и notifyArbiterTimeout.
@@ -1756,5 +1785,13 @@ contract ArbiterRegistryFacet {
     /// @notice Сколько арбитров этой посадки сидят прямо сейчас.
     function getSeatedCountBy(address seater) external view returns (uint256) {
         return ArbiterRegistryStorage.data().seatedCountBy[seater];
+    }
+
+    /// @notice Текущий блок директора: сколько голосов на апелляции достались
+    /// бы ему, если бы все посаженные им арбитры и он сам (если он тоже
+    /// арбитр) проголосовали заодно. Кворум апелляции — APPEAL_MIN_VOTES;
+    /// addArbiter не даёт этому числу дорасти до кворума для посадок директора.
+    function getChiefBloc() external view returns (uint256) {
+        return _chiefBloc(ArbiterRegistryStorage.data());
     }
 }

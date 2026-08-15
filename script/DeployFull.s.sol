@@ -8,17 +8,19 @@ pragma solidity ^0.8.20;
 // см. test/StorageLayout.t.sol.
 //
 // Регенерирован 2026-07-25 из живых ABI (`forge inspect <Facet> methodIdentifiers`)
-// после ~40 инкрементальных апгрейдов, которые этот файл не отслеживал. Все 179
+// после ~40 инкрементальных апгрейдов, которые этот файл не отслеживал. Все 180
 // селекторов 11 фасетов проверены против test/DeployFullSelectors.t.sol — тот тест
 // падает, если этот файл и живые ABI разойдутся снова. Число здесь — сумма
-// литералов `new bytes4[](n)` в билдерах ниже; оно уже семикратно протухало (стояло
+// литералов `new bytes4[](n)` в билдерах ниже; оно уже восьмикратно протухало (стояло
 // 148, когда фабрика выросла с 13 до 20; затем 159, до порога и котировки
 // платного вызова арбитра; затем 162 — цифру не поправили в том же коммите,
 // где код вырос до 167, 31 июля 2026; затем 167, когда 9 августа 2026 добавился
 // getArbiterChatKeys; затем 168, когда в тот же день добавился setArbiterChatKey;
 // затем 169, когда 14 августа 2026 приехали восемь функций 4в-2 Выкатки 2;
 // затем 177, когда 15 августа 2026 приехали getSeatedBy/getSeatedCountBy —
-// провенанс посадки арбитра, задача 1 плана arbiter-accountability),
+// провенанс посадки арбитра, задача 1 плана arbiter-accountability; затем 180,
+// когда следом же 15 августа 2026 приехал getChiefBloc — потолок запаса
+// директора, задача 2 того же плана),
 // поэтому сверяется тем же тестом.
 // Пересчитать, не полагаясь на глаз:
 //   grep -o "new bytes4\[\]([0-9]*)" script/DeployFull.s.sol \
@@ -385,9 +387,9 @@ contract DeployFull is Script {
         sels[24] = ServiceBoardFacet.getPendingRequestCount.selector;
     }
 
-    // ArbiterRegistryFacet — 66 селекторов
+    // ArbiterRegistryFacet — 67 селекторов
     function arbiterRegistryFacetSelectors() public pure returns (bytes4[] memory sels) {
-        sels = new bytes4[](66);
+        sels = new bytes4[](67);
 
         // DAO-режим
         sels[0]  = ArbiterRegistryFacet.activateDAO.selector;
@@ -484,6 +486,12 @@ contract DeployFull is Script {
         // скриптом — см. следующую задачу плана.
         sels[64] = ArbiterRegistryFacet.getSeatedBy.selector;
         sels[65] = ArbiterRegistryFacet.getSeatedCountBy.selector;
+
+        // Потолок запаса директора (arbiter-accountability, задача 2,
+        // 15 августа 2026): addArbiter теперь запрещает директору собрать
+        // блок размером с кворум апелляции. На живой диамонд приезжает
+        // отдельным разрезом апгрейда, не этим скриптом.
+        sels[66] = ArbiterRegistryFacet.getChiefBloc.selector;
     }
 
     // DealMetadataFacet — 1 селектор

@@ -95,4 +95,79 @@ contract ArbiterProvenanceTest is Test {
         vm.stopPrank();
         assertEq(facet.getSeatedCountBy(chief), 2, unicode"две посадки — счётчик два");
     }
+
+    // ============================================================
+    //  ПОТОЛОК ЗАПАСА ДИРЕКТОРА
+    //
+    //  Требуемое свойство — не число, а факт: директор НИКОГДА не держит
+    //  кворум апелляции. Кворум APPEAL_MIN_VOTES = 3, значит блок ≤ 2.
+    //  Потолок скорости («не чаще одного в неделю») этого свойства не даёт:
+    //  за год набирается пятьдесят два.
+    // ============================================================
+
+    function test_ChiefSeatsTwoFreely() public {
+        vm.startPrank(chief);
+        facet.addArbiter(seat1);
+        facet.addArbiter(seat2);
+        vm.stopPrank();
+        assertEq(facet.getChiefBloc(), 2, unicode"двоих директор сажает сам");
+    }
+
+    function test_ChiefCannotReachQuorum() public {
+        vm.startPrank(chief);
+        facet.addArbiter(seat1);
+        facet.addArbiter(seat2);
+        vm.expectRevert(
+            abi.encodeWithSelector(ArbiterRegistryFacet.ChiefBlocWouldReachQuorum.selector, 3, 3)
+        );
+        facet.addArbiter(address(0xA3));
+        vm.stopPrank();
+    }
+
+    /// Директор может быть арбитром сам — setChiefArbiter этого не запрещает.
+    /// Тогда двое его ставленников плюс он сам это уже три голоса, то есть
+    /// кворум. Значит он сам обязан считаться в блоке.
+    function test_ChiefCountsHimselfWhenHeIsArbiter() public {
+        facet.addArbiter(chief);            // владелец сажает директора арбитром
+        assertEq(facet.getChiefBloc(), 1, unicode"директор-арбитр — уже единица блока");
+
+        vm.prank(chief);
+        facet.addArbiter(seat1);
+
+        vm.prank(chief);
+        vm.expectRevert(
+            abi.encodeWithSelector(ArbiterRegistryFacet.ChiefBlocWouldReachQuorum.selector, 3, 3)
+        );
+        facet.addArbiter(seat2);
+    }
+
+    /// Владельца потолок не касается: он и есть тот, кто решает.
+    function test_OwnerIsNotCapped() public {
+        facet.addArbiter(seat1);
+        facet.addArbiter(seat2);
+        facet.addArbiter(address(0xA3));
+        facet.addArbiter(address(0xA4));
+        assertEq(facet.getSeatedCountBy(owner), 4, unicode"владелец сажает сколько нужно");
+    }
+
+    /// Ушёл один — освободилось место. Иначе директор, ошибшийся один раз,
+    /// заперт навсегда.
+    ///
+    /// ⚠️ Выход из корпуса здесь через `resignAsArbiter`, а НЕ через
+    /// `removeArbiter`: задача 6 этого же плана удаляет `removeArbiter`
+    /// целиком, и тест против неё пришлось бы выбросить. `resignAsArbiter`
+    /// переживает весь план и зовёт тот же хелпер очистки места.
+    function test_ResignFreesChiefSlot() public {
+        vm.startPrank(chief);
+        facet.addArbiter(seat1);
+        facet.addArbiter(seat2);
+        vm.stopPrank();
+
+        vm.prank(seat1);
+        facet.resignAsArbiter();
+
+        vm.prank(chief);
+        facet.addArbiter(address(0xA3));
+        assertEq(facet.getChiefBloc(), 2, unicode"место освободилось и занято заново");
+    }
 }
