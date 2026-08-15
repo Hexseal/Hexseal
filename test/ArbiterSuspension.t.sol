@@ -198,8 +198,22 @@ contract ArbiterSuspensionTest is Test {
     function test_SuspendedArbiterCannotFinalize() public {
         _makeArbiterReg(arbiter);
         MockAgreementForFinalize agreement = new MockAgreementForFinalize(address(0xC1), address(0xE1));
+        _advanceToSubmittedVerdict(agreement, bytes32(uint256(7)));
 
-        bytes32 salt = bytes32(uint256(7));
+        uint256 until = vm.getBlockTimestamp() + 72 hours;
+        _suspendInReg(arbiter, until);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(ArbiterRegistryFacet.ArbiterSuspendedError.selector, until)
+        );
+        reg.finalizeVerdict(address(agreement));
+    }
+
+    /// commit → roll → claim → submit, общий разгон обоих тестов пути
+    /// finalizeVerdict (третий запрет и счётчик чистых вердиктов) до
+    /// поданного вердикта. Вынесено в круге правок 1 (задача 5, minor):
+    /// семь-восемь строк дословно повторялись в двух тестах.
+    function _advanceToSubmittedVerdict(MockAgreementForFinalize agreement, bytes32 salt) internal {
         vm.prank(arbiter);
         reg.commitDisputeClaim(keccak256(abi.encodePacked(address(agreement), arbiter, salt)));
         vm.roll(block.number + 1);
@@ -209,14 +223,6 @@ contract ArbiterSuspensionTest is Test {
 
         vm.prank(arbiter);
         reg.submitVerdict(address(agreement), true);
-
-        uint256 until = vm.getBlockTimestamp() + 72 hours;
-        _suspendInReg(arbiter, until);
-
-        vm.expectRevert(
-            abi.encodeWithSelector(ArbiterRegistryFacet.ArbiterSuspendedError.selector, until)
-        );
-        reg.finalizeVerdict(address(agreement));
     }
 
     function _makeArbiterReg(address who) internal {
@@ -256,17 +262,7 @@ contract ArbiterSuspensionTest is Test {
     function test_CleanVerdictIncrementsOnFinalize() public {
         _makeArbiterReg(arbiter);
         MockAgreementForFinalize agreement = new MockAgreementForFinalize(address(0xC2), address(0xE2));
-
-        bytes32 salt = bytes32(uint256(11));
-        vm.prank(arbiter);
-        reg.commitDisputeClaim(keccak256(abi.encodePacked(address(agreement), arbiter, salt)));
-        vm.roll(block.number + 1);
-
-        vm.prank(arbiter);
-        reg.claimDispute(address(agreement), salt, bytes32(uint256(1)), bytes32(uint256(2)));
-
-        vm.prank(arbiter);
-        reg.submitVerdict(address(agreement), true);
+        _advanceToSubmittedVerdict(agreement, bytes32(uint256(11)));
 
         assertEq(reg.getCleanVerdicts(arbiter), 0, unicode"до финализации стажа нет");
 
@@ -284,12 +280,39 @@ contract ArbiterSuspensionTest is Test {
     /// Раньше сверялось вызовом acc.getChiefArbiterAddress() — тестового геттера,
     /// снятого в задаче 5 (добавление 2): он дублировал уже существующий
     /// ArbiterRegistryFacet.getChiefArbiter(), а через прокси-даймонд оба
-    /// селектора всё равно идут на один и тот же адрес. Теперь сверяем прямым
-    /// чтением слота — постоянный публичный селектор ради теста не заводим.
+    /// селектора всё равно идут на один и тот же адрес.
+    ///
+    /// ⚠️ Голая запись, БЕЗ сторожа здесь (круг правок 1, задача 5, 15 августа
+    /// 2026). Первая версия читала записанное обратно через `vm.load` того же
+    /// вычисленного слота — тождество записи с самой собой: совпадало бы при
+    /// ЛЮБОМ значении константы `+ 5`, верном или нет, и не могло покраснеть
+    /// никогда. Постоянный публичный геттер заводить не стали (та же причина,
+    /// по которой убрали getChiefArbiterAddress) — вместо него сторож смещения
+    /// вынесен в отдельный поведенческий тест test_ChiefSlotOffsetIsCorrect
+    /// ниже: он доказывает боевым кодом (`onlyOwnerOrChief`), что записанный
+    /// слот — тот самый, а не тождеством.
     function _setChief(ArbiterAccountabilityFacet f, address who) internal {
-        bytes32 slot = bytes32(uint256(ARB_BASE) + 5);
-        vm.store(address(f), slot, bytes32(uint256(uint160(who))));
-        bytes32 raw = vm.load(address(f), slot);
-        assertEq(address(uint160(uint256(raw))), who, unicode"смещение слота chiefArbiter уехало");
+        vm.store(address(f), bytes32(uint256(ARB_BASE) + 5), bytes32(uint256(uint160(who))));
+    }
+
+    /// Поведенческий сторож смещения слота chiefArbiter. Замена мёртвого
+    /// vm.load-тождества (круг правок 1, задача 5, см. докстринг _setChief
+    /// выше): записываем newChief через тот же хелпер, что использует setUp,
+    /// и доказываем ПОВЕДЕНИЕМ, что боевой onlyOwnerOrChief видит именно его —
+    /// вызовом liftSuspension (no-op помимо события, безопасный зонд: ничего
+    /// не портит ни при успехе, ни при ревёрте). Посторонний на том же вызове
+    /// обязан получить NotOwnerOrChief — контроль, что тест вообще что-то
+    /// различает, а не проходит при любом caller'е.
+    function test_ChiefSlotOffsetIsCorrect() public {
+        ArbiterAccountabilityFacet f = new ArbiterAccountabilityFacet();
+        address newChief = address(0xC5);
+        _setChief(f, newChief);
+
+        vm.prank(newChief);
+        f.liftSuspension(arbiter); // не ревертит — прошёл onlyOwnerOrChief боевым чтением слота
+
+        vm.prank(stranger);
+        vm.expectRevert(ArbiterAccountabilityFacet.NotOwnerOrChief.selector);
+        f.liftSuspension(arbiter);
     }
 }
