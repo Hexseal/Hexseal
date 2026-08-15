@@ -154,6 +154,20 @@ contract ArbiterAccountabilityFacet {
     );
     event RemovalProposalWithdrawn(address indexed arbiter, address indexed by);
 
+    /// Стирание предложения В МОМЕНТ реального сноса — отдельно от
+    /// RemovalProposalWithdrawn (тот значит «передумали», этот — «сбылось»,
+    /// круг правок 1, Minor 4, 15 августа 2026). Несёт поля СТЁРТОГО
+    /// предложения (не нового состояния — того уже нет), чтобы «предложили
+    /// за X — снесли за Y» было видно в одной транзакции, без сшивания двух
+    /// логов по адресу арбитра.
+    event RemovalProposalConsumed(
+        address indexed arbiter,
+        Cause   indexed proposedCause,
+        address indexed proposedBy,
+        bytes32         evidenceDigest,
+        uint256         proposedAt
+    );
+
     // -------- MODIFIERS --------
 
     modifier onlyOwnerOrChief() {
@@ -313,6 +327,16 @@ contract ArbiterAccountabilityFacet {
             d.vaultBalance += forfeited;
         }
 
+        // Снимок предложения (если было) ДО clearSeat — тот теперь стирает
+        // removalProposals как часть общей уборки провенанса (круг правок 1,
+        // Important 1, 15 августа 2026: раньше delete стоял только здесь, и
+        // человек, ушедший через resignAsArbiter или снятый автодемоушеном,
+        // уносил с собой живое предложение — hasLiveProposal продолжал бы
+        // отвечать true до двух недель против уже отсутствующего арбитра,
+        // который снять запись о себе не может). Снимок нужен ТОЛЬКО для
+        // события ниже — после clearSeat читать уже нечего.
+        ArbiterRegistryStorage.RemovalProposal memory consumedProposal = d.removalProposals[arbiter];
+
         d.isArbiter[arbiter] = false;
         ArbiterRegistryStorage.clearSeat(d, arbiter);
 
@@ -325,11 +349,24 @@ contract ArbiterAccountabilityFacet {
             }
         }
 
-        // Предложение (если было) переживать снос не должно — иначе оно
-        // висело бы обвинением против уже снятого арбитра.
-        delete d.removalProposals[arbiter];
-
         emit ArbiterRemovedForCause(arbiter, msg.sender, cause, verified, evidenceDigest, forfeited);
+
+        // Minor 4, круг правок 1: отдельное событие с полями СТЁРТОГО
+        // предложения — «предложили за X, снесли за Y» видно в одной
+        // транзакции (оба события лежат в одном логе), без сшивания с
+        // RemovalProposed по адресу арбитра через историю. Молчит, если
+        // предложения не было вовсе (proposedAt == 0) — снос без
+        // предшествующего сигнала директора не обязан ничего сообщать
+        // про предложение, которого не было.
+        if (consumedProposal.proposedAt != 0) {
+            emit RemovalProposalConsumed(
+                arbiter,
+                Cause(consumedProposal.cause),
+                consumedProposal.by,
+                consumedProposal.evidenceDigest,
+                consumedProposal.proposedAt
+            );
+        }
     }
 
     // ⚠️ Сброс XP здесь не делается: ReputationStorage живёт в другом
@@ -348,13 +385,20 @@ contract ArbiterAccountabilityFacet {
     // глупо — отсюда разделение: он кладёт предложение в цепь СВОИМ адресом,
     // владелец соглашается СВОИМ, вызывая обычный removeArbiterForCause.
     //
-    // ⚠️ Связь предложения с исполнением — ТОЛЬКО очистка выше (delete в
-    // removeArbiterForCause). removeArbiterForCause не читает
-    // removalProposals ни для чего: код повода, отпечаток и ссылку на спор
-    // владелец обязан передать заново, своими аргументами. Предложение —
-    // сигнал в ленте, а не аргумент функции сноса; принять его на веру и
-    // исполнить одной кнопкой было бы обратной стороной того же риска, ради
-    // которого право сноса не отдано директору вовсе.
+    // ⚠️ Связь предложения с исполнением — ТОЛЬКО очистка. removeArbiterForCause
+    // не читает removalProposals ни для чего: код повода, отпечаток и ссылку
+    // на спор владелец обязан передать заново, своими аргументами.
+    // Предложение — сигнал в ленте, а не аргумент функции сноса; принять его
+    // на веру и исполнить одной кнопкой было бы обратной стороной того же
+    // риска, ради которого право сноса не отдано директору вовсе.
+    //
+    // Сама очистка (круг правок 1, Important 1, 15 августа 2026) живёт в
+    // ArbiterRegistryStorage.clearSeat — ОДНОЙ точке на все ТРИ двери выхода
+    // из корпуса (removeArbiterForCause, resignAsArbiter, автодемоушен в
+    // _recordArbiterMistake), а не только здесь. Обоснование то же самое,
+    // что и для removeArbiterForCause: предложение не должно пережить
+    // человека, против которого оно висело, — а resignAsArbiter и
+    // автодемоушен снимают ровно так же, как снос по поводу.
     //
     // Предложение обязано проверяться теми же правилами, что и сам снос:
     // если код заверяемый (Collusion/Leak/Other), отпечаток доказательства
@@ -389,8 +433,17 @@ contract ArbiterAccountabilityFacet {
     /// директор оба ходят под onlyOwnerOrChief, и любой из двух вправе снять
     /// запись (та же пара, что вправе её положить).
     function withdrawProposal(address arbiter) external onlyOwnerOrChief {
-        delete ArbiterRegistryStorage.data().removalProposals[arbiter];
-        emit RemovalProposalWithdrawn(arbiter, msg.sender);
+        ArbiterRegistryStorage.Data storage d = ArbiterRegistryStorage.data();
+        // Minor 3, круг правок 1: событие только если запись реально была —
+        // иначе вызов против человека, на которого никто ничего не клал,
+        // оставлял бы в ленте RemovalProposalWithdrawn, читающийся как «против
+        // него что-то было и это отозвали». Лента и есть весь смысл этой
+        // работы, врать ей нельзя даже пустым отзывом.
+        bool existed = d.removalProposals[arbiter].proposedAt != 0;
+        delete d.removalProposals[arbiter];
+        if (existed) {
+            emit RemovalProposalWithdrawn(arbiter, msg.sender);
+        }
     }
 
     // -------- VIEWS --------
@@ -440,17 +493,21 @@ contract ArbiterAccountabilityFacet {
         return block.timestamp < p.proposedAt + PROPOSAL_TTL;
     }
 
-    /// Сырое чтение записи — не смотрит на TTL. Протухшее предложение
-    /// (hasLiveProposal == false) всё ещё читается отсюда, пока его не
-    /// перезаписали новым или не удалили: это архивная запись, а не
-    /// действующая претензия, и вызывающий обязан сам свериться с
-    /// hasLiveProposal, если разница ему важна.
+    /// Чтение записи целиком, включая архивную (протухшую или уже
+    /// исполненную — она читается отсюда, пока не перезаписана новой или не
+    /// удалена). Пятое поле `live` (улучшение, круг правок 1, 15 августа
+    /// 2026) — та же формула, что и в `hasLiveProposal`, здесь же: раньше
+    /// вызывающий был обязан ПОМНИТЬ вызвать `hasLiveProposal` отдельно,
+    /// прочитав докстринг, — защита, держащаяся на том, что человек прочтёт
+    /// комментарий, в этом проекте не защита. Селектор функции от типа
+    /// возврата не зависит, каскад деплоя не тронут.
     function getRemovalProposal(address arbiter)
-        external view returns (uint8 cause, bytes32 evidenceDigest, uint256 proposedAt, address by)
+        external view returns (uint8 cause, bytes32 evidenceDigest, uint256 proposedAt, address by, bool live)
     {
         ArbiterRegistryStorage.RemovalProposal storage p =
             ArbiterRegistryStorage.data().removalProposals[arbiter];
-        return (p.cause, p.evidenceDigest, p.proposedAt, p.by);
+        bool isLive = p.proposedAt != 0 && block.timestamp < p.proposedAt + PROPOSAL_TTL;
+        return (p.cause, p.evidenceDigest, p.proposedAt, p.by, isLive);
     }
 
     function getProposalTTL() external pure returns (uint256) {

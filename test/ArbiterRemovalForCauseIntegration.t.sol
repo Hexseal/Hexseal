@@ -274,4 +274,138 @@ contract ArbiterRemovalForCauseIntegrationTest is Test {
             unicode"назначенный из осиротевшего состояния преемник реально снёс арбитра"
         );
     }
+
+    // ── Круг правок 1 ревью задачи 7 (15 августа 2026) ──
+    //
+    // Important 1: предложение обязано пропадать во ВСЕХ ТРЁХ дверях выхода
+    // из корпуса, не только в removeArbiterForCause. Проверяется здесь, не в
+    // лёгком стенде — оба фасета обязаны делить ОДНО настоящее хранилище, и
+    // resignAsArbiter/автодемоушен обязаны реально исполниться, не быть
+    // симулированы vm.store.
+    //
+    // Important 2: resignAsArbiter обязан отказывать, пока против звонящего
+    // висит живое предложение — иначе предупреждённый читает публичную
+    // запись и уходит сам за одну транзакцию, унося залог целиком.
+
+    /// Свежий арбитр без открытых претензий — чтобы resignAsArbiter не упёрся
+    /// ни во что постороннее (openClaimCount, приостановку), и единственная
+    /// переменная в тесте — предложение.
+    function _addFreshArbiter(address who) internal {
+        ArbiterRegistryFacet(address(diamond)).addArbiter(who);
+    }
+
+    function test_ResignRevertsWhileProposalLive() public {
+        address who = address(0x55);
+        _addFreshArbiter(who);
+        ArbiterAccountabilityFacet(address(diamond)).proposeRemoval(
+            who, ArbiterAccountabilityFacet.Cause.Leak, keccak256("x")
+        );
+
+        vm.prank(who);
+        vm.expectRevert(ArbiterRegistryFacet.HasLiveRemovalProposal.selector);
+        ArbiterRegistryFacet(address(diamond)).resignAsArbiter();
+    }
+
+    /// Граница снизу: секунда до конца TTL — предложение ещё живо, дверь ещё
+    /// заперта. Симметрично suspension'овскому test_SuspensionHoldsUntilTheLastSecond.
+    function test_ResignHoldsUntilTheLastSecondOfProposal() public {
+        address who = address(0x56);
+        _addFreshArbiter(who);
+        ArbiterAccountabilityFacet(address(diamond)).proposeRemoval(
+            who, ArbiterAccountabilityFacet.Cause.Leak, keccak256("x")
+        );
+
+        uint256 ttl = ArbiterAccountabilityFacet(address(diamond)).getProposalTTL();
+        vm.warp(vm.getBlockTimestamp() + ttl - 1);
+
+        vm.prank(who);
+        vm.expectRevert(ArbiterRegistryFacet.HasLiveRemovalProposal.selector);
+        ArbiterRegistryFacet(address(diamond)).resignAsArbiter();
+    }
+
+    /// Граница сверху: ровно TTL — протухло, дверь открыта. Доказывает
+    /// равенство PROPOSAL_TTL_MIRROR настоящему PROPOSAL_TTL ПОВЕДЕНЧЕСКИ —
+    /// вместе с предыдущим тестом это пара «за секунду до / ровно на границе»,
+    /// и рассинхрон констант хотя бы на секунду уронил бы один из двух.
+    function test_ResignSucceedsAfterProposalExpires() public {
+        address who = address(0x57);
+        _addFreshArbiter(who);
+        ArbiterAccountabilityFacet(address(diamond)).proposeRemoval(
+            who, ArbiterAccountabilityFacet.Cause.Leak, keccak256("x")
+        );
+
+        uint256 ttl = ArbiterAccountabilityFacet(address(diamond)).getProposalTTL();
+        vm.warp(vm.getBlockTimestamp() + ttl);
+
+        vm.prank(who);
+        ArbiterRegistryFacet(address(diamond)).resignAsArbiter();
+        assertFalse(ArbiterRegistryFacet(address(diamond)).isRegisteredArbiter(who));
+    }
+
+    function test_ResignSucceedsAfterProposalWithdrawn() public {
+        address who = address(0x58);
+        _addFreshArbiter(who);
+        ArbiterAccountabilityFacet(address(diamond)).proposeRemoval(
+            who, ArbiterAccountabilityFacet.Cause.Leak, keccak256("x")
+        );
+        ArbiterAccountabilityFacet(address(diamond)).withdrawProposal(who);
+
+        vm.prank(who);
+        ArbiterRegistryFacet(address(diamond)).resignAsArbiter();
+        assertFalse(ArbiterRegistryFacet(address(diamond)).isRegisteredArbiter(who));
+    }
+
+    /// Important 1, дверь №2 (resignAsArbiter): предложение обязано исчезнуть
+    /// СОВСЕМ, не просто протухнуть. Протухшую-но-не-стёртую запись отличает
+    /// от стёртой только сырое чтение getRemovalProposal (hasLiveProposal
+    /// отвечает false в обоих случаях) — до правки clearSeat запись пережила
+    /// бы уход и висела бы `proposedAt != 0` вечно против уже отсутствующего
+    /// человека, который снять её сам не может.
+    function test_ResignClearsStaleProposalRecord() public {
+        address who = address(0x59);
+        _addFreshArbiter(who);
+        ArbiterAccountabilityFacet(address(diamond)).proposeRemoval(
+            who, ArbiterAccountabilityFacet.Cause.Leak, keccak256("x")
+        );
+
+        uint256 ttl = ArbiterAccountabilityFacet(address(diamond)).getProposalTTL();
+        vm.warp(vm.getBlockTimestamp() + ttl); // протухло, но пока не стёрто
+
+        (, , uint256 proposedAtBefore, , ) =
+            ArbiterAccountabilityFacet(address(diamond)).getRemovalProposal(who);
+        assertTrue(proposedAtBefore != 0, unicode"сетап: протухшая запись всё ещё физически на месте");
+
+        vm.prank(who);
+        ArbiterRegistryFacet(address(diamond)).resignAsArbiter();
+
+        (, , uint256 proposedAtAfter, , ) =
+            ArbiterAccountabilityFacet(address(diamond)).getRemovalProposal(who);
+        assertEq(proposedAtAfter, 0, unicode"resignAsArbiter обязан стереть запись, не только пережить протухание");
+    }
+
+    /// Important 1, дверь №3 (автодемоушен): три РЕАЛЬНЫХ переворота сносят
+    /// арбитра автоматикой _recordArbiterMistake, минуя removeArbiterForCause
+    /// целиком — и предложение обязано пропасть тем же путём, через clearSeat.
+    function test_AutoDemotionClearsTheProposal() public {
+        ArbiterAccountabilityFacet(address(diamond)).proposeRemoval(
+            arbiter, ArbiterAccountabilityFacet.Cause.Leak, keccak256("x")
+        );
+        assertTrue(
+            ArbiterAccountabilityFacet(address(diamond)).hasLiveProposal(arbiter),
+            unicode"сетап: предложение живо"
+        );
+
+        _disputeAndOverturn(address(0x401), address(0x402));
+        _disputeAndOverturn(address(0x403), address(0x404));
+        _disputeAndOverturn(address(0x405), address(0x406)); // третий — демоушен
+
+        assertFalse(
+            ArbiterRegistryFacet(address(diamond)).isRegisteredArbiter(arbiter),
+            unicode"сетап: автодемоушен сработал"
+        );
+
+        (, , uint256 proposedAtAfter, , ) =
+            ArbiterAccountabilityFacet(address(diamond)).getRemovalProposal(arbiter);
+        assertEq(proposedAtAfter, 0, unicode"автодемоушен обязан стереть предложение той же дорогой, что и снос");
+    }
 }

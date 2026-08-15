@@ -242,8 +242,17 @@ library ArbiterRegistryStorage {
         /// второе перезаписывает первое, и это верно: претензия одна, а не
         /// очередь претензий. Живёт ArbiterAccountabilityFacet.PROPOSAL_TTL,
         /// затем читается как протухшее (hasLiveProposal), но не стирается
-        /// само — стирает либо withdrawProposal, либо успешный
-        /// removeArbiterForCause по тому же арбитру.
+        /// само — стирает либо withdrawProposal, либо ArbiterRegistryStorage.
+        /// clearSeat (круг правок 1, Important 1: ОДНА точка на все ТРИ
+        /// двери выхода из корпуса — resignAsArbiter, автодемоушен и снос по
+        /// поводу, — не только успешный removeArbiterForCause).
+        ///
+        /// resignAsArbiter вдобавок ОТКАЗЫВАЕТ, пока против вызывающего висит
+        /// живое предложение (Important 2, круг правок 1, см.
+        /// HasLiveRemovalProposal ниже) — иначе предупреждённый читает
+        /// публичную запись и уходит сам за одну транзакцию, унося залог
+        /// целиком, и денежная часть наказания обнуляется тем самым сигналом,
+        /// который мы же и опубликовали.
         mapping(address => RemovalProposal) removalProposals;
     }
 
@@ -253,15 +262,27 @@ library ArbiterRegistryStorage {
     }
 
     /// Снимает провенанс и уменьшает счётчик посадившего. Живёт в БИБЛИОТЕКЕ,
-    /// а не в фасете, потому что зовётся из обоих: ArbiterRegistryFacet (уход,
-    /// разжалование) и ArbiterAccountabilityFacet (снос по поводу). Две копии
-    /// разошлись бы при первой же правке.
+    /// а не в фасете, потому что зовётся из ВСЕХ ТРЁХ дверей выхода из
+    /// корпуса: ArbiterRegistryFacet.resignAsArbiter (уход),
+    /// ArbiterRegistryFacet._recordArbiterMistake (автодемоушен) и
+    /// ArbiterAccountabilityFacet.removeArbiterForCause (снос по поводу).
+    /// Три копии разошлись бы при первой же правке.
+    ///
+    /// ⚠️ Стирает и `removalProposals[arbiterAddr]` (найдено ревью, Important
+    /// 1, круг правок 1 задачи 7, 15 августа 2026). До этой правки delete
+    /// стоял ТОЛЬКО в removeArbiterForCause — человек, ушедший через
+    /// resignAsArbiter или снятый автодемоушеном, уносил с собой живое
+    /// предложение: hasLiveProposal продолжал бы отвечать true до двух
+    /// недель против уже отсутствующего арбитра, который снять запись о себе
+    /// не может. Централизация здесь — одна точка на все три двери, а не три
+    /// копии одной и той же строки.
     function clearSeat(Data storage d, address arbiterAddr) internal {
         address seater = d.seatedBy[arbiterAddr];
         if (seater != address(0) && d.seatedCountBy[seater] > 0) {
             d.seatedCountBy[seater]--;
         }
         delete d.seatedBy[arbiterAddr];
+        delete d.removalProposals[arbiterAddr];
     }
 }
 
@@ -475,6 +496,20 @@ contract ArbiterRegistryFacet {
     /// одну транзакцию, а весь денежный контур наказания становится надписью.
     error ArbiterSuspendedError(uint256 until);
 
+    // ── Зубы предложения (arbiter-accountability, задача 7, круг правок 1,
+    // 15 августа 2026, Important 2) ──
+    /// Третий запрет двери резигнации, симметричный ArbiterSuspendedError
+    /// выше — тем же приёмом, но против ДРУГОЙ угрозы. Приостановка не
+    /// годится сюда сама по себе: её окно 72 часа против 14 суток
+    /// предложения, и с одиннадцатых суток дверь снова открыта, даже если
+    /// владелец приостановил в ту же секунду, что предложил. Без отдельного
+    /// запрета обвиняемый читает публичное `RemovalProposed` в цепи и уходит
+    /// сам за одну транзакцию, унося залог целиком (resignAsArbiter
+    /// возвращает бонд без остатка) — единственная материальная санкция
+    /// (форфейт в removeArbiterForCause) обнуляется чтением записи, которую
+    /// мы же и опубликовали.
+    error HasLiveRemovalProposal();
+
     // ── Передача корпуса ДАО (arbiter-accountability, задача 6, 15 августа
     // 2026): дословное решение владельца — «никаких ручных», «человек должен
     // выйти и остаться только даймонд, который пропускает по гейту» ──
@@ -576,6 +611,7 @@ contract ArbiterRegistryFacet {
         address caller = _msgSender();
         ArbiterRegistryStorage.Data storage d = ArbiterRegistryStorage.data();
         _requireNotSuspended(d, caller);
+        _requireNoLiveRemovalProposal(d, caller);
         if (!d.isArbiter[caller]) revert NotAnArbiter();
         if (d.openClaimCount[caller] > 0) revert HasOpenDisputeClaims();
 
@@ -1157,6 +1193,42 @@ contract ArbiterRegistryFacet {
     function _requireNotSuspended(ArbiterRegistryStorage.Data storage d, address who) private view {
         uint256 until = d.suspendedUntil[who];
         if (block.timestamp < until) revert ArbiterSuspendedError(until);
+    }
+
+    /// Зеркало ArbiterAccountabilityFacet.PROPOSAL_TTL (arbiter-accountability,
+    /// задача 7, круг правок 1, Important 2, 15 августа 2026) —
+    /// resignAsArbiter обязан знать срок жизни предложения, не вызывая другой
+    /// фасет (тот же приём, что MISTAKE_THRESHOLD/DAO_THRESHOLD в обратную
+    /// сторону). Равенство доказано ПОВЕДЕНЧЕСКИ — граничные тесты на «14
+    /// суток минус секунда» / «ровно 14 суток» в test/ArbiterSuspension.t.sol
+    /// (test_ResignHoldsUntilTheLastSecondOfProposal /
+    /// test_ResignSucceedsAfterProposalExpires), а не идентичностью через
+    /// геттер: отдельный публичный геттер стоил бы нового селектора ради
+    /// числа, которое больше нигде в этом фасете не читается, а граничный
+    /// тест ловит рассинхрон надёжнее — он падает, если мираж числа хоть на
+    /// секунду разошёлся с настоящим, идентичность же сравнивала бы два
+    /// одинаково неверных числа как совпадающие.
+    uint256 private constant PROPOSAL_TTL_MIRROR = 14 days;
+
+    /// Третий запрет двери резигнации (см. HasLiveRemovalProposal и докстринг
+    /// поля removalProposals). НЕ через suspendArbiter изнутри proposeRemoval
+    /// (был предложен ревьюером, решение владельца — отклонено): приостановка
+    /// морозит уже поданные вердикты арбитра, то есть каждое предложение
+    /// морозило бы деньги честных сторон в его ОТКРЫТЫХ спорах, не имеющих к
+    /// предложению отношения. Предложение слабее сноса и такой цены не стоит —
+    /// точечный запрет здесь и только здесь, ничего постороннего не морозит.
+    ///
+    /// ⚠️ Известное ограничение, не баг: директор может класть предложение
+    /// заново каждые 14 суток и держать чужой залог запертым бесконечно.
+    /// Сегодня это приемлемо — предложения публично приписаны его адресу
+    /// (RemovalProposed индексирует `by`), а заверяемые коды требуют
+    /// отпечатка, то есть безосновательное перевыставление видно в ленте так
+    /// же явно, как само предложение.
+    function _requireNoLiveRemovalProposal(ArbiterRegistryStorage.Data storage d, address who) private view {
+        uint256 proposedAt = d.removalProposals[who].proposedAt;
+        if (proposedAt != 0 && block.timestamp < proposedAt + PROPOSAL_TTL_MIRROR) {
+            revert HasLiveRemovalProposal();
+        }
     }
 
     /// Блок директора = арбитры его посадки, сидящие сейчас, ПЛЮС он сам, если

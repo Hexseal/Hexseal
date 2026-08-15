@@ -397,11 +397,12 @@ contract ArbiterRemovalForCauseTest is Test {
         vm.prank(chief);
         acc.proposeRemoval(arbiter, ArbiterAccountabilityFacet.Cause.Leak, digest);
 
-        (uint8 c, bytes32 dg, uint256 at, address by) = acc.getRemovalProposal(arbiter);
+        (uint8 c, bytes32 dg, uint256 at, address by, bool live) = acc.getRemovalProposal(arbiter);
         assertEq(c, uint8(ArbiterAccountabilityFacet.Cause.Leak));
         assertEq(dg, digest);
         assertEq(at, t0);
         assertEq(by, chief);
+        assertTrue(live, unicode"свежее предложение обязано быть live");
     }
 
     function test_ProposalExpires() public {
@@ -462,7 +463,7 @@ contract ArbiterRemovalForCauseTest is Test {
     /// обоих, не только директора.
     function test_OwnerCanAlsoPropose() public {
         acc.proposeRemoval(arbiter, ArbiterAccountabilityFacet.Cause.Leak, keccak256("x"));
-        (, , , address by) = acc.getRemovalProposal(arbiter);
+        (, , , address by, ) = acc.getRemovalProposal(arbiter);
         assertEq(by, owner);
     }
 
@@ -487,7 +488,7 @@ contract ArbiterRemovalForCauseTest is Test {
         acc.proposeRemoval(arbiter, ArbiterAccountabilityFacet.Cause.Other, keccak256("second"));
         vm.stopPrank();
 
-        (uint8 c, bytes32 dg, , ) = acc.getRemovalProposal(arbiter);
+        (uint8 c, bytes32 dg, , , ) = acc.getRemovalProposal(arbiter);
         assertEq(c, uint8(ArbiterAccountabilityFacet.Cause.Other));
         assertEq(dg, keccak256("second"));
     }
@@ -512,6 +513,87 @@ contract ArbiterRemovalForCauseTest is Test {
         address stranger = address(0xF00D);
         vm.expectRevert(ArbiterAccountabilityFacet.NotAnArbiter.selector);
         acc.proposeRemoval(stranger, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0));
+    }
+
+    /// Minor 5, круг правок 1: ветка ArbiterZeroAddress была объявлена, но ни
+    /// один тест её не проверял — снять строку и ни один тест не покраснел бы,
+    /// потому что следующая же строка ревертит NotAnArbiter (тот же класс, что
+    /// уже ловили в задаче 4 у suspendArbiter, см. test_SuspendZeroAddressReverts
+    /// в test/ArbiterSuspension.t.sol).
+    function test_ProposeRevertsOnZeroAddress() public {
+        vm.expectRevert(ArbiterAccountabilityFacet.ArbiterZeroAddress.selector);
+        acc.proposeRemoval(address(0), ArbiterAccountabilityFacet.Cause.Leak, keccak256("x"));
+    }
+
+    // ============================================================
+    //  КРУГ ПРАВОК 1 РЕВЬЮ ЗАДАЧИ 7 (15 августа 2026)
+    // ============================================================
+
+    /// Minor 3: withdrawProposal на человека, на которого никто ничего не
+    /// клал, не должен оставлять в ленте RemovalProposalWithdrawn — такой лог
+    /// читался бы как «против него что-то было и это отозвали», а лента и
+    /// есть весь смысл этой работы.
+    function test_WithdrawProposalOnStrangerEmitsNothing() public {
+        vm.recordLogs();
+        acc.withdrawProposal(arbiter); // никто ничего не предлагал
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        assertEq(logs.length, 0, unicode"withdraw без предложения не обязан эмитить ничего");
+    }
+
+    /// Симметричная позитивная половина Minor 3: реальное предложение реально
+    /// отзывается событием — правка не превратила withdraw в вечно немой.
+    function test_WithdrawProposalOnExistingEmitsEvent() public {
+        acc.proposeRemoval(arbiter, ArbiterAccountabilityFacet.Cause.Leak, keccak256("x"));
+
+        vm.expectEmit(true, true, true, true, address(acc));
+        emit ArbiterAccountabilityFacet.RemovalProposalWithdrawn(arbiter, owner);
+        acc.withdrawProposal(arbiter);
+    }
+
+    /// Minor 4: снос эмитит RemovalProposalConsumed с полями СТЁРТОЙ записи —
+    /// «предложили за Leak/директором — снесли за OverturnedVerdicts/владельцем»
+    /// видно в одной транзакции, оба события лежат в одном логе.
+    function test_RemovalConsumesTheProposal() public {
+        _setChief(chief);
+        bytes32 digest = keccak256(unicode"докладная");
+        vm.prank(chief);
+        acc.proposeRemoval(arbiter, ArbiterAccountabilityFacet.Cause.Leak, digest);
+        (, , uint256 proposedAt, , ) = acc.getRemovalProposal(arbiter);
+
+        _setStreak(arbiter, 2);
+
+        vm.expectEmit(true, true, true, true, address(acc));
+        emit ArbiterAccountabilityFacet.RemovalProposalConsumed(
+            arbiter, ArbiterAccountabilityFacet.Cause.Leak, chief, digest, proposedAt
+        );
+        acc.removeArbiterForCause(
+            arbiter, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0), address(0)
+        );
+    }
+
+    /// Отрицательная половина Minor 4: снос без предшествующего предложения
+    /// не обязан ничего сообщать про предложение, которого не было — ровно
+    /// один лог (ArbiterRemovedForCause), Consumed молчит.
+    function test_RemovalWithoutProposalEmitsOnlyTheRemovalEvent() public {
+        _setStreak(arbiter, 2);
+        vm.recordLogs();
+        acc.removeArbiterForCause(
+            arbiter, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0), address(0)
+        );
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        assertEq(logs.length, 1, unicode"без предложения — только ArbiterRemovedForCause, Consumed молчит");
+    }
+
+    /// Улучшение: пятое поле `live` в getRemovalProposal согласовано с
+    /// hasLiveProposal на протухшей записи, не только на свежей (свежую уже
+    /// проверяет test_ChiefProposes).
+    function test_GetRemovalProposalLiveFieldFalseAfterExpiry() public {
+        acc.proposeRemoval(arbiter, ArbiterAccountabilityFacet.Cause.Leak, keccak256("x"));
+        vm.warp(vm.getBlockTimestamp() + 14 days);
+
+        (, , , , bool live) = acc.getRemovalProposal(arbiter);
+        assertFalse(live, unicode"протухшая запись — live обязано быть false");
+        assertFalse(acc.hasLiveProposal(arbiter), unicode"согласовано с hasLiveProposal");
     }
 
     // ---------- ХЕЛПЕРЫ ----------
