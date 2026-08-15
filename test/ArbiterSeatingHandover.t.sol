@@ -31,10 +31,29 @@ pragma solidity ^0.8.20;
 // заранее), после — только ТЕКУЩИЙ daoAddress (самомиграция). Владелец,
 // пытающийся назначить адрес после активации, получает NotCurrentDaoAddress.
 //
+// ═══ Круг правок 2 (переревью, 15 августа 2026) — стык C-3×M-9 ═══
+// Починки круга 1 встретились и породили новую ловушку: isDaoActive()
+// включается САМА по заработанному порогу (uniqueActiveUsers >= DAO_THRESHOLD,
+// M-9), в обход activateDAO() и его защиты DaoAddressNotSet (та стоит только
+// ВНУТРИ activateDAO()). Если ДАО включилась заработанным путём при ещё
+// нулевом daoAddress, а храповик setDAOAddress слушал бы просто isDaoActive()
+// (как после круга 1), «звать может только текущий daoAddress» превращалось
+// бы в «звать может только address(0)» — то есть никто и никогда: обе двери
+// осиротели бы необратимо. Починено добавлением `&& d.daoAddress !=
+// address(0)` — храповик защёлкивается только когда преемник уже есть,
+// физически кому передать право.
+//
 // Лёгкий стенд: фасет развёрнут отдельно, диамонда не нужно (тот же приём,
 // что у test/ArbiterProvenance.t.sol). В отличие от ArbiterRemovalForCause.t.sol
-// слоты добывать не пришлось — setDAOAddress/activateDAO/addArbiter/
-// setChiefArbiter существуют как обычные функции этого фасета.
+// слоты добывать не пришлось для setDAOAddress/activateDAO/addArbiter/
+// setChiefArbiter — обычные функции этого фасета. Для заработанного ДАО нужен
+// слот uniqueActiveUsers в ReputationStorage (8) — тот же, что добыт перебором
+// в test/ArbiterRemovalForCause.t.sol (не переоткрывается, тот же метод дал
+// бы то же число). Третий тест круга 2 (связка целиком — снос по поводу
+// заработавший на назначенном преемнике) живёт в
+// test/ArbiterRemovalForCauseIntegration.t.sol: ему нужен removeArbiterForCause,
+// а тот — ArbiterAccountabilityFacet, другой контракт с другим хранилищем в
+// этом лёгком стенде.
 
 import "forge-std/Test.sol";
 import {ArbiterRegistryFacet} from "../src/facets/ArbiterRegistryFacet.sol";
@@ -48,10 +67,22 @@ contract ArbiterSeatingHandoverTest is Test {
     /// (DiamondStorage.POSITION + 4), пересчитан и проверен запуском там же.
     bytes32 constant OWNER_SLOT = 0x178642b411f9f4783b21ef338f3e96db6c1272d763f0b7500ec93464dafb8604;
 
+    /// ReputationStorage.POSITION — см. src/facets/ReputationFacet.sol.
+    bytes32 constant REP_BASE = 0xa32193c5e38bd2de27c8550f156d709eafdc63aaa4290e5e27473f2ffc097400;
+
+    /// uniqueActiveUsers — слот 8 в ReputationStorage.Data, добыт перебором в
+    /// test/ArbiterRemovalForCause.t.sol (круг правок 1, M-9). Семь полей
+    /// перед ним — мэппинги, каждый съедает ровно один слот, упаковки нет.
+    uint256 constant SLOT_UNIQUE_ACTIVE_USERS = 8;
+
     function setUp() public {
         facet = new ArbiterRegistryFacet();
         owner = address(this);
         vm.store(address(facet), OWNER_SLOT, bytes32(uint256(uint160(owner))));
+    }
+
+    function _setUniqueActiveUsers(uint256 n) internal {
+        vm.store(address(facet), bytes32(uint256(REP_BASE) + SLOT_UNIQUE_ACTIVE_USERS), bytes32(n));
     }
 
     function _activateDaoWithSuccessor() internal {
@@ -123,5 +154,37 @@ contract ArbiterSeatingHandoverTest is Test {
         vm.prank(address(0xDA0));
         facet.setDAOAddress(address(0xBEEF));
         assertEq(facet.getDAOAddress(), address(0xBEEF), unicode"текущий daoAddress мигрирует сам себя");
+    }
+
+    // ---------- Круг правок 2: заработанное ДАО при нулевом преемнике ----------
+
+    /// Тест 1 (главный негатив ловушки): ДАО включилась ЗАРАБОТАННЫМ путём —
+    /// activateDAO() не звался ни разу, daoActiveManual остаётся false — а
+    /// daoAddress ещё нулевой. Без `&& d.daoAddress != address(0)` эта же
+    /// проверка потребовала бы msg.sender == address(0), то есть не пустила
+    /// бы никого и никогда: посадка и снос осиротели бы необратимо. С
+    /// починкой владелец обязан суметь назначить первого преемника.
+    function test_SetDaoAddressWorksWhenDaoEarnedButNoSuccessorYet() public {
+        _setUniqueActiveUsers(facet.getDaoThreshold());
+        assertTrue(facet.isDaoActive(), unicode"ДАО активна заработанным путём, без activateDAO()");
+        assertEq(facet.getDAOAddress(), address(0), unicode"сетап: преемника ещё нет");
+
+        facet.setDAOAddress(address(0xDA0));
+
+        assertEq(facet.getDAOAddress(), address(0xDA0), unicode"владелец назначил первого преемника");
+    }
+
+    /// Тест 2: как только преемник назначен, храповик держит как держал —
+    /// владелец больше не может, действующий daoAddress может.
+    function test_SetDaoAddressRatchetsAfterEarnedDaoOnceSuccessorNamed() public {
+        _setUniqueActiveUsers(facet.getDaoThreshold());
+        facet.setDAOAddress(address(0xDA0)); // владелец называет первого преемника
+
+        vm.expectRevert(ArbiterRegistryFacet.NotCurrentDaoAddress.selector);
+        facet.setDAOAddress(address(0xBEEF)); // владелец пытается снова — отказ
+
+        vm.prank(address(0xDA0));
+        facet.setDAOAddress(address(0xBEEF)); // действующий daoAddress мигрирует сам себя
+        assertEq(facet.getDAOAddress(), address(0xBEEF));
     }
 }

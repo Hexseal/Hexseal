@@ -1582,10 +1582,31 @@ contract ArbiterRegistryFacet {
     /// removeArbiterForCause одной лишней транзакцией:
     /// activateDAO() → setDAOAddress(свой_адрес) → снос по ветке
     /// msg.sender == daoAddress.
+    ///
+    /// ⚠️ Храповик защёлкивается только когда `d.daoAddress != address(0)` —
+    /// это НЕ то же самое, что просто `isDaoActive()` (найдено ревью, круг
+    /// правок 2, 15 августа 2026, стык C-3×M-9). isDaoActive() включается САМА
+    /// по заработанному порогу (uniqueActiveUsers >= DAO_THRESHOLD), в обход
+    /// activateDAO() — а значит и в обход его защиты DaoAddressNotSet, которая
+    /// стоит ТОЛЬКО внутри activateDAO(). Если ДАО включилась заработанным
+    /// путём при ещё нулевом daoAddress, а храповик слушал бы один
+    /// isDaoActive(), «звать может только текущий daoAddress» превращалось бы
+    /// в «звать может только address(0)» — то есть никто и никогда: обе
+    /// двери (посадка через SeatingHandedOver и снос через
+    /// removeArbiterForCause, обе завязанные на daoAddress) осиротели бы
+    /// необратимо, единственный выход — замена фасета diamondCut'ом.
+    /// Условие `&& d.daoAddress != address(0)` держит владельца в игре ровно
+    /// до тех пор, пока преемника физически некому передать право.
+    ///
+    /// Правка НЕ в isDaoActive() (соблазн, но нельзя): его же читает
+    /// src/Treasury.sol для выбора пропорции распределения дохода, а казна
+    /// уже развёрнута в цепи и неизменяема — сдвиг момента «ДАО наступила»
+    /// сдвинул бы деньги. Отдельное решение владельца, не побочный эффект
+    /// этой правки.
     function setDAOAddress(address dao) external {
         if (dao == address(0)) revert ArbiterZeroAddress();
         ArbiterRegistryStorage.Data storage d = ArbiterRegistryStorage.data();
-        if (isDaoActive()) {
+        if (isDaoActive() && d.daoAddress != address(0)) {
             if (msg.sender != d.daoAddress) revert NotCurrentDaoAddress();
         } else {
             if (msg.sender != OwnershipLib.contractOwner()) revert NotOwner();

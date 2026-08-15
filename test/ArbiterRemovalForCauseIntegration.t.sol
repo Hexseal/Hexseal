@@ -22,6 +22,16 @@ pragma solidity ^0.8.20;
 // через ArbiterRegistryFacet.getArbiters(), которого в лёгком стенде
 // ArbiterAccountabilityFacet нет — здесь он есть, потому что это настоящий
 // даймонд.
+//
+// Круг правок 2 (переревью, 15 августа 2026, стык C-3×M-9): test_WholeChain...
+// ниже — тест 3 из требования контроллера, «связка целиком». Он и только он
+// доказывает, что выход из ловушки «заработанное ДАО при нулевом преемнике»
+// существует НА ДЕЛЕ: setDAOAddress называет первого преемника ПОСЛЕ того,
+// как ДАО уже активна заработанным путём (не через activateDAO()), и тот же
+// преемник затем реально проводит снос по поводу через removeArbiterForCause.
+// Живёт здесь, а не в лёгком стенде test/ArbiterSeatingHandover.t.sol: ему
+// нужны ОБА фасета на одном хранилище — setDAOAddress (ArbiterRegistryFacet)
+// и removeArbiterForCause (ArbiterAccountabilityFacet).
 
 import "forge-std/Test.sol";
 import "../src/DiamondProxy.sol";
@@ -81,6 +91,13 @@ contract ArbiterRemovalForCauseIntegrationTest is Test {
     uint256 constant DEADLINE = 7;
     string constant TERMS = "test terms";
     bytes32 constant DISPUTE_SALT = bytes32("removal-integration-salt");
+
+    /// ReputationStorage.POSITION — см. src/facets/ReputationFacet.sol.
+    /// uniqueActiveUsers — слот 8, добыт перебором в
+    /// test/ArbiterRemovalForCause.t.sol (круг правок 1, M-9); тот же слот, тот
+    /// же метод, здесь не переоткрывается.
+    bytes32 constant REP_BASE = 0xa32193c5e38bd2de27c8550f156d709eafdc63aaa4290e5e27473f2ffc097400;
+    uint256 constant SLOT_UNIQUE_ACTIVE_USERS = 8;
 
     function setUp() public {
         owner = address(this);
@@ -167,6 +184,10 @@ contract ArbiterRemovalForCauseIntegrationTest is Test {
         ArbiterRegistryFacet(address(diamond)).overturnVerdict(agreementAddr, false);
     }
 
+    function _setUniqueActiveUsers(uint256 n) internal {
+        vm.store(address(diamond), bytes32(uint256(REP_BASE) + SLOT_UNIQUE_ACTIVE_USERS), bytes32(n));
+    }
+
     // ── C-1: достижимость боевым путём ──
 
     /// MISTAKE_THRESHOLD = 2 (MAX_ARBITER_MISTAKES − 1, см. ArbiterAccountabilityFacet).
@@ -215,5 +236,42 @@ contract ArbiterRemovalForCauseIntegrationTest is Test {
         address[] memory list = ArbiterRegistryFacet(address(diamond)).getArbiters();
         assertEq(list.length, 1, unicode"снятый обязан исчезнуть из arbiterList, не только из isArbiter");
         assertEq(list[0], second, unicode"оставшийся арбитр — тот, кого не снимали");
+    }
+
+    // ── Круг правок 2: связка целиком ──
+
+    /// Заработанное ДАО (не через activateDAO()), нулевой преемник → владелец
+    /// НАЗНАЧАЕТ преемника → тот же преемник реально проводит снос по поводу.
+    /// Доказывает, что выход из ловушки «осиротевший корпус» существует на
+    /// деле, а не только по тексту условия в коде: без него (мутация круга 2)
+    /// setDAOAddress отказал бы владельцу тоже, и назначить было бы некому.
+    function test_WholeChainEarnedDaoZeroSuccessorThenRealRemoval() public {
+        _setUniqueActiveUsers(ArbiterRegistryFacet(address(diamond)).getDaoThreshold());
+        assertTrue(
+            ArbiterRegistryFacet(address(diamond)).isDaoActive(),
+            unicode"ДАО активна заработанным путём"
+        );
+        assertEq(
+            ArbiterRegistryFacet(address(diamond)).getDAOAddress(), address(0),
+            unicode"сетап: преемника ещё нет"
+        );
+
+        address dao = address(0xDA0);
+        ArbiterRegistryFacet(address(diamond)).setDAOAddress(dao);
+        assertEq(ArbiterRegistryFacet(address(diamond)).getDAOAddress(), dao);
+
+        _disputeAndOverturn(address(0x301), address(0x302));
+        _disputeAndOverturn(address(0x303), address(0x304));
+        assertTrue(ArbiterRegistryFacet(address(diamond)).isRegisteredArbiter(arbiter));
+
+        vm.prank(dao);
+        ArbiterAccountabilityFacet(address(diamond)).removeArbiterForCause(
+            arbiter, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0), address(0)
+        );
+
+        assertFalse(
+            ArbiterRegistryFacet(address(diamond)).isRegisteredArbiter(arbiter),
+            unicode"назначенный из осиротевшего состояния преемник реально снёс арбитра"
+        );
     }
 }
