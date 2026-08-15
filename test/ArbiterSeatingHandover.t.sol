@@ -211,6 +211,15 @@ contract ArbiterSeatingHandoverTest is Test {
     //  правок 2: передача защёлкивается ТОЛЬКО когда преемник реально
     //  существует. isDaoActive() НЕ ТРОГАЛИ — его читает уже развёрнутая и
     //  неизменяемая src/Treasury.sol для пропорций дохода.
+    //
+    //  ⚠️ ПРАВКА B (16 августа 2026) ЗАБРАЛА ЭТО ПОСЛАБЛЕНИЕ У ОДНОЙ ИЗ ДВУХ
+    //  ДВЕРЕЙ. I-3 применил его к обеим, а верно оно только для addArbiter:
+    //  та про ПОСАДКУ АРБИТРОВ, и пока преемника нет, сажать некому, кроме
+    //  владельца. setChiefArbiter — про РОЛЬ ДИРЕКТОРА, а она упраздняется
+    //  раньше, по одному isDaoActive(): назначенный в промежутке директор
+    //  бессилен, потому что оба модификатора onlyOwnerOrChief его уже не
+    //  видят. Ниже это два теста с ПРОТИВОПОЛОЖНЫМИ ожиданиями — так и должно
+    //  быть, предикаты у дверей разные.
     // ============================================================
 
     function test_AddArbiterStillWorksWhenDaoEarnedButNoSuccessorYet() public {
@@ -226,10 +235,28 @@ contract ArbiterSeatingHandoverTest is Test {
         );
     }
 
-    function test_SetChiefArbiterStillWorksWhenDaoEarnedButNoSuccessorYet() public {
+    /// ⚠️ ЭТА ПОЛОВИНА ПЕРЕВЁРНУТА ПРАВКОЙ B (финальный обзор ветки, 16 августа
+    /// 2026). До неё тест утверждал обратное — что в промежутке директор
+    /// назначается, — и это было ошибкой стыка: setChiefArbiter брала предикат
+    /// ПЕРЕДАЧИ ПОСАДКИ, хотя она про УПРАЗДНЕНИЕ РОЛИ. В промежутке (ДАО
+    /// заработано, преемник ещё не назван) вызов писал слот и слал событие,
+    /// хотя назначенный директор уже бессилен: оба модификатора
+    /// onlyOwnerOrChief читают isDaoActive() и при живом ДАО его не видят.
+    /// getChiefArbiter() честно отдавал адрес, публичный docs/DECENTRALIZATION.md
+    /// говорил, что роли больше нет.
+    ///
+    /// Различитель — test_SetChiefArbiterWorksBeforeDao выше: до включения ДАО
+    /// назначение проходит. Без него этот тест не отличал бы упразднение роли
+    /// от «setChiefArbiter сломалась вообще».
+    function test_SetChiefArbiterRevertsWhenDaoEarnedEvenWithoutSuccessor() public {
         _setUniqueActiveUsers(facet.getDaoThreshold());
+        assertTrue(facet.isDaoActive(), unicode"ДАО активна заработанным путём, без activateDAO()");
+        assertEq(facet.getDAOAddress(), address(0), unicode"сетап: преемника ещё нет — именно тот промежуток");
+
+        vm.expectRevert(ArbiterRegistryFacet.SeatingHandedOver.selector);
         facet.setChiefArbiter(address(0xC4));
-        assertEq(facet.getChiefArbiter(), address(0xC4), unicode"та же половина для роли директора");
+
+        assertEq(facet.getChiefArbiter(), address(0), unicode"слот не тронут: роли нет — и записи нет");
     }
 
     /// Симметричная половина обеих: как только преемник назван, обе двери
