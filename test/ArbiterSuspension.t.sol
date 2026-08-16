@@ -144,7 +144,7 @@ contract ArbiterSuspensionTest is Test, ArbiterTwoFacetBench {
         assertTrue(acc.isSuspended(arbiter), unicode"сетап: снос выставил окно C-1");
 
         vm.prank(chief);
-        vm.expectRevert(ArbiterAccountabilityFacet.RemovalSuspensionIsOwnerOnly.selector);
+        vm.expectRevert(ArbiterAccountabilityFacet.RemovalSuspensionIsRemovalAuthorityOnly.selector);
         acc.liftSuspension(arbiter);
 
         assertTrue(acc.isSuspended(arbiter), unicode"окно на месте — директор его не открыл");
@@ -438,7 +438,7 @@ contract ArbiterSuspensionTest is Test, ArbiterTwoFacetBench {
     /// никогда. Постоянный публичный геттер заводить не стали (та же причина,
     /// по которой убрали getChiefArbiterAddress) — вместо него сторож смещения
     /// вынесен в отдельный поведенческий тест test_ChiefSlotOffsetIsCorrect
-    /// ниже: он доказывает боевым кодом (`onlyOwnerOrChief`), что записанный
+    /// ниже: он доказывает боевым кодом (`_requireOwnerOrChief`), что записанный
     /// слот — тот самый, а не тождеством.
     function _setChief(ArbiterAccountabilityFacet f, address who) internal {
         vm.store(address(f), bytes32(uint256(ARB_BASE) + 5), bytes32(uint256(uint160(who))));
@@ -447,18 +447,27 @@ contract ArbiterSuspensionTest is Test, ArbiterTwoFacetBench {
     /// Поведенческий сторож смещения слота chiefArbiter. Замена мёртвого
     /// vm.load-тождества (круг правок 1, задача 5, см. докстринг _setChief
     /// выше): записываем newChief через тот же хелпер, что использует setUp,
-    /// и доказываем ПОВЕДЕНИЕМ, что боевой onlyOwnerOrChief видит именно его —
+    /// и доказываем ПОВЕДЕНИЕМ, что боевое чтение слота видит именно его —
     /// вызовом liftSuspension (no-op помимо события, безопасный зонд: ничего
     /// не портит ни при успехе, ни при ревёрте). Посторонний на том же вызове
     /// обязан получить NotOwnerOrChief — контроль, что тест вообще что-то
     /// различает, а не проходит при любом caller'е.
+    ///
+    /// ⚠️ ЗОНД ХОДИТ НЕ ПОД МОДИФИКАТОРОМ (уборка 7а, п. 2.7). Здесь и ниже
+    /// было написано «прошёл onlyOwnerOrChief» — с 16 августа это неправда:
+    /// задача 2 сняла модификатор с `liftSuspension` целиком. Тело проверки то
+    /// же самое (`_requireOwnerOrChief`, из которого модификатор и состоит), но
+    /// зовётся оно теперь ЯВНО и только в одной из двух веток — той, где
+    /// `removedAt == 0`. На свежем фасете он и есть ноль, поэтому зонд попадает
+    /// именно в неё и остаётся годным. Стоило бы кому-нибудь завести здесь
+    /// ненулевой `removedAt` — и зонд молча проверял бы уже другую ветку.
     function test_ChiefSlotOffsetIsCorrect() public {
         ArbiterAccountabilityFacet f = new ArbiterAccountabilityFacet();
         address newChief = address(0xC5);
         _setChief(f, newChief);
 
         vm.prank(newChief);
-        f.liftSuspension(arbiter); // не ревертит — прошёл onlyOwnerOrChief боевым чтением слота
+        f.liftSuspension(arbiter); // не ревертит — прошёл _requireOwnerOrChief боевым чтением слота
 
         vm.prank(stranger);
         vm.expectRevert(ArbiterAccountabilityFacet.NotOwnerOrChief.selector);

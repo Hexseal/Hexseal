@@ -543,7 +543,7 @@ contract ArbiterRemovalForCauseIntegrationTest is Test {
         );
 
         vm.prank(chief);
-        vm.expectRevert(ArbiterAccountabilityFacet.RemovalSuspensionIsOwnerOnly.selector);
+        vm.expectRevert(ArbiterAccountabilityFacet.RemovalSuspensionIsRemovalAuthorityOnly.selector);
         ArbiterAccountabilityFacet(address(diamond)).liftSuspension(arbiter);
 
         assertTrue(
@@ -700,7 +700,7 @@ contract ArbiterRemovalForCauseIntegrationTest is Test {
         address dao = address(0xDA0);
         _handOverRemovalAndRemove(dao);
 
-        vm.expectRevert(ArbiterAccountabilityFacet.RemovalSuspensionIsOwnerOnly.selector);
+        vm.expectRevert(ArbiterAccountabilityFacet.RemovalSuspensionIsRemovalAuthorityOnly.selector);
         ArbiterAccountabilityFacet(address(diamond)).liftSuspension(arbiter);
 
         assertTrue(
