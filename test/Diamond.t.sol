@@ -878,6 +878,56 @@ contract DiamondTest is Test {
         assertEq(ArbiterAccountabilityFacet(address(diamond)).getArbiterBond(candidate), ARBITER_BOND);
     }
 
+    /// ⚠️ ПОСЫЛКА ПУБЛИЧНОГО ДОКУМЕНТА (Н-1 ревью задачи 6, 16 августа 2026).
+    ///
+    /// docs/DECENTRALIZATION.md утверждает, что сегодня в корпус арбитров
+    /// нельзя попасть иначе как рукой владельца: самозапись заперта до
+    /// включения ДАО. Весь абзац стоит на ОДНОЙ строке кода —
+    /// `if (!isDaoActive()) revert DAONotActive();` первой в applyAsArbiter.
+    ///
+    /// До этого теста строку не сторожило НИЧТО: её снятие давало 0 красных из
+    /// 852, а слово `DAONotActive` во всём test/ встречалось ровно один раз, и
+    /// то внутри докстринга как текст. Утверждение документа могло стать
+    /// ложным молча — а на нём держится и вся сегодняшняя недостижимость
+    /// арбитражных пунктов OPEN-ITEMS («арбитр один, и это владелец»).
+    ///
+    /// Кандидат здесь годен ПО ВСЕМ ОСТАЛЬНЫМ признакам — XP, чистая серия,
+    /// одобренный залог, — то есть без ДАО-гейта вызов ПРОШЁЛ БЫ. Это и делает
+    /// замер честным: снятие строки не переводит падение на соседнюю причину,
+    /// а убирает падение вовсе, и expectRevert краснеет сам.
+    ///
+    /// Зеркало сцены — testApplyAsArbiterSucceedsWithBothConditions выше: тот
+    /// же кандидат, та же подготовка, ДАО включена, самозапись проходит. Пара
+    /// зажимает гейт с двух сторон.
+    function testApplyAsArbiterRevertsWhileTheDaoSleeps() public {
+        // ДАО НЕ включаем — ни адресом, ни флагом, ни порогом.
+        assertFalse(
+            ArbiterRegistryFacet(address(diamond)).isDaoActive(),
+            unicode"сетап: ДАО спит"
+        );
+
+        address candidate = address(uint160(41100));
+        _growXP(candidate, true, 3000, 41600);
+        assertGe(ReputationFacet(address(diamond)).getXP(candidate), 3000);
+        assertGe(ReputationFacet(address(diamond)).getCleanStreak(candidate), 10);
+
+        vm.prank(candidate);
+        usdc.approve(address(diamond), ARBITER_BOND);
+
+        vm.prank(candidate);
+        vm.expectRevert(ArbiterRegistryFacet.DAONotActive.selector);
+        ArbiterRegistryFacet(address(diamond)).applyAsArbiter();
+
+        assertFalse(
+            ArbiterRegistryFacet(address(diamond)).isRegisteredArbiter(candidate),
+            unicode"в корпус он не попал"
+        );
+        assertEq(
+            ArbiterAccountabilityFacet(address(diamond)).getArbiterBond(candidate), 0,
+            unicode"и залога с него не взяли"
+        );
+    }
+
     function testArbiterDemotedAfterThreeOverturns() public {
         address flakyArbiter = address(uint160(42000));
         ArbiterRegistryFacet(address(diamond)).addArbiter(flakyArbiter);
