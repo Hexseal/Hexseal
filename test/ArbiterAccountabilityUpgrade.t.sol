@@ -25,6 +25,7 @@ import {UpgradeArbiterAccountability} from "../script/UpgradeArbiterAccountabili
 import {ArbiterProvenanceInit} from "../script/ArbiterProvenanceInit.sol";
 import {ArbiterRegistryFacet} from "../src/facets/ArbiterRegistryFacet.sol";
 import {ArbiterAccountabilityFacet} from "../src/facets/ArbiterAccountabilityFacet.sol";
+import {ArbiterChainCensus} from "./ArbiterChainCensus.sol";
 import "../src/DiamondProxy.sol";
 
 /// Двойник голой кнопки: контракт, который РЕАЛЬНО отвечает на
@@ -49,8 +50,13 @@ contract WrongSuspensionWindowStub {
     }
 }
 
-contract ArbiterAccountabilityUpgradeTest is Test {
+contract ArbiterAccountabilityUpgradeTest is Test, ArbiterChainCensus {
     UpgradeArbiterAccountability internal upgrade;
+
+    /// Голая кнопка, названная ТЕКСТОМ ПОДПИСИ, а не `upgrade.removeSelectors()[0]`.
+    /// Стенд не имеет права брать хоть один селектор из списков разреза — иначе
+    /// он снова начнёт выводить проверяемое из проверяющего (задача 4.6).
+    bytes4 internal constant NAKED_REMOVE_ARBITER = bytes4(keccak256("removeArbiter(address)"));
 
     /// Неймспейс арбитражного хранилища, ERC-7201 (ArbiterRegistryStorage.POSITION,
     /// src/facets/ArbiterRegistryFacet.sol:55-56):
@@ -387,21 +393,29 @@ contract ArbiterAccountabilityUpgradeTest is Test {
 
         assertEq(cuts.length, 5, unicode"buildCuts: ожидались ровно пять записей FacetCut");
 
+        // ⚠️ ЧИСЛА ЗДЕСЬ ЛИТЕРАЛЬНЫЕ (задача 4.6, 16 августа 2026). Раньше на
+        // их месте стояло `upgrade.replaceRegistrySelectors().length` и т.д. —
+        // сверка списка с самим собой, зелёная при любом его составе. У соседних
+        // разрезов на этом месте литералы и стояли (UpgradeFeeModelSelectors:
+        // «expected 44», «exactly 14»). Обмен они не поймают — это счёт, а не
+        // тождество, для того выше стоят две сверки с переписью цепи, — но
+        // одиночный переезд из группы в группу ловят вторым, независимым от
+        // литеральных подписей замком.
         assertTrue(cuts[0].action == IDiamondCut.FacetCutAction.Replace, unicode"cuts[0] должен быть Replace");
         assertEq(cuts[0].facetAddress, reg, unicode"Replace-реестр: адрес обязан быть новым реестром");
-        assertEq(cuts[0].functionSelectors.length, upgrade.replaceRegistrySelectors().length);
+        assertEq(cuts[0].functionSelectors.length, 52, unicode"Replace-реестр: ожидались ровно 52 селектора");
 
         assertTrue(cuts[1].action == IDiamondCut.FacetCutAction.Replace, unicode"cuts[1] должен быть Replace");
         assertEq(cuts[1].facetAddress, acc, unicode"Replace-ответственность: адрес обязан быть новым фасетом");
-        assertEq(cuts[1].functionSelectors.length, upgrade.replaceAccountabilitySelectors().length);
+        assertEq(cuts[1].functionSelectors.length, 11, unicode"Replace-ответственность: ожидались ровно 11 селекторов");
 
         assertTrue(cuts[2].action == IDiamondCut.FacetCutAction.Add, unicode"cuts[2] должен быть Add");
         assertEq(cuts[2].facetAddress, reg, unicode"Add-реестр: адрес обязан быть новым реестром");
-        assertEq(cuts[2].functionSelectors.length, upgrade.addRegistrySelectors().length);
+        assertEq(cuts[2].functionSelectors.length, 3, unicode"Add-реестр: ожидались ровно 3 селектора");
 
         assertTrue(cuts[3].action == IDiamondCut.FacetCutAction.Add, unicode"cuts[3] должен быть Add");
         assertEq(cuts[3].facetAddress, acc, unicode"Add-ответственность: адрес обязан быть новым фасетом");
-        assertEq(cuts[3].functionSelectors.length, upgrade.addAccountabilitySelectors().length);
+        assertEq(cuts[3].functionSelectors.length, 20, unicode"Add-ответственность: ожидались ровно 20 селекторов");
 
         // Remove — последним и с нулевым адресом: DiamondCutLib.removeFunctions
         // требует ровно этого ("Diamond: remove needs zero address"), а
@@ -427,6 +441,124 @@ contract ArbiterAccountabilityUpgradeTest is Test {
         assertEq(all.length, reg.length + acc.length, unicode"общий Replace не равен сумме половин");
         for (uint256 i = 0; i < reg.length; i++) assertTrue(_contains(all, reg[i]), unicode"половина реестра потерялась в общем Replace");
         for (uint256 i = 0; i < acc.length; i++) assertTrue(_contains(all, acc[i]), unicode"половина ответственности потерялась в общем Replace");
+    }
+
+    // ════════════════════════════════════════════════════════════════════
+    // ДЕЛЕНИЕ REPLACE/ADD ПРОТИВ ПЕРЕПИСИ ЖИВОЙ ЦЕПИ (задача 4.6)
+    //
+    // Всё, что выше, сверяет списки со СКОМПИЛИРОВАННЫМ ABI — то есть отвечает
+    // на вопрос «что умеет наш код». На вопрос «что смонтировано в даймонде
+    // СЕГОДНЯ» ABI не отвечает вовсе, а именно им и определяется граница между
+    // Replace и Add: `Replace` ревертит на несмонтированном селекторе, `Add` —
+    // на смонтированном. Оракул здесь один — перепись, снятая с цепи
+    // (test/ArbiterChainCensus.sol).
+    //
+    // Оба теста ниже — ТОЖДЕСТВА, а не количества. Счёт ловит одиночный переезд
+    // и не ловит обмен: переложи смонтированный селектор в Add, а
+    // несмонтированный в Replace, поправив заодно литеральный список подписей —
+    // и все числа останутся прежними (11 и 20, 63+1). Замерено ревью задачи
+    // 4.5: 843 зелёных, 0 красных, разрез в бою отвергнут целиком.
+    // ════════════════════════════════════════════════════════════════════
+
+    /// ТОЖДЕСТВО ПЕРВОЕ: всё, что живой даймонд маршрутизирует на старый фасет,
+    /// этим разрезом либо заменяется, либо снимается — ни больше, ни меньше.
+    ///
+    /// Ловит обе половины обмена сразу: селектор, СМОНТИРОВАННЫЙ в цепи и
+    /// переложенный в Add, пропадёт из объединения (недобор); селектор,
+    /// в цепи ОТСУТСТВУЮЩИЙ и переложенный в Replace, окажется лишним (перебор).
+    ///
+    /// Что исчезнет из поведения, если снять: боевой `Replace` получит селектор,
+    /// которого в даймонде нет, и `diamondCut` ревертнёт "Diamond: selector not
+    /// found" — весь разрез отменён одной транзакцией, уже после броадкаста
+    /// двух новых фасетов. Либо, симметрично, старый адрес не опустеет
+    /// полностью, и половина даймонда поедет старым кодом поверх нового
+    /// хранилища.
+    function test_ReplaceAndRemoveExactlyCoverTheChainCensus() public view {
+        bytes4[] memory census = _chainCensus();
+        bytes4[] memory replaceSels = upgrade.replaceSelectors();
+        bytes4[] memory removeSels = upgrade.removeSelectors();
+
+        assertEq(census.length, 64, unicode"перепись цепи обязана быть 64 селектора");
+
+        // Ни один смонтированный селектор не забыт: он либо заменяется, либо снимается.
+        for (uint256 i = 0; i < census.length; i++) {
+            assertTrue(
+                _censusContains(replaceSels, census[i]) || _censusContains(removeSels, census[i]),
+                unicode"селектор смонтирован в цепи, но не попал ни в Replace, ни в Remove"
+            );
+        }
+        // И ни один заменяемый/снимаемый не выдуман: он обязан быть в цепи.
+        for (uint256 i = 0; i < replaceSels.length; i++) {
+            assertTrue(
+                _censusContains(census, replaceSels[i]),
+                unicode"Replace целится в селектор, которого в цепи нет — diamondCut ревертнёт весь разрез"
+            );
+        }
+        for (uint256 i = 0; i < removeSels.length; i++) {
+            assertTrue(
+                _censusContains(census, removeSels[i]),
+                unicode"Remove целится в селектор, которого в цепи нет — удалять нечего"
+            );
+        }
+        // Счётом — иначе повтор внутри Replace прошёл бы обе проверки выше.
+        assertEq(
+            replaceSels.length + removeSels.length,
+            census.length,
+            unicode"Replace+Remove не сходится с переписью по числу селекторов"
+        );
+    }
+
+    /// ТОЖДЕСТВО ВТОРОЕ: ни одного добавляемого селектора в цепи ещё нет.
+    ///
+    /// Что исчезнет из поведения, если снять: боевой `Add` по уже
+    /// смонтированному селектору ревертит "Diamond: selector exists" и отменяет
+    /// ВЕСЬ разрез. Пред-полёт `checkAddGroupUnmounted` заведён ровно под этот
+    /// случай, но он живёт на стенде и запускается один раз в бою; здесь то же
+    /// самое утверждается прямо о данных, без даймонда.
+    function test_AddSelectorsAreAbsentFromTheChainCensus() public view {
+        bytes4[] memory census = _chainCensus();
+        bytes4[] memory addSels = upgrade.addSelectors();
+
+        for (uint256 i = 0; i < addSels.length; i++) {
+            assertFalse(
+                _censusContains(census, addSels[i]),
+                unicode"Add несёт селектор, который в цепи уже смонтирован — Add ревертнёт весь разрез"
+            );
+        }
+    }
+
+    /// ТОЖДЕСТВО ТРЕТЬЕ, ГЛАВНОЕ: стенд повторяет ПЕРЕПИСЬ, а не список.
+    ///
+    /// Мерится не намерение, а результат: даймонд поднимается, стенд монтируется
+    /// своим обычным помощником, и множество селекторов старого адреса читается
+    /// у ЛУПЫ — поимённо, в обе стороны. Пока `_mountLiveLayout` берёт перепись,
+    /// тест зелёный; верни его на `upgrade.replaceSelectors()` при неверном
+    /// делении — и множества разойдутся.
+    ///
+    /// Что исчезнет из поведения, если снять: `checkAddGroupUnmounted` и
+    /// `checkReplaceGroup` снова станут тавтологиями — они будут сверять списки
+    /// с раскладкой, собранной из этих же списков, и промолчат на ошибке,
+    /// которая роняет разрез целиком.
+    function test_LiveLayoutStandIsTheChainCensusItself() public {
+        DiamondProxy diamond = _deployMinimalDiamond();
+        address oldFacetAddr = _mountLiveLayout(diamond);
+
+        bytes4[] memory mounted = IDiamondLoupe(address(diamond)).facetFunctionSelectors(oldFacetAddr);
+        bytes4[] memory census = _chainCensus();
+
+        assertEq(mounted.length, census.length, unicode"стенд смонтировал не столько селекторов, сколько в переписи");
+        for (uint256 i = 0; i < census.length; i++) {
+            assertTrue(
+                _censusContains(mounted, census[i]),
+                unicode"селектор из переписи не смонтирован стендом"
+            );
+        }
+        for (uint256 i = 0; i < mounted.length; i++) {
+            assertTrue(
+                _censusContains(census, mounted[i]),
+                unicode"стенд смонтировал селектор, которого в переписи нет"
+            );
+        }
     }
 
     // ════════════════════════════════════════════════════════════════════
@@ -463,23 +595,35 @@ contract ArbiterAccountabilityUpgradeTest is Test {
         return new DiamondProxy(address(this), cuts, address(0), "");
     }
 
-    /// Раскладка, буквально совпадающая с Base Sepolia на 15 августа 2026: все
-    /// 64 арбитражных селектора (63 будущих Replace + голая removeArbiter) на
-    /// ОДНОМ адресе фасета. Голая кнопка при этом смонтирована, но не
-    /// реализована — задача 6 удалила функцию из кода, — что для проверок
-    /// маршрутизации ровно то же самое: addFunctions требует от адреса только
-    /// наличия кода. Тестам, которым нужна ЖИВАЯ кнопка, служит
-    /// _mountLiveLayoutWithWorkingButton ниже.
+    /// Раскладка, буквально совпадающая с Base Sepolia: все 64 арбитражных
+    /// селектора (63 будущих Replace + голая removeArbiter) на ОДНОМ адресе
+    /// фасета. Голая кнопка при этом смонтирована, но не реализована — задача 6
+    /// удалила функцию из кода, — что для проверок маршрутизации ровно то же
+    /// самое: addFunctions требует от адреса только наличия кода. Тестам,
+    /// которым нужна ЖИВАЯ кнопка, служит _mountLiveLayoutWithWorkingButton.
+    ///
+    /// ⚠️ ПЕРЕВЕДЁН НА ПЕРЕПИСЬ ЦЕПИ (задача 4.6, 16 августа 2026). Раньше здесь
+    /// стояло `upgrade.replaceSelectors() + upgrade.removeSelectors()[0]` — то
+    /// есть стенд выводил «что смонтировано в цепи» ИЗ ТОГО САМОГО СПИСКА,
+    /// который проверяет. Селектор, переложенный из Replace в Add, исчезал из
+    /// стенда вместе со списком, и `checkAddGroupUnmounted` честно не находил
+    /// его смонтированным: пред-полёт, заведённый ровно под этот случай, молчал.
+    /// Симметрично страдал `checkReplaceGroup` — «все Replace на одном адресе»
+    /// на раскладке, собранной из его же аргумента, верно по построению.
+    ///
+    /// Теперь монтируется ПЕРЕПИСЬ — 64 селектора, снятые с цепи и лежащие
+    /// данными (test/fixtures/…). Стенд перестал зависеть от проверяемого, и
+    /// обе пред-проверки стали настоящими.
+    ///
+    /// Что исчезнет из поведения, если вернуть список на место: перекрёстная
+    /// подмена (смонтированный селектор в Add, несмонтированный в Replace, счёт
+    /// не сдвинулся) снова пройдёт молча — и отвергнет весь разрез одной боевой
+    /// транзакцией, уже после броадкаста двух фасетов.
     function _mountLiveLayout(DiamondProxy diamond) internal returns (address oldFacetAddr) {
         ArbiterRegistryFacet oldFacet = new ArbiterRegistryFacet();
 
-        bytes4[] memory replaceSels = upgrade.replaceSelectors();
-        bytes4[] memory live = new bytes4[](replaceSels.length + 1);
-        for (uint256 i = 0; i < replaceSels.length; i++) live[i] = replaceSels[i];
-        live[replaceSels.length] = upgrade.removeSelectors()[0];
-
         IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](1);
-        cuts[0] = IDiamondCut.FacetCut(address(oldFacet), IDiamondCut.FacetCutAction.Add, live);
+        cuts[0] = IDiamondCut.FacetCut(address(oldFacet), IDiamondCut.FacetCutAction.Add, _chainCensus());
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
 
         oldFacetAddr = address(oldFacet);
@@ -488,6 +632,9 @@ contract ArbiterAccountabilityUpgradeTest is Test {
     /// То же самое, но removeArbiter смонтирована на двойник, который на неё
     /// РЕАЛЬНО отвечает: единственный способ показать переход «кнопка работала
     /// → кнопка мертва», раз настоящей функции в коде больше нет.
+    ///
+    /// ⚠️ Тоже от переписи (задача 4.6): 63 = перепись минус голая кнопка,
+    /// названная текстом подписи. Ни одного селектора из списков разреза.
     function _mountLiveLayoutWithWorkingButton(DiamondProxy diamond)
         internal returns (address oldFacetAddr, address stubAddr)
     {
@@ -495,10 +642,14 @@ contract ArbiterAccountabilityUpgradeTest is Test {
         LegacyRemoveArbiterStub stub = new LegacyRemoveArbiterStub();
 
         bytes4[] memory nakedSel = new bytes4[](1);
-        nakedSel[0] = upgrade.removeSelectors()[0];
+        nakedSel[0] = NAKED_REMOVE_ARBITER;
 
         IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](2);
-        cuts[0] = IDiamondCut.FacetCut(address(oldFacet), IDiamondCut.FacetCutAction.Add, upgrade.replaceSelectors());
+        cuts[0] = IDiamondCut.FacetCut(
+            address(oldFacet),
+            IDiamondCut.FacetCutAction.Add,
+            _censusWithout(_chainCensus(), NAKED_REMOVE_ARBITER)
+        );
         cuts[1] = IDiamondCut.FacetCut(address(stub), IDiamondCut.FacetCutAction.Add, nakedSel);
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
 
@@ -608,9 +759,15 @@ contract ArbiterAccountabilityUpgradeTest is Test {
         DiamondProxy diamond = _deployMinimalDiamond();
         ArbiterRegistryFacet oldFacet = new ArbiterRegistryFacet();
 
-        // Монтируем ТОЛЬКО 63 будущих Replace — без голой кнопки.
+        // Монтируем перепись БЕЗ голой кнопки — 63 из 64. Вычитается она по
+        // тексту подписи, а не по upgrade.removeSelectors(): стенд не берёт из
+        // списков разреза ничего (задача 4.6).
         IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](1);
-        cuts[0] = IDiamondCut.FacetCut(address(oldFacet), IDiamondCut.FacetCutAction.Add, upgrade.replaceSelectors());
+        cuts[0] = IDiamondCut.FacetCut(
+            address(oldFacet),
+            IDiamondCut.FacetCutAction.Add,
+            _censusWithout(_chainCensus(), NAKED_REMOVE_ARBITER)
+        );
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
 
         _armRun(diamond);

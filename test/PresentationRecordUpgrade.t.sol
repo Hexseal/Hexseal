@@ -6,6 +6,7 @@ import {ArbiterRegistryFacet} from "../src/facets/ArbiterRegistryFacet.sol";
 import {LegacyPreSplitArbiterFacet, ArbiterTwoFacetBench} from "./ArbiterTwoFacetBench.sol";
 import {ArbiterAccountabilityFacet} from "../src/facets/ArbiterAccountabilityFacet.sol";
 import {UpgradePresentationRecord} from "../script/UpgradePresentationRecord.s.sol";
+import {ArbiterChainCensus} from "./ArbiterChainCensus.sol";
 import "../src/DiamondProxy.sol";
 
 /// Двойник, отвечающий на getNoResponseFloor() НЕ тем числом. Нужен ровно для
@@ -18,7 +19,7 @@ contract WrongFloorStub {
     }
 }
 
-contract PresentationRecordUpgradeTest is Test, ArbiterTwoFacetBench {
+contract PresentationRecordUpgradeTest is Test, ArbiterTwoFacetBench, ArbiterChainCensus {
     UpgradePresentationRecord internal upgrade;
 
     function setUp() public {
@@ -200,11 +201,86 @@ contract PresentationRecordUpgradeTest is Test, ArbiterTwoFacetBench {
     /// фасета — 7 красных из-за роста, который к этому разрезу отношения не
     /// имеет (см. test_ReplaceAndAddCoverWholeFacet ниже, ретировка).
     /// upgrade.removeSelectors() у этого скрипта нет (Replace 56 / Add 8, без
-    /// удалений — CLAUDE.md), поэтому «старый фасет» — это ровно
-    /// replaceSelectors(), без независимого оракула: тот же приём, что уже
-    /// применён в test/ArbiterChatKeyUpgrade.t.sol::_mountOldFacet.
+    /// удалений — CLAUDE.md).
+    ///
+    /// ⚠️ ОГОВОРКА «БЕЗ НЕЗАВИСИМОГО ОРАКУЛА» СНЯТА (задача 4.6, 16 августа
+    /// 2026). Здесь стояло `return upgrade.replaceSelectors();` — стенд выводил
+    /// раскладку цепи из того самого списка, который проверяет, и оба его
+    /// пред-полёта (`checkReplaceGroup`, `checkAddGroupUnmounted`) сходились
+    /// сами с собой. Оракул нашёлся и для исполненного разреза: этот cut
+    /// закончился ровно тем, что лежит в цепи СЕГОДНЯ, — перепись 15 августа
+    /// его и застала. Значит раскладка ДО него отматывается ровно:
+    ///   перепись (64) − то, что он добавил (8) = 56.
+    ///
+    /// Отмотка не берёт из скрипта ничего, кроме `addSelectors()`, а те восемь
+    /// запёрты ЛИТЕРАЛЬНЫМИ ПОДПИСЯМИ соседним тестом
+    /// (test_AddSelectorsAreTheEightNewSignatures) — то есть текстом, а не
+    /// `.selector` из того же фасета. `replaceSelectors()`, ради которого стенд
+    /// и строится, в вычислении не участвует вовсе.
     function _oldFacetSelectors() internal view returns (bytes4[] memory out) {
-        return upgrade.replaceSelectors();
+        out = _rewindCut(_chainCensus(), upgrade.addSelectors(), new bytes4[](0));
+        require(out.length == 56, unicode"раскладка до разреза 15 августа обязана быть 56 селекторов");
+    }
+
+    /// Список из `ArbiterChainCensus._presentationCutAddSelectors()` — вторая,
+    /// текстовая копия восьми Add-селекторов этого разреза. Она нужна стенду
+    /// разреза 10 августа, чтобы отмотать перепись на два шага, не разворачивая
+    /// ради этого второй скрипт (разбор и замер — в шапке той функции). Копий
+    /// две, значит они обязаны сверяться друг с другом, иначе разъедутся молча.
+    ///
+    /// Что исчезнет из поведения, если снять: подпись, изменённая в одном месте
+    /// и забытая в другом, увела бы стенд разреза 10 августа на раскладку,
+    /// которой в цепи никогда не было, — и его пред-полёт начал бы «проверять»
+    /// выдуманный мир, оставаясь зелёным.
+    function test_CensusRewindListMatchesTheCutsOwnAdd() public view {
+        bytes4[] memory literal = _presentationCutAddSelectors();
+        bytes4[] memory declared = upgrade.addSelectors();
+
+        assertEq(literal.length, declared.length, unicode"две копии списка Add разошлись по числу");
+        for (uint256 i = 0; i < literal.length; i++) {
+            assertTrue(_censusContains(declared, literal[i]), unicode"подписи из отмотки нет в Add самого разреза");
+        }
+        for (uint256 i = 0; i < declared.length; i++) {
+            assertTrue(_censusContains(literal, declared[i]), unicode"Add самого разреза несёт селектор, которого нет в отмотке");
+        }
+    }
+
+    /// Двойник `LegacyPreSplitArbiterFacet` обязан РЕАЛЬНО отвечать на всё, что
+    /// монтируют на него стенды исторических разрезов. Сверяется он не с нашими
+    /// списками, а с переписью цепи: каждый её селектор, кроме голой
+    /// removeArbiter (её задача 6 удалила из кода — в цепи она смонтирована, но
+    /// уже не реализована), обязан быть в ABI двойника.
+    ///
+    /// Что исчезнет из поведения, если снять: двойник, потерявший одно чтение,
+    /// смонтируется как ни в чём не бывало (diamondCut требует от адреса только
+    /// наличия кода), а пред-полёт исторического разреза начнёт ревертить
+    /// `EvmError: Revert` без единого слова о причине — замерено ревью задачи
+    /// 4.5: снятая `getOpenClaimCount` дала 11 таких красных.
+    function test_LegacyTwinAnswersEverythingTheChainRoutes() public view {
+        // Двойник живёт в чужом файле, поэтому путь артефакта не выводится из
+        // имени контракта, как в _abiSelectors.
+        string memory json = vm.readFile("out/ArbiterTwoFacetBench.sol/LegacyPreSplitArbiterFacet.json");
+        string[] memory sigs = vm.parseJsonKeys(json, ".methodIdentifiers");
+        bytes4[] memory twin = new bytes4[](sigs.length);
+        for (uint256 i; i < sigs.length; i++) twin[i] = bytes4(keccak256(bytes(sigs[i])));
+
+        bytes4[] memory census = _chainCensus();
+        bytes4 naked = bytes4(keccak256("removeArbiter(address)"));
+
+        uint256 checked;
+        for (uint256 i = 0; i < census.length; i++) {
+            if (census[i] == naked) continue;
+            assertTrue(
+                _censusContains(twin, census[i]),
+                unicode"двойник не реализует селектор, который цепь маршрутизирует"
+            );
+            checked++;
+        }
+        assertEq(checked, 63, unicode"перепись без голой кнопки обязана быть 63 селектора");
+        assertFalse(
+            _censusContains(twin, naked),
+            unicode"голая removeArbiter воскресла в двойнике — задача 6 её удалила"
+        );
     }
 
     /// Монтирует «старую» (пред-разрезную) раскладку: 56 селекторов на ОДНОМ

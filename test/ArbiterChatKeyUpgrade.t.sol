@@ -6,6 +6,7 @@ import {ArbiterRegistryFacet} from "../src/facets/ArbiterRegistryFacet.sol";
 import {LegacyPreSplitArbiterFacet, ArbiterTwoFacetBench} from "./ArbiterTwoFacetBench.sol";
 import {ArbiterAccountabilityFacet} from "../src/facets/ArbiterAccountabilityFacet.sol";
 import {UpgradeArbiterChatKey} from "../script/archive/UpgradeArbiterChatKey.s.sol";
+import {ArbiterChainCensus} from "./ArbiterChainCensus.sol";
 import "../src/DiamondProxy.sol";
 
 /// Тот же разрез, но разворачивающий двойник «фасет ДО задачи 4.5».
@@ -26,9 +27,14 @@ contract UpgradeArbiterChatKeyOnPreSplitFacet is UpgradeArbiterChatKey {
     }
 }
 
-contract ArbiterChatKeyUpgradeTest is Test, ArbiterTwoFacetBench {
+contract ArbiterChatKeyUpgradeTest is Test, ArbiterTwoFacetBench, ArbiterChainCensus {
     UpgradeArbiterChatKey internal upgrade;
 
+    /// ⚠️ РОВНО ОДИН `new` (задача 4.6, 16 августа 2026). Второй развёрнутый
+    /// здесь контракт сдвигает nonce тестового контракта, а с ним — адрес
+    /// локального даймонда, и полный `forge test` начинает падать раз в
+    /// двадцать прогонов через процесс-глобальный `vm.setEnv`. Разбор и замер —
+    /// в шапке `_presentationCutAddSelectors()` (test/ArbiterChainCensus.sol).
     function setUp() public {
         upgrade = new UpgradeArbiterChatKeyOnPreSplitFacet();
     }
@@ -209,18 +215,43 @@ contract ArbiterChatKeyUpgradeTest is Test, ArbiterTwoFacetBench {
         // смонтировался бы (diamondCut требует лишь наличия кода), но
         // пред-полёт зовёт getOpenClaimCount по-настоящему и ревертил бы.
         LegacyPreSplitArbiterFacet oldFacet = new LegacyPreSplitArbiterFacet();
-        bytes4[] memory replaceSels = upgrade.replaceSelectors();
-        bytes4[] memory removeSels = upgrade.removeSelectors();
-
-        bytes4[] memory mountSels = new bytes4[](replaceSels.length + removeSels.length);
-        for (uint256 i = 0; i < replaceSels.length; i++) mountSels[i] = replaceSels[i];
-        for (uint256 i = 0; i < removeSels.length; i++) mountSels[replaceSels.length + i] = removeSels[i];
 
         IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](1);
-        cuts[0] = IDiamondCut.FacetCut(address(oldFacet), IDiamondCut.FacetCutAction.Add, mountSels);
+        cuts[0] = IDiamondCut.FacetCut(address(oldFacet), IDiamondCut.FacetCutAction.Add, _preCutLayout());
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
 
         oldFacetAddr = address(oldFacet);
+    }
+
+    /// Раскладка цепи ДО этого разреза, ОТМОТАННАЯ ОТ ПЕРЕПИСИ (задача 4.6,
+    /// 16 августа 2026).
+    ///
+    /// ⚠️ Здесь стояло `upgrade.replaceSelectors() + upgrade.removeSelectors()` —
+    /// стенд выводил «что было смонтировано в цепи» ИЗ ТОГО САМОГО СПИСКА,
+    /// который проверяет, и пред-полёты сходились сами с собой (docs/PROCESS.md,
+    /// «Четвёртый способ: замок, который смотрится в зеркало»).
+    ///
+    /// Оракул — перепись живой цепи (test/ArbiterChainCensus.sol), отмотанная
+    /// назад через ДВА исполненных разреза:
+    ///   перепись 16 августа                                        64
+    ///   − Add разреза «цепь как свидетель предъявления» (15.08)     −8  → 56
+    ///   − Add этого разреза (10.08)                                 −3  → 53
+    ///   + Remove этого разреза (старая двухаргументная claimDispute) +1  → 54
+    ///
+    /// Из скриптов в отмотке участвуют ТОЛЬКО списки Add и Remove, и оба
+    /// запёрты литеральными подписями: восемь у разреза предъявления
+    /// (`_presentationCutAddSelectors()`, сверяется с боевым списком того
+    /// скрипта соседним тестом), одна здесь
+    /// (test_OldSelectorRemovedAndAbsentFromNewAbi). `replaceSelectors()`, ради
+    /// которого стенд и строится, в вычислении не участвует вовсе.
+    function _preCutLayout() internal view returns (bytes4[] memory out) {
+        bytes4[] memory afterThisCut = _rewindCut(
+            _chainCensus(), _presentationCutAddSelectors(), new bytes4[](0)
+        );
+        require(afterThisCut.length == 56, unicode"раскладка между двумя разрезами обязана быть 56 селекторов");
+
+        out = _rewindCut(afterThisCut, upgrade.addSelectors(), upgrade.removeSelectors());
+        require(out.length == 54, unicode"раскладка до разреза 10 августа обязана быть 54 селектора");
     }
 
     bytes32 constant ARB_POS = 0xaae71de0594cbcb5434f0ab7f7501c1be178552bf788b418a1c2624ba9718d00;
