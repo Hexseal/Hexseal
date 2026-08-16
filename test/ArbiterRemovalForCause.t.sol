@@ -13,8 +13,12 @@ pragma solidity ^0.8.20;
 //     требует непустой отпечаток доказательства и помечает запись
 //     verifiedByChain = false.
 //
-// Право сноса передаётся, а не запирается: до активации ДАО зовёт только
-// владелец, после — только daoAddress. Дыра в первой версии этого плана
+// Право сноса передаётся, а не запирается: до передачи зовёт только
+// владелец, после — только daoAddress. «После» — это пара «ДАО активна И
+// преемник назван» (п. 69, 16 августа 2026), тот же предикат, что у двери
+// посадки: одного `isDaoActive()` мало, он включается заработанным порогом
+// сам, чужим действием, и в окне без преемника дверь не открывал никто.
+// Дыра в первой версии этого плана
 // («после ДАО не может никто») найдена владельцем ДО реализации: голосования
 // по арбитрам в коде нет, daoAddress по умолчанию нулевой, и чистый лок означал
 // бы, что сговор и слив переписки после включения ДАО становятся неснимаемыми
@@ -220,17 +224,33 @@ contract ArbiterRemovalForCauseTest is Test {
         acc.removeArbiterForCause(stranger, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0), address(0));
     }
 
-    /// Храповик: после активации ДАО владельца цепь не пускает вовсе — право
-    /// уехало к daoAddress (см. следующие два теста). daoAddress здесь не
-    /// назначен (остаётся нулём), поэтому и он не смог бы: это осознанный
-    /// снимок «активировали ДАО, забыли назначить преемника» — за него
-    /// отвечает activateDAO()'s DaoAddressNotSet() guard в ArbiterRegistryFacet,
-    /// не этот тест.
+    /// Храповик: после активации ДАО И назначения преемника владельца цепь не
+    /// пускает вовсе — право уехало к daoAddress.
+    ///
+    /// ⚠️ `_setDaoAddress` здесь обязателен (п. 69, 16 августа 2026). Прежняя
+    /// редакция намеренно оставляла преемника нулевым и ждала
+    /// RemovalHandedOver — то есть сторожила ровно то состояние, в котором
+    /// дверь не открывал никто. Сценарий «активировали, забыли назначить»
+    /// теперь проверяется с противоположным ожиданием:
+    /// test_EarnedDaoWithoutSuccessorLeavesRemovalWithTheOwner.
+    ///
+    /// ⚠️ Чем эта запертая дверь НЕ является — решение по п. 69, 16 августа
+    /// 2026. Она не ограничивает владельца: у него остаются три
+    /// `overturnVerdict` (onlyOwnerOrDAO пускает его ВСЕГДА, а
+    /// MAX_ARBITER_MISTAKES = 3 — три отмены подряд снимают арбитра
+    /// автодемоушеном) и `diamondCut`, которым фасет заменяется целиком.
+    /// Замок глушит ГРОМКУЮ дверь — ту, что кладёт в цепь повод, отпечаток и
+    /// имя нажавшего, — и выталкивает снос на тихие пути, где в ленте видно
+    /// только отменённые вердикты. Держим его не как преграду, а как правило
+    /// протокола, обещанное публично.
     function test_OwnerCannotRemoveAfterDAO() public {
         _setStreak(arbiter, 2);
+        _setDaoAddress(address(0xDA0));
         _activateDAO();
         vm.expectRevert(ArbiterAccountabilityFacet.RemovalHandedOver.selector);
-        acc.removeArbiterForCause(arbiter, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0), address(0));
+        acc.removeArbiterForCause(
+            arbiter, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0), address(0)
+        );
     }
 
     /// Передача, а не запирание в пустоту (правка владельца после первой
@@ -363,15 +383,93 @@ contract ArbiterRemovalForCauseTest is Test {
     /// Заработанный порог (uniqueActiveUsers >= DAO_THRESHOLD) обязан
     /// закрывать дверь ТАК ЖЕ, как ручной activateDAO() — без единого его
     /// вызова. До правки M-9 _isDaoActive читал только daoActiveManual, и
-    /// этот сценарий проходил бы мимо: владелец продолжал бы снимать
-    /// арбитров, пока addArbiter/setChiefArbiter (которые зовут
-    /// ArbiterRegistryFacet.isDaoActive() напрямую) уже отказывали бы.
+    /// этот сценарий проходил бы мимо.
+    ///
+    /// ⚠️ Преемник назначается явно (п. 69, 16 августа 2026): с 16 августа
+    /// заработанный порог САМ ПО СЕБЕ дверь не закрывает — закрывает пара
+    /// «порог плюс названный преемник», как у двери посадки. Проверка про
+    /// заработанный порог БЕЗ преемника — отдельная и с другим ожиданием.
+    ///
+    /// ⚠️ Тот же довод, что у test_OwnerCannotRemoveAfterDAO: закрытая дверь
+    /// владельца не ограничивает — у него остаются три `overturnVerdict`
+    /// (автодемоушен на MAX_ARBITER_MISTAKES = 3) и `diamondCut`. Она глушит
+    /// громкую дверь с поводом и именем нажавшего и выталкивает снос на тихие
+    /// пути. Это правило протокола, а не преграда.
     function test_EarnedDaoActivatesWithoutManualFlag() public {
         _setStreak(arbiter, 2);
         _setUniqueActiveUsers(acc.getDaoThresholdMirror());
+        _setDaoAddress(address(0xDA0));
 
         vm.expectRevert(ArbiterAccountabilityFacet.RemovalHandedOver.selector);
-        acc.removeArbiterForCause(arbiter, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0), address(0));
+        acc.removeArbiterForCause(
+            arbiter, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0), address(0)
+        );
+    }
+
+    // ── п. 69 (16 августа 2026): предикат храповика ──
+    //
+    // Заработанный порог включает ДАО САМ, чужим действием и без единой
+    // человеческой транзакции. Пока преемник не назван, отдавать право
+    // сноса некому — и предикат обязан это учитывать ровно так же, как
+    // учитывает соседняя дверь посадки (_requireSeatingNotHandedOver).
+
+    /// Порог заработан, преемника нет — дверь остаётся у владельца.
+    /// До правки здесь ревертило RemovalHandedOver, и снести не мог НИКТО:
+    /// условие вырождалось в `msg.sender != address(0)`.
+    function test_EarnedDaoWithoutSuccessorLeavesRemovalWithTheOwner() public {
+        _setStreak(arbiter, 2);
+        _setUniqueActiveUsers(acc.getDaoThresholdMirror());
+        // daoAddress НЕ назначаем — это и есть разбираемое окно
+
+        acc.removeArbiterForCause(
+            arbiter, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0), address(0)
+        );
+
+        assertFalse(
+            _isArbiterRaw(arbiter),
+            unicode"пока преемника нет, дверь у владельца — и она открывается"
+        );
+    }
+
+    /// Как только преемник назван — дверь уезжает, и при заработанном пороге
+    /// точно так же, как при ручном флаге. Вторая половина той же правки:
+    /// без неё «остаётся у владельца» превратилось бы в «остаётся у владельца
+    /// навсегда».
+    function test_EarnedDaoWithSuccessorHandsRemovalOver() public {
+        _setStreak(arbiter, 2);
+        _setUniqueActiveUsers(acc.getDaoThresholdMirror());
+        _setDaoAddress(address(0xDA0));
+
+        vm.expectRevert(ArbiterAccountabilityFacet.RemovalHandedOver.selector);
+        acc.removeArbiterForCause(
+            arbiter, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0), address(0)
+        );
+    }
+
+    /// Контроль стыка, а не замок: три места об одном условии обязаны отвечать
+    /// одинаково. Единственным красным он не бывает никогда — на любой порче
+    /// рядом краснеет собственный тест испорченной стороны. Он ловит РАЗЪЕЗД
+    /// пары: если завтра кто-то ослабит предикат посадки в реестре, здесь
+    /// станет видно, что двери перестали закрываться вместе.
+    function test_HandoverPredicateMatchesSeatingPredicate() public {
+        ArbiterRegistryFacet reg = new ArbiterRegistryFacet();
+        vm.store(address(reg), OWNER_SLOT, bytes32(uint256(uint160(owner))));
+        vm.store(
+            address(reg),
+            bytes32(uint256(REP_BASE) + SLOT_UNIQUE_ACTIVE_USERS),
+            bytes32(acc.getDaoThresholdMirror())
+        );
+
+        assertTrue(reg.isDaoActive(), unicode"сетап: порог заработан обеими сторонами");
+        assertEq(reg.getDAOAddress(), address(0), unicode"сетап: преемника нет");
+
+        // Дверь ПОСАДКИ в этом состоянии открыта владельцу — это уже так, и
+        // именно с ней дверь сноса обязана совпадать.
+        reg.addArbiter(address(0xA7));
+        assertTrue(
+            reg.isRegisteredArbiter(address(0xA7)),
+            unicode"посадка при заработанном пороге без преемника работает — значит и снос обязан"
+        );
     }
 
     // ============================================================

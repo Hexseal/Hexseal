@@ -109,10 +109,14 @@ contract ArbiterAccountabilityFacet {
     // ── Снос по поводу (задача 6, 15 августа 2026) ──
     error CauseNotProven(uint8 cause);
     error EvidenceRequired();
-    /// Право сноса уехало вместе с активацией ДАО — звать может только
+    /// Право сноса уехало к названному преемнику — звать может только
     /// daoAddress (см. removeArbiterForCause). Владелец получает эту же
     /// ошибку: это передача, а не запирание в пустоту, но передача
     /// односторонняя и владельцу дороги назад нет.
+    ///
+    /// ⚠️ Именно «к НАЗВАННОМУ» (п. 69, 16 августа 2026): пока `daoAddress`
+    /// нулевой, эта ошибка не выдаётся никому, сколько бы путей ни включило
+    /// `isDaoActive()` — передавать некому, и дверь остаётся у владельца.
     error RemovalHandedOver();
     error DisputeRefRequired();
     error DisputeRefNotApplicable();
@@ -401,8 +405,10 @@ contract ArbiterAccountabilityFacet {
     /// быть нулевым — иначе в записи оседал бы адрес, ни к чему не
     /// относящийся, и читатель решил бы, что снос связан с той сделкой.
     ///
-    /// Право сноса передаётся, а не запирается: до активации ДАО зовёт только
-    /// владелец, после — только daoAddress (не через onlyOwnerOrDAO из
+    /// Право сноса передаётся, а не запирается, и передача защёлкивается
+    /// ТОЛЬКО когда преемник реально существует: пока `daoAddress` нулевой,
+    /// зовёт владелец — сколько бы путей ни включило `isDaoActive()`. После
+    /// того как преемник назван, зовёт только он (не через onlyOwnerOrDAO из
     /// ArbiterRegistryFacet: тот модификатор пускает владельца ВСЕГДА, а
     /// здесь после передачи владельцу дороги нет — иначе автоматика (только
     /// то, что видит цепь) осталась бы единственной защитой, а сговор и слив
@@ -425,7 +431,27 @@ contract ArbiterAccountabilityFacet {
 
         ArbiterRegistryStorage.Data storage d = ArbiterRegistryStorage.data();
 
-        if (_isDaoActive(d)) {
+        // ⚠️ ПРЕДИКАТ ТОТ ЖЕ, ЧТО У СОСЕДНЕЙ ДВЕРИ (п. 69, 16 августа 2026).
+        // Раньше здесь стоял один `_isDaoActive(d)`, и это отличалось от
+        // ArbiterRegistryFacet._requireSeatingNotHandedOver (:855) и от
+        // ArbiterRegistryFacet.setDAOAddress (:1956), где условие полное.
+        //
+        // Цена расхождения замерена, а не предположена: isDaoActive()
+        // включается не только ручным activateDAO() (у того есть защита
+        // DaoAddressNotSet), но и ЗАРАБОТАННЫМ порогом uniqueActiveUsers >=
+        // DAO_THRESHOLD — то есть чужим действием, без единой нашей
+        // транзакции. В окне «порог заработан, преемник ещё не назван»
+        // прежнее условие вырождалось в `msg.sender != address(0)` — истинно
+        // для ВСЕХ, и removeArbiterForCause не мог позвать никто. Дверь,
+        // которую не открывает никто, хуже двери у владельца: единственный
+        // путь снять арбитра с поводом отключался бы посторонним.
+        //
+        // Окно закрывается одной транзакцией владельца (setDAOAddress в этом
+        // состоянии требует именно его), но до неё дверь обязана оставаться
+        // рабочей — ровно то, что публичный docs/DECENTRALIZATION.md, Stage 3
+        // и обещает читателю: «once governance is active AND a successor
+        // address has been named».
+        if (_isDaoActive(d) && d.daoAddress != address(0)) {
             if (msg.sender != d.daoAddress) revert RemovalHandedOver();
         } else {
             if (msg.sender != OwnershipLib.contractOwner()) revert NotOwner();
