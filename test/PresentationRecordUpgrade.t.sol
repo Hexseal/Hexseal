@@ -876,6 +876,34 @@ contract PresentationRecordUpgradeTest is Test, ArbiterTwoFacetBench, ArbiterCha
         OwnershipFacet(address(diamond)).transferOwnership(ownerAddr);
         vm.prank(ownerAddr);
         OwnershipFacet(address(diamond)).acceptOwnership();
+        // ⚠️ ГОНКА ЧЕРЕЗ ПРОЦЕСС-ГЛОБАЛЬНЫЙ vm.setEnv (задача 4.6, Ruling 34,
+        // 16 августа 2026). `vm.setEnv` пишет в окружение ПРОЦЕССА, а сюиты
+        // форджа идут параллельно. Три стенда разрезов
+        // (ArbiterAccountabilityUpgrade, PresentationRecordUpgrade,
+        // ArbiterChatKeyUpgrade) кладут сюда DIAMOND_ADDRESS и тут же читают
+        // его внутри run(). Безобидно это ровно потому, что все три кладут
+        // ОДИН И ТОТ ЖЕ адрес: последовательность `new` до создания даймонда у
+        // них совпадает, а значит совпадает и nonce.
+        //
+        // Лишний `new`, дописанный в любой из трёх, сдвигает nonce — адрес
+        // уезжает, чужой run() уходит лупой в посторонний контракт, и полный
+        // прогон начинает падать «случайным EvmError: Revert» примерно раз в
+        // двадцать раз, ничего не говоря о причине (замерено: 2 падения из 40
+        // при зелёном одиночном прогоне 25 из 25).
+        //
+        // Сама гонка этой строкой НЕ чинится — настоящее лекарство в том,
+        // чтобы не передавать адрес через окружение вовсе, и оно записано
+        // отдельным пунктом в OPEN-ITEMS. Строка превращает будущий флейк в
+        // ДЕТЕРМИНИРОВАННЫЙ красный с названной причиной.
+        //
+        // Адрес взят ЗАМЕРОМ (пробой assertEq по всем трём стендам разом), а
+        // не выведен из кода: выведенный уехал бы вместе с гонкой и промолчал.
+        assertEq(
+            address(diamond),
+            0xc7183455a4C133Ae270771860664b6B7ec320bB1,
+            unicode"адрес даймонда уехал: сдвинулся nonce стенда, и DIAMOND_ADDRESS "
+            unicode"в процессе теперь разный у трёх сюит — см. комментарий выше"
+        );
         vm.setEnv("DIAMOND_ADDRESS", vm.toString(address(diamond)));
         vm.setEnv("PRIVATE_KEY", vm.toString(pk));
     }
