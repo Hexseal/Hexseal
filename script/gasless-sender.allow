@@ -211,10 +211,15 @@ occurrences: 1
   строки не доживает, та же логика, что у ArbiterRegistryFacet.activateDAO.
 
 === src/facets/ArbiterAccountabilityFacet.sol :: ArbiterAccountabilityFacet.liftSuspension ===
-occurrences: 1
-не гейслесс, потому что: то же, что suspendArbiter выше — функция под
-  onlyOwnerOrChief, msg.sender аргументом события ArbiterSuspensionLifted,
-  «кто снял».
+occurrences: 2
+не гейслесс, потому что: функция под onlyOwnerOrChief, и оба обращения —
+  административные. Первое: msg.sender аргументом события
+  ArbiterSuspensionLifted, «кто снял». Второе (п. 66, 16 августа 2026):
+  сравнение отправителя с владельцем — приостановку, наложенную СНОСОМ
+  (removedAt != 0), снимает только он, директору доступна лишь обычная.
+  Модификатор гарантирует, что до этих строк доживает владелец либо директор;
+  брать отправителя через _msgSender() здесь значило бы отдать различение
+  «владелец или директор» форвардеру — та же дыра, что в onlyOwner.
 
 === src/facets/ArbiterAccountabilityFacet.sol :: ArbiterAccountabilityFacet.removeArbiterForCause ===
 occurrences: 3

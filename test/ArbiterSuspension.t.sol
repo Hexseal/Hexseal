@@ -116,6 +116,63 @@ contract ArbiterSuspensionTest is Test {
         assertEq(acc.getSuspendedUntil(arbiter), 0, unicode"счётчик обнулён, а не оставлен в прошлом");
     }
 
+    // ── п. 66 (16 августа 2026): слабая рука не отменяет сильную ──
+    //
+    // Приостановка бывает двух весов, и цепь их различает по записи о сносе.
+    // Обычная — быстрая, обратимая, никого не обвиняет: её снимает и
+    // директор, это его работа. Наложенная СНОСОМ — единственное, что держит
+    // деньги по вердиктам снятого внутри FINALIZE_DELAY, и вернуть её после
+    // снятия нельзя ничем (suspendArbiter требует isArbiter, а снятый уже не
+    // арбитр). Отменять её — то же самое, что отменять сам снос, а сносить
+    // директору нельзя.
+
+    /// Директор не открывает окно, выставленное сносом.
+    function test_ChiefCannotLiftRemovalSuspension() public {
+        acc.removeArbiterForCause(
+            arbiter,
+            ArbiterAccountabilityFacet.Cause.Collusion,
+            keccak256(unicode"переписка"),
+            address(0)
+        );
+        assertTrue(acc.isSuspended(arbiter), unicode"сетап: снос выставил окно C-1");
+
+        vm.prank(chief);
+        vm.expectRevert(ArbiterAccountabilityFacet.RemovalSuspensionIsOwnerOnly.selector);
+        acc.liftSuspension(arbiter);
+
+        assertTrue(acc.isSuspended(arbiter), unicode"окно на месте — директор его не открыл");
+    }
+
+    /// Владелец — открывает. Он отменяет СВОЁ ЖЕ решение, и это ровно та же
+    /// развилка, что уже решена в addArbiter (liftSuspension = true).
+    function test_OwnerLiftsRemovalSuspension() public {
+        acc.removeArbiterForCause(
+            arbiter,
+            ArbiterAccountabilityFacet.Cause.Collusion,
+            keccak256(unicode"переписка"),
+            address(0)
+        );
+
+        acc.liftSuspension(arbiter);
+
+        assertFalse(acc.isSuspended(arbiter), unicode"владелец вправе отменить своё решение");
+        assertEq(acc.getSuspendedUntil(arbiter), 0, unicode"счётчик обнулён, а не оставлен в прошлом");
+    }
+
+    /// Обратная сторона той же проверки, и без неё замок был бы слишком
+    /// широким: ОБЫЧНУЮ приостановку директор по-прежнему снимает. Если
+    /// потерять эту проверку, «гейтится весомое» незаметно превратится в
+    /// «гейтится всякое», и у директора не останется работы вовсе.
+    function test_ChiefStillLiftsAnOrdinarySuspension() public {
+        acc.suspendArbiter(arbiter);
+        assertTrue(acc.isSuspended(arbiter));
+
+        vm.prank(chief);
+        acc.liftSuspension(arbiter);
+
+        assertFalse(acc.isSuspended(arbiter), unicode"лёгкая мера — лёгкая рука, это его работа");
+    }
+
     function test_SuspendingNonArbiterReverts() public {
         vm.expectRevert(ArbiterAccountabilityFacet.NotAnArbiter.selector);
         acc.suspendArbiter(stranger);

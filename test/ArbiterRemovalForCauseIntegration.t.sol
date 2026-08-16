@@ -503,6 +503,43 @@ contract ArbiterRemovalForCauseIntegrationTest is Test {
         );
     }
 
+    /// п. 66, следствие второе: тем же вызовом глушился АВТОМАТ.
+    ///
+    /// Автодемоушен ставит ту же приостановку из того же объявления
+    /// (ArbiterRegistryStorage.SUSPENSION_WINDOW) и ту же отметку removedAt,
+    /// что ручной снос, — и делает это БЕЗ ЧЕЛОВЕКА. Директор, снимавший
+    /// приостановку без единой проверки, выключал механизм, который специально
+    /// сделали работающим сам по себе; стоило это ноль газа сверх вызова и не
+    /// оставляло в записи никакого «почему».
+    function test_ChiefCannotLiftAutoDemotionSuspension() public {
+        address chief = address(0xC4);
+        ArbiterRegistryFacet(address(diamond)).setChiefArbiter(chief);
+
+        // Три РЕАЛЬНЫХ переворота по трём разным сделкам — автодемоушен
+        // срабатывает на третьем (MAX_ARBITER_MISTAKES = 3).
+        _disputeAndOverturn(address(0x661), address(0x662));
+        _disputeAndOverturn(address(0x663), address(0x664));
+        _disputeAndOverturn(address(0x665), address(0x666));
+
+        assertFalse(
+            ArbiterRegistryFacet(address(diamond)).isRegisteredArbiter(arbiter),
+            unicode"сетап: автомат снял арбитра"
+        );
+        assertTrue(
+            ArbiterAccountabilityFacet(address(diamond)).isSuspended(arbiter),
+            unicode"сетап: автомат выставил то же окно, что ручной снос"
+        );
+
+        vm.prank(chief);
+        vm.expectRevert(ArbiterAccountabilityFacet.RemovalSuspensionIsOwnerOnly.selector);
+        ArbiterAccountabilityFacet(address(diamond)).liftSuspension(arbiter);
+
+        assertTrue(
+            ArbiterAccountabilityFacet(address(diamond)).isSuspended(arbiter),
+            unicode"окно автомата директору не по зубам"
+        );
+    }
+
     // ============================================================
     //  ФИНАЛЬНЫЙ ОБЗОР ВЕТКИ, C-1 (16 августа 2026)
     //
