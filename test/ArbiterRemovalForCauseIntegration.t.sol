@@ -1151,6 +1151,61 @@ contract ArbiterRemovalForCauseIntegrationTest is Test {
         );
     }
 
+    /// Тот же путь первый, но НАЖИМАЕТ НЕ ВЛАДЕЛЕЦ (круг правок 1, 16 августа
+    /// 2026). Без этой сцены центральное свойство задачи не сторожилось ничем:
+    /// во всём наборе owner == address(this), overturnVerdict нигде не звалась
+    /// под vm.prank, и подмена `by` на OwnershipLib.contractOwner() давала НОЛЬ
+    /// красных из 840 — тесты доказывали «запись называет владельца», а не
+    /// «запись называет нажавшего».
+    ///
+    /// Сцена боевая, а не выдуманная: onlyOwnerOrDAO пускает и адрес
+    /// управления, а сажает его туда setDAOAddress. Дверь открывается уже одним
+    /// адресом — activateDAO() здесь для полноты картины передачи, модификатор
+    /// его не спрашивает.
+    function test_ArbiterDemotedNamesTheDaoNotTheOwner() public {
+        address dao = address(0x6D40);
+        ArbiterRegistryFacet(address(diamond)).setDAOAddress(dao);
+        ArbiterRegistryFacet(address(diamond)).activateDAO();
+        assertTrue(dao != owner, unicode"сетап: нажимающий и владелец — РАЗНЫЕ адреса");
+
+        address agr = _disputeAndSubmit(address(0x65F), address(0x660));
+
+        // Первые две ошибки нажимает владелец, третью — управление. Именно
+        // третья попадает в запись, и она обязана назвать управление.
+        ArbiterRegistryFacet(address(diamond)).overturnVerdict(agr, false);
+        ArbiterRegistryFacet(address(diamond)).overturnVerdict(agr, true);
+
+        vm.expectEmit(true, true, true, true, address(diamond));
+        emit ArbiterRegistryFacet.ArbiterDemoted(
+            arbiter, dao, ArbiterRegistryFacet.DemotionPath.OwnerOverturn, agr
+        );
+        vm.prank(dao);
+        ArbiterRegistryFacet(address(diamond)).overturnVerdict(agr, false);
+
+        assertFalse(
+            ArbiterRegistryFacet(address(diamond)).isRegisteredArbiter(arbiter),
+            unicode"третий переворот снял арбитра"
+        );
+    }
+
+    /// Нулевое значение перечисления — не путь и не обвинение (круг правок 1).
+    /// Забытый или новый путь получит в Solidity ноль по умолчанию; проверяем,
+    /// что на нуле стоит Unspecified, а не OwnerOverturn — иначе забывчивость
+    /// молча обвиняла бы владельца. Проверка сравнивает ЧИСЛА, а не имена:
+    /// имена совпадали бы сами с собой при любом порядке.
+    function test_ZeroDemotionPathIsNotAnAccusation() public pure {
+        assertEq(
+            uint8(ArbiterRegistryFacet.DemotionPath.Unspecified), 0,
+            unicode"нулевое значение обязано быть «путь не назван»"
+        );
+        assertTrue(
+            uint8(ArbiterRegistryFacet.DemotionPath.OwnerOverturn) != 0,
+            unicode"ни один настоящий путь не смеет стоять на нуле — иначе умолчание обвиняет"
+        );
+        assertTrue(uint8(ArbiterRegistryFacet.DemotionPath.AgreementTimeout) != 0, unicode"то же для таймаута");
+        assertTrue(uint8(ArbiterRegistryFacet.DemotionPath.AppealVote) != 0, unicode"то же для голосов");
+    }
+
     /// Путь второй: спор не доведён, агримент сам сообщает о таймауте.
     /// Нажавшего нет вовсе — msg.sender здесь это САМ АГРИМЕНТ, и записывать
     /// его как «кто нажал» значило бы врать. Поэтому `by` нулевой, а сделка
