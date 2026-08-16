@@ -39,6 +39,7 @@ pragma solidity ^0.8.20;
 // ============================================================
 
 import {DeployFull} from "../script/DeployFull.s.sol";
+import {LegacyPreSplitArbiterFacet} from "./legacy/LegacyPreSplitArbiterFacet.sol";
 import {ArbiterRegistryFacet, ArbiterRegistryStorage} from "../src/facets/ArbiterRegistryFacet.sol";
 import {ArbiterAccountabilityFacet} from "../src/facets/ArbiterAccountabilityFacet.sol";
 import {
@@ -154,76 +155,22 @@ abstract contract ArbiterTwoFacetBench {
     }
 }
 
-// ============================================================
-// ДВОЙНИК ФАСЕТА ДО РАЗРЕЗА 4.5 (16 августа 2026)
+// ════════════════════════════════════════════════════════════════════════
+// ДВОЙНИК ФАСЕТА ДО РАЗРЕЗА 4.5 ПЕРЕЕХАЛ (уборка 7а, п. 5, 16 августа 2026)
 //
-// ЗАЧЕМ. Два разреза УЖЕ ИСПОЛНЕНЫ в цепи — «ключ чата арбитра» (10 августа) и
-// «цепь как свидетель предъявления» (15 августа). Их скрипты и тесты остаются в
-// репозитории как запись о том, что произошло, и переписывать их нельзя.
+// Здесь стоял `contract LegacyPreSplitArbiterFacet is ArbiterRegistryFacet`,
+// дописывавший четырнадцать чтений, которые задача 4.5 увезла в фасет
+// ответственности. Он НАСЛЕДОВАЛ сегодняшний код и ехал за каждой нашей
+// правкой, будучи при этом заявлен как раскладка ЦЕПИ, — и 16 августа
+// перевалил EIP-170 (24 646 → 24 722 при пределе 24 576), уронив
+// `forge build --sizes` в код 1.
 //
-// Стенды тех тестов повторяют раскладку цепи НА ТОТ МОМЕНТ: все 56 арбитражных
-// селекторов на ОДНОМ адресе. Это не декорация — их пред-полёт
-// (checkReplaceGroup) прямо требует, чтобы вся группа Replace сидела на одном
-// адресе, и падает иначе.
+// Теперь двойник — замороженный слепок выкаченного исходника:
+// `test/legacy/LegacyPreSplitArbiterFacet.sol` (копия с `b110fae1`, 21 227
+// байт, запас 3 349). Импорт наверху этого файла ре-экспортирует его, чтобы
+// стенды разрезов ничего у себя не меняли.
 //
-// Задача 4.5 увезла четырнадцать чтений в ArbiterAccountabilityFacet, и с тех
-// пор НИ ОДИН контракт не реализует все 56 сразу. Смонтировать их на голый
-// ArbiterRegistryFacet по-прежнему можно (diamondCut требует от адреса только
-// наличия кода), но ВЫЗОВ переехавшего чтения после этого ревертит — а
-// пред-полёт тех скриптов реально зовёт getOpenClaimCount, перечисляя арбитров
-// с открытыми спорами.
-//
-// Этот двойник и есть «ArbiterRegistryFacet, каким он был до 4.5»: наследует
-// боевой фасет и возвращает четырнадцать уехавших чтений. Тела — те же
-// однострочники над тем же неймспейсом, поведение прежнее.
-//
-// ⚠️ ТОЛЬКО ДЛЯ СТЕНДОВ ИСТОРИЧЕСКИХ РАЗРЕЗОВ. В src/ его нет и быть не должно:
-// он существует, чтобы прошлое можно было воспроизвести, а не чтобы у чтений
-// стало два дома.
-// ============================================================
-contract LegacyPreSplitArbiterFacet is ArbiterRegistryFacet {
-    function getArbiterMistakeStreak(address addr) external view returns (uint256) { return ArbiterRegistryStorage.data().arbiterMistakeStreak[addr]; }
-    function getCleanVerdicts(address a) external view returns (uint256) { return ArbiterRegistryStorage.data().cleanVerdicts[a]; }
-    function getArbiterBond(address addr) external view returns (uint256) { return ArbiterRegistryStorage.data().arbiterBond[addr]; }
-    function getOpenClaimCount(address addr) external view returns (uint256) { return ArbiterRegistryStorage.data().openClaimCount[addr]; }
-    function getArbiterReward(address a) external view returns (uint256) { return ArbiterRegistryStorage.data().arbiterRewards[a]; }
-    function getArbiterDeals(address a) external view returns (address[] memory) { return ArbiterRegistryStorage.data().arbiterDeals[a]; }
-    function getSeatedBy(address a) external view returns (address) { return ArbiterRegistryStorage.data().seatedBy[a]; }
-    function getSeatedCountBy(address a) external view returns (uint256) { return ArbiterRegistryStorage.data().seatedCountBy[a]; }
-
-    function getDisputeClaimedAt(address agreement) external view returns (uint256) {
-        ArbiterRegistryStorage.Data storage d = ArbiterRegistryStorage.data();
-        return d.disputeClaimedAtBy[agreement][d.disputeClaims[agreement]];
-    }
-
-    function getNoResponseAt(address agreement) external view returns (uint256) {
-        ArbiterRegistryStorage.Data storage d = ArbiterRegistryStorage.data();
-        return d.disputeNoResponseAtBy[agreement][d.disputeClaims[agreement]];
-    }
-
-    function getPresentationDigests(address a) external view returns (bytes32[] memory) {
-        return ArbiterRegistryStorage.data().presentationDigests[a];
-    }
-
-    function getPresentationDigestCount(address a) external view returns (uint256) {
-        return ArbiterRegistryStorage.data().presentationDigests[a].length;
-    }
-
-    function getPresentationDigestsPage(address a, uint256 offset, uint256 limit)
-        external view returns (bytes32[] memory)
-    {
-        bytes32[] storage all = ArbiterRegistryStorage.data().presentationDigests[a];
-        uint256 len = all.length;
-        if (offset >= len) return new bytes32[](0);
-        uint256 available = len - offset;
-        uint256 n = limit < available ? limit : available;
-        bytes32[] memory page = new bytes32[](n);
-        for (uint256 i = 0; i < n; i++) page[i] = all[offset + i];
-        return page;
-    }
-
-    function getArbiterChatKeys(address a) external view returns (bytes32 boxKey, bytes32 signKey) {
-        ArbiterRegistryStorage.Data storage d = ArbiterRegistryStorage.data();
-        return (d.arbiterBoxKey[a], d.arbiterSignKey[a]);
-    }
-}
+// Реэкспорт намеренно оставлен здесь, а не заменён прямым импортом в двух
+// стендах: адрес объявления двойника — это то, по чему его ищут, и переносить
+// его дважды значило бы завести два места, куда смотреть.
+// ════════════════════════════════════════════════════════════════════════

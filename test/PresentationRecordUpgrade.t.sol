@@ -247,19 +247,37 @@ contract PresentationRecordUpgradeTest is Test, ArbiterTwoFacetBench, ArbiterCha
 
     /// Двойник `LegacyPreSplitArbiterFacet` обязан РЕАЛЬНО отвечать на всё, что
     /// монтируют на него стенды исторических разрезов. Сверяется он не с нашими
-    /// списками, а с переписью цепи: каждый её селектор, кроме голой
-    /// removeArbiter (её задача 6 удалила из кода — в цепи она смонтирована, но
-    /// уже не реализована), обязан быть в ABI двойника.
+    /// списками, а с переписью цепи: КАЖДЫЙ её селектор обязан быть в ABI
+    /// двойника — все 64, включая голую removeArbiter.
     ///
-    /// Что исчезнет из поведения, если снять: двойник, потерявший одно чтение,
-    /// смонтируется как ни в чём не бывало (diamondCut требует от адреса только
-    /// наличия кода), а пред-полёт исторического разреза начнёт ревертить
-    /// `EvmError: Revert` без единого слова о причине — замерено ревью задачи
-    /// 4.5: снятая `getOpenClaimCount` дала 11 таких красных.
+    /// ⚠️ ПЕРЕПИСАН УБОРКОЙ 7а (п. 5, 16 августа 2026), и утверждений стало
+    /// ДВА вместо одного. Прежняя редакция требовала от двойника 63 селектора
+    /// и ОТСУТСТВИЯ голой removeArbiter «потому что задача 6 её удалила». Это
+    /// был замок, наведённый не на тот предмет: удаление — свойство
+    /// СЕГОДНЯШНЕГО фасета, а проверялось оно на двойнике, и проходило лишь
+    /// потому, что двойник наследовал сегодняшний фасет. Наследование как раз и
+    /// чинили: двойник заявлен раскладкой ЦЕПИ, а цепь removeArbiter
+    /// маршрутизирует и — фасетом от 15 августа — реально исполняет.
+    ///
+    /// Поэтому теперь проверяются два РАЗНЫХ предмета:
+    ///   1. двойник (=цепь) реализует все 64 селектора переписи;
+    ///   2. сегодняшний ArbiterRegistryFacet голой removeArbiter НЕ реализует —
+    ///      ровно то, что установила задача 6, и ровно то, ради чего разрез
+    ///      уносит этот селектор группой Remove.
+    ///
+    /// Что исчезнет из поведения, если снять первое: двойник, потерявший одно
+    /// чтение, смонтируется как ни в чём не бывало (diamondCut требует от
+    /// адреса только наличия кода), а пред-полёт исторического разреза начнёт
+    /// ревертить `EvmError: Revert` без единого слова о причине — замерено
+    /// ревью задачи 4.5: снятая `getOpenClaimCount` дала 11 таких красных.
+    ///
+    /// Что исчезнет, если снять второе: голая кнопка, воскресшая в боевом
+    /// фасете, пережила бы свой Remove — селектор ушёл бы из маршрутов, а код
+    /// остался бы в репозитории и вернулся следующим же разрезом.
     function test_LegacyTwinAnswersEverythingTheChainRoutes() public view {
         // Двойник живёт в чужом файле, поэтому путь артефакта не выводится из
         // имени контракта, как в _abiSelectors.
-        string memory json = vm.readFile("out/ArbiterTwoFacetBench.sol/LegacyPreSplitArbiterFacet.json");
+        string memory json = vm.readFile("out/LegacyPreSplitArbiterFacet.sol/LegacyPreSplitArbiterFacet.json");
         string[] memory sigs = vm.parseJsonKeys(json, ".methodIdentifiers");
         bytes4[] memory twin = new bytes4[](sigs.length);
         for (uint256 i; i < sigs.length; i++) twin[i] = bytes4(keccak256(bytes(sigs[i])));
@@ -269,17 +287,23 @@ contract PresentationRecordUpgradeTest is Test, ArbiterTwoFacetBench, ArbiterCha
 
         uint256 checked;
         for (uint256 i = 0; i < census.length; i++) {
-            if (census[i] == naked) continue;
             assertTrue(
                 _censusContains(twin, census[i]),
                 unicode"двойник не реализует селектор, который цепь маршрутизирует"
             );
             checked++;
         }
-        assertEq(checked, 63, unicode"перепись без голой кнопки обязана быть 63 селектора");
-        assertFalse(
+        assertEq(checked, 64, unicode"перепись цепи обязана быть 64 селектора");
+        assertTrue(
             _censusContains(twin, naked),
-            unicode"голая removeArbiter воскресла в двойнике — задача 6 её удалила"
+            unicode"двойник обязан нести голую removeArbiter: цепь её маршрутизирует, "
+            unicode"и фасет от 15 августа на неё отвечает"
+        );
+
+        // Второй предмет: СЕГОДНЯШНИЙ фасет её уже не реализует.
+        assertFalse(
+            _censusContains(_abiSelectors("ArbiterRegistryFacet"), naked),
+            unicode"голая removeArbiter воскресла в боевом фасете — задача 6 её удалила"
         );
     }
 
