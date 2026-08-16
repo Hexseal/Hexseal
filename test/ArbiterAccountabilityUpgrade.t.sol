@@ -474,7 +474,7 @@ contract ArbiterAccountabilityUpgradeTest is Test, ArbiterChainCensus {
     /// полностью, и половина даймонда поедет старым кодом поверх нового
     /// хранилища.
     function test_ReplaceAndRemoveExactlyCoverTheChainCensus() public view {
-        bytes4[] memory census = _chainCensus();
+        bytes4[] memory census = _chainCensus(upgrade.scriptPath());
         bytes4[] memory replaceSels = upgrade.replaceSelectors();
         bytes4[] memory removeSels = upgrade.removeSelectors();
 
@@ -516,7 +516,7 @@ contract ArbiterAccountabilityUpgradeTest is Test, ArbiterChainCensus {
     /// случай, но он живёт на стенде и запускается один раз в бою; здесь то же
     /// самое утверждается прямо о данных, без даймонда.
     function test_AddSelectorsAreAbsentFromTheChainCensus() public view {
-        bytes4[] memory census = _chainCensus();
+        bytes4[] memory census = _chainCensus(upgrade.scriptPath());
         bytes4[] memory addSels = upgrade.addSelectors();
 
         for (uint256 i = 0; i < addSels.length; i++) {
@@ -544,7 +544,7 @@ contract ArbiterAccountabilityUpgradeTest is Test, ArbiterChainCensus {
         address oldFacetAddr = _mountLiveLayout(diamond);
 
         bytes4[] memory mounted = IDiamondLoupe(address(diamond)).facetFunctionSelectors(oldFacetAddr);
-        bytes4[] memory census = _chainCensus();
+        bytes4[] memory census = _chainCensus(upgrade.scriptPath());
 
         assertEq(mounted.length, census.length, unicode"стенд смонтировал не столько селекторов, сколько в переписи");
         for (uint256 i = 0; i < census.length; i++) {
@@ -623,7 +623,7 @@ contract ArbiterAccountabilityUpgradeTest is Test, ArbiterChainCensus {
         ArbiterRegistryFacet oldFacet = new ArbiterRegistryFacet();
 
         IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](1);
-        cuts[0] = IDiamondCut.FacetCut(address(oldFacet), IDiamondCut.FacetCutAction.Add, _chainCensus());
+        cuts[0] = IDiamondCut.FacetCut(address(oldFacet), IDiamondCut.FacetCutAction.Add, _chainCensus(upgrade.scriptPath()));
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
 
         oldFacetAddr = address(oldFacet);
@@ -648,7 +648,7 @@ contract ArbiterAccountabilityUpgradeTest is Test, ArbiterChainCensus {
         cuts[0] = IDiamondCut.FacetCut(
             address(oldFacet),
             IDiamondCut.FacetCutAction.Add,
-            _censusWithout(_chainCensus(), NAKED_REMOVE_ARBITER)
+            _censusWithout(_chainCensus(upgrade.scriptPath()), NAKED_REMOVE_ARBITER)
         );
         cuts[1] = IDiamondCut.FacetCut(address(stub), IDiamondCut.FacetCutAction.Add, nakedSel);
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
@@ -794,7 +794,7 @@ contract ArbiterAccountabilityUpgradeTest is Test, ArbiterChainCensus {
         cuts[0] = IDiamondCut.FacetCut(
             address(oldFacet),
             IDiamondCut.FacetCutAction.Add,
-            _censusWithout(_chainCensus(), NAKED_REMOVE_ARBITER)
+            _censusWithout(_chainCensus(upgrade.scriptPath()), NAKED_REMOVE_ARBITER)
         );
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
 

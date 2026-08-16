@@ -244,14 +244,49 @@ contract ArbiterChatKeyUpgradeTest is Test, ArbiterTwoFacetBench, ArbiterChainCe
     /// скрипта соседним тестом), одна здесь
     /// (test_OldSelectorRemovedAndAbsentFromNewAbi). `replaceSelectors()`, ради
     /// которого стенд и строится, в вычислении не участвует вовсе.
+    ///
+    /// ⚠️ ОТМОТКА ЗАМЕНЕНА НАБЛЮДЕНИЕМ (уборка 7а, п. 4, Ruling 32). Здесь
+    /// раскладка ВЫЧИСЛЯЛАСЬ отмоткой переписи 16 августа на ДВА шага. Отмотка
+    /// верна, но это вывод — а вывод живёт до первой ошибки в списках, из
+    /// которых делается, и здесь таких списков два, а не один. Теперь раскладка
+    /// ЧИТАЕТСЯ снимком цепи в блоке 45281830 (последний блок перед
+    /// транзакцией разреза 10 августа): 54 селектора на 0x42E9f172…,
+    /// 167 маршрутов всего.
+    /// Отмотка не выброшена — она сверяется со снимком в
+    /// test_TwoStepRewindMatchesTheChainSnapshot ниже.
     function _preCutLayout() internal view returns (bytes4[] memory out) {
-        bytes4[] memory afterThisCut = _rewindCut(
-            _chainCensus(), _presentationCutAddSelectors(), new bytes4[](0)
-        );
-        require(afterThisCut.length == 56, unicode"раскладка между двумя разрезами обязана быть 56 селекторов");
-
-        out = _rewindCut(afterThisCut, upgrade.addSelectors(), upgrade.removeSelectors());
+        out = _chainCensusBefore10Aug();
         require(out.length == 54, unicode"раскладка до разреза 10 августа обязана быть 54 селектора");
+    }
+
+    /// Наблюдение против вычисления, два шага: снимок цепи 10 августа обязан
+    /// совпасть с отмоткой переписи 16 августа назад через ОБА исполненных
+    /// разреза.
+    ///
+    /// Что исчезнет из поведения, если снять: два независимых источника снова
+    /// станут одним. Пока они сверяются, ошибка в любом из трёх списков, из
+    /// которых делается отмотка (восемь подписей разреза предъявления, Add и
+    /// Remove этого разреза), краснеет ЗДЕСЬ — а не отвергнутой боевой
+    /// транзакцией; и наоборот, подменённый снимок краснеет против отмотки.
+    function test_TwoStepRewindMatchesTheChainSnapshot() public view {
+        bytes4[] memory afterThisCut = _rewindCut(
+            _censusFromFile(CENSUS_PATH, CENSUS_FACET, 64, "script/UpgradeArbiterAccountability.s.sol"),
+            _presentationCutAddSelectors(),
+            new bytes4[](0)
+        );
+        _assertSameSelectorSet(
+            _chainCensusAfter10Aug(),
+            afterThisCut,
+            unicode"снимок цепи 14 августа",
+            unicode"отмотка переписи на один шаг"
+        );
+
+        _assertSameSelectorSet(
+            _chainCensusBefore10Aug(),
+            _rewindCut(afterThisCut, upgrade.addSelectors(), upgrade.removeSelectors()),
+            unicode"снимок цепи 10 августа",
+            unicode"отмотка переписи на два шага"
+        );
     }
 
     bytes32 constant ARB_POS = 0xaae71de0594cbcb5434f0ab7f7501c1be178552bf788b418a1c2624ba9718d00;

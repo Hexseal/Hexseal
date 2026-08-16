@@ -46,20 +46,46 @@ abstract contract ArbiterChainCensus is CommonBase {
 
     string internal constant CENSUS_PATH = "test/fixtures/chain-2026-08-16-arbiter-selectors.json";
 
-    /// Селекторы, смонтированные на старом ArbiterRegistryFacet в живой цепи.
-    /// Шапка сверяется здесь же: адреса, счёт и непустота блока. Файл читается
-    /// целиком каждым вызовом — 64 строки, цена измеряется микросекундами, а
-    /// кеширование в storage потребовало бы не-view и сломало бы `public view`
-    /// у тестов состава.
-    function _chainCensus() internal view returns (bytes4[] memory out) {
-        string memory json = vm.readFile(CENSUS_PATH);
+    // ── ДВА СНИМКА ПРОШЛЫХ СОСТОЯНИЙ ЦЕПИ (уборка 7а, п. 4, Ruling 32) ──
+    //
+    // Стенды двух ИСПОЛНЕННЫХ разрезов получали свою раскладку ОТМОТКОЙ
+    // переписи 16 августа — на один шаг (разрез предъявления) и на два
+    // (разрез ключа чата). Отмотка верна, но это ВЫВОД: он живёт ровно до
+    // первой ошибки в списках, из которых делается.
+    //
+    // Теперь у того же числа два независимых источника. Оба снимка прочитаны
+    // с цепи прямым `facetFunctionSelectors` в архивных блоках, границы найдены
+    // двоичным поиском (разрез 10 августа лёг в блоке 45281831: 45281830 — ещё
+    // 0x42E9f172… с 54 селекторами и 167 маршрутами всего, 45281831 — уже
+    // 0xEDE8B010… с 56 и 169). Отмотка НЕ убрана — она сверяется со снимком,
+    // и расхождение красит тест.
+    address internal constant CENSUS_FACET_BEFORE_10_AUG = 0x42E9f172D1c485dF8a7EbaD0ad7F8B7c648c3e44;
+    address internal constant CENSUS_FACET_AFTER_10_AUG = 0xEDE8B010e5bAf63721DCA03a9f2cfCb0A6BC3655;
+
+    string internal constant CENSUS_PATH_BEFORE_10_AUG =
+        "test/fixtures/chain-2026-08-10-arbiter-selectors.json";
+    string internal constant CENSUS_PATH_AFTER_10_AUG =
+        "test/fixtures/chain-2026-08-14-arbiter-selectors.json";
+
+    /// Общий загрузчик снимка цепи. Шапка сверяется здесь же: даймонд, фасет,
+    /// счёт, непустота блока и даты, и — главное — ДЛЯ КАКОГО СКРИПТА снимок
+    /// снят. Файл читается целиком каждым вызовом: 54-64 строки, цена в
+    /// микросекундах, а кеширование в storage потребовало бы не-view и сломало
+    /// бы `public view` у тестов состава.
+    function _censusFromFile(
+        string memory path,
+        address expectedFacet,
+        uint256 expectedCount,
+        string memory forScript
+    ) internal view returns (bytes4[] memory out) {
+        string memory json = vm.readFile(path);
 
         require(
             vm.parseJsonAddress(json, ".diamond") == CENSUS_DIAMOND,
             unicode"перепись снята не с того даймонда"
         );
         require(
-            vm.parseJsonAddress(json, ".facet") == CENSUS_FACET,
+            vm.parseJsonAddress(json, ".facet") == expectedFacet,
             unicode"перепись снята не с того фасета"
         );
         require(vm.parseJsonUint(json, ".block") > 0, unicode"в шапке переписи нет номера блока");
@@ -68,17 +94,79 @@ abstract contract ArbiterChainCensus is CommonBase {
             unicode"в шапке переписи нет даты снятия"
         );
 
+        // ⚠️ ГЛАВНАЯ ПРОВЕРКА ЭТОГО ЗАГРУЗЧИКА. Настоящая ловушка не «перепись
+        // устарела» (это заметно), а «старую перепись взяли для НОВОГО скрипта
+        // разреза» — и вот это проходит молча, а стоит целого разреза.
+        require(
+            keccak256(bytes(vm.parseJsonString(json, ".forScript"))) == keccak256(bytes(forScript)),
+            unicode"перепись снята для ДРУГОГО скрипта разреза — она не описывает то, что вы проверяете"
+        );
+
         string[] memory raw = vm.parseJsonStringArray(json, ".selectors");
         require(
             raw.length == vm.parseJsonUint(json, ".count"),
             unicode"шапка переписи обещает не столько селекторов, сколько в ней есть"
         );
+        require(raw.length == expectedCount, unicode"в переписи не то число селекторов, которого ждёт стенд");
 
         out = new bytes4[](raw.length);
         for (uint256 i = 0; i < raw.length; i++) {
             bytes memory b = vm.parseBytes(raw[i]);
             require(b.length == 4, unicode"в переписи строка не длиной в селектор");
             out[i] = bytes4(b);
+        }
+    }
+
+    /// Селекторы, смонтированные на старом ArbiterRegistryFacet в живой цепи
+    /// СЕГОДНЯ. `forScript` берётся у самого проверяемого скрипта
+    /// (`UpgradeArbiterAccountability.scriptPath()`), а не пишется здесь
+    /// литералом: литерал переехал бы в новый стенд вместе с копипастой и
+    /// промолчал бы.
+    function _chainCensus(string memory forScript) internal view returns (bytes4[] memory) {
+        return _censusFromFile(CENSUS_PATH, CENSUS_FACET, 64, forScript);
+    }
+
+    /// Раскладка ДО разреза «ключ чата арбитра» (10 августа 2026). Наблюдение,
+    /// не отмотка.
+    function _chainCensusBefore10Aug() internal view returns (bytes4[] memory) {
+        return _censusFromFile(
+            CENSUS_PATH_BEFORE_10_AUG,
+            CENSUS_FACET_BEFORE_10_AUG,
+            54,
+            "script/archive/UpgradeArbiterChatKey.s.sol"
+        );
+    }
+
+    /// Раскладка МЕЖДУ разрезами 10 и 15 августа 2026. Наблюдение, не отмотка.
+    function _chainCensusAfter10Aug() internal view returns (bytes4[] memory) {
+        return _censusFromFile(
+            CENSUS_PATH_AFTER_10_AUG,
+            CENSUS_FACET_AFTER_10_AUG,
+            56,
+            "script/UpgradePresentationRecord.s.sol"
+        );
+    }
+
+    /// Два множества селекторов совпадают как МНОЖЕСТВА (порядок неважен —
+    /// `facetFunctionSelectors` его не гарантирует).
+    function _assertSameSelectorSet(
+        bytes4[] memory a,
+        bytes4[] memory b,
+        string memory whatA,
+        string memory whatB
+    ) internal pure {
+        require(a.length == b.length, string.concat(whatA, unicode" и ", whatB, unicode" разошлись по числу"));
+        for (uint256 i = 0; i < a.length; i++) {
+            require(
+                _censusContains(b, a[i]),
+                string.concat(unicode"селектор из «", whatA, unicode"» отсутствует в «", whatB, unicode"»")
+            );
+        }
+        for (uint256 i = 0; i < b.length; i++) {
+            require(
+                _censusContains(a, b[i]),
+                string.concat(unicode"селектор из «", whatB, unicode"» отсутствует в «", whatA, unicode"»")
+            );
         }
     }
 

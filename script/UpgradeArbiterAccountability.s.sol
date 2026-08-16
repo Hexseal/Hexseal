@@ -160,6 +160,23 @@ contract UpgradeArbiterAccountability is Script {
     /// прикладной проверке, после разреза обязан не найти маршрут вовсе.
     address internal constant DEAD_BUTTON_PROBE = address(0xA1);
 
+    /// Собственное имя скрипта. Нужно НЕ для логов, а для того, чтобы перепись
+    /// цепи могла назвать, ДЛЯ КОГО она снята (уборка 7а, п. 4, Ruling 33).
+    ///
+    /// Ловушка, ради которой это заведено, — не «перепись устареет», а
+    /// «кто-то возьмёт СТАРУЮ перепись для НОВОГО скрипта разреза». Такой
+    /// человек напишет второй скрипт и скопирует стенд этого; литеральную
+    /// строку в стенде он скопировал бы вместе с остальным и ничего бы не
+    /// заметил. Значение, взятое у САМОГО ПРОВЕРЯЕМОГО скрипта, копированием
+    /// не переносится: у нового скрипта оно своё, а `forScript` в переписи —
+    /// прежний, и стенд краснеет детерминированно и БЕЗ обращения к сети.
+    ///
+    /// Строка обязана совпадать с полем `forScript` в
+    /// test/fixtures/chain-2026-08-16-arbiter-selectors.json.
+    function scriptPath() public pure returns (string memory) {
+        return "script/UpgradeArbiterAccountability.s.sol";
+    }
+
     function run() external {
         address diamond = vm.envAddress("DIAMOND_ADDRESS");
         uint256 pk = vm.envUint("PRIVATE_KEY");

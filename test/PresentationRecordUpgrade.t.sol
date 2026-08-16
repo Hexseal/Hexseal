@@ -217,9 +217,39 @@ contract PresentationRecordUpgradeTest is Test, ArbiterTwoFacetBench, ArbiterCha
     /// (test_AddSelectorsAreTheEightNewSignatures) — то есть текстом, а не
     /// `.selector` из того же фасета. `replaceSelectors()`, ради которого стенд
     /// и строится, в вычислении не участвует вовсе.
+    ///
+    /// ⚠️ ОТМОТКА ЗАМЕНЕНА НАБЛЮДЕНИЕМ (уборка 7а, п. 4, Ruling 32). Здесь
+    /// стояло `_rewindCut(_chainCensus(), upgrade.addSelectors(), ...)` — то
+    /// есть раскладка ВЫЧИСЛЯЛАСЬ из переписи 16 августа. Вычисление верное, но
+    /// оно живёт ровно до первой ошибки в списках, из которых делается. Теперь
+    /// раскладка ЧИТАЕТСЯ снимком цепи в блоке 45476892 (14 августа): 56
+    /// селекторов на 0xEDE8B010…, 169 маршрутов всего.
+    /// Отмотка не выброшена — она сверяется со снимком в
+    /// test_RewindOfTheCensusMatchesTheChainSnapshot ниже. У одного числа стало
+    /// два независимых источника вместо одного.
     function _oldFacetSelectors() internal view returns (bytes4[] memory out) {
-        out = _rewindCut(_chainCensus(), upgrade.addSelectors(), new bytes4[](0));
+        out = _chainCensusAfter10Aug();
         require(out.length == 56, unicode"раскладка до разреза 15 августа обязана быть 56 селекторов");
+    }
+
+    /// Наблюдение против вычисления: снимок цепи 14 августа обязан совпасть с
+    /// отмоткой переписи 16 августа на один шаг назад.
+    ///
+    /// Что исчезнет из поведения, если снять: два источника снова станут одним.
+    /// Пока они сверяются, ошибка в `addSelectors()` (из которого делается
+    /// отмотка) краснеет ЗДЕСЬ, а не проявляется отвергнутой боевой
+    /// транзакцией; а порча снимка краснеет против отмотки.
+    function test_RewindOfTheCensusMatchesTheChainSnapshot() public view {
+        _assertSameSelectorSet(
+            _chainCensusAfter10Aug(),
+            _rewindCut(
+                _censusFromFile(CENSUS_PATH, CENSUS_FACET, 64, "script/UpgradeArbiterAccountability.s.sol"),
+                upgrade.addSelectors(),
+                new bytes4[](0)
+            ),
+            unicode"снимок цепи 14 августа",
+            unicode"отмотка переписи 16 августа"
+        );
     }
 
     /// Список из `ArbiterChainCensus._presentationCutAddSelectors()` — вторая,
@@ -282,7 +312,9 @@ contract PresentationRecordUpgradeTest is Test, ArbiterTwoFacetBench, ArbiterCha
         bytes4[] memory twin = new bytes4[](sigs.length);
         for (uint256 i; i < sigs.length; i++) twin[i] = bytes4(keccak256(bytes(sigs[i])));
 
-        bytes4[] memory census = _chainCensus();
+        bytes4[] memory census = _censusFromFile(
+            CENSUS_PATH, CENSUS_FACET, 64, "script/UpgradeArbiterAccountability.s.sol"
+        );
         bytes4 naked = bytes4(keccak256("removeArbiter(address)"));
 
         uint256 checked;
