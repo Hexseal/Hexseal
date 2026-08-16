@@ -466,6 +466,26 @@ contract ArbiterRegistryFacet {
     /// Утверждено владельцем 15 августа 2026.
     uint256 private constant MAX_CLAIMS_PER_ARBITER = 10;
 
+    // -------- ENUM --------
+
+    /// Каким путём сработало АВТОМАТИЧЕСКОЕ снятие по серии судейских ошибок.
+    /// Значений ровно столько, сколько вызывающих у _recordArbiterMistake, и
+    /// каждое отвечает на вопрос «кто это сделал» честно, включая ответ
+    /// «никто»:
+    ///
+    ///   OwnerOverturn    — overturnVerdict. Зовёт владелец либо daoAddress,
+    ///                      проверок обоснованности в ней нет ни одной. Нажавший
+    ///                      есть, и он назван полем `by`.
+    ///   AgreementTimeout — notifyArbiterTimeout. Зовёт САМ АГРИМЕНТ изнутри
+    ///                      triggerArbiterTimeout (msg.sender == agreement).
+    ///                      Человека за вызовом нет, `by` нулевой.
+    ///   AppealVote       — resolveAppeal. Подводит итог голосования, и звать её
+    ///                      может кто угодно. Это тот случай, где msg.sender лгал
+    ///                      бы громче всего: решают ГОЛОСА, а не нажавший
+    ///                      «подвести итог». `by` нулевой, голосовавшие — в ленте
+    ///                      AppealVoteCast по тому же агрименту.
+    enum DemotionPath { OwnerOverturn, AgreementTimeout, AppealVote }
+
     // -------- EVENTS --------
 
     event ArbiterAdded(address indexed arbiter);
@@ -522,7 +542,34 @@ contract ArbiterRegistryFacet {
     event AppealRaised(address indexed agreement, address indexed appellant);
     event AppealVoteCast(address indexed agreement, address indexed arbiter, bool overturn);
     event AppealResolved(address indexed agreement, address indexed appellant, bool overturned);
-    event ArbiterDemoted(address indexed arbiter);
+    /// Снятие по серии судейских ошибок.
+    ///
+    /// ⚠️ ЧЕТЫРЕ ПОЛЯ ВМЕСТО ОДНОГО (п. 65, 16 августа 2026). Прежняя
+    /// редакция — `ArbiterDemoted(address indexed arbiter)` — не называла ни
+    /// повода, ни нажавшего. Снаружи это читалось как «система сама демоутнула
+    /// судью за три ошибки подряд»: запись не просто скрывала обвинителя, она
+    /// перекладывала вину на обвиняемого убедительнее любого обвинения. При том
+    /// что владелец тремя вызовами overturnVerdict по ОДНОМУ агрименту снимает
+    /// арбитра мимо двери с поводом, а проверок обоснованности в overturnVerdict
+    /// нет ни одной.
+    ///
+    /// `by` нулевой там, где нажавшего нет ВООБЩЕ (таймаут, голосование) — это
+    /// утверждение, а не пропуск: см. докстринг DemotionPath.
+    ///
+    /// `agreement` — спор, на котором сработала ПОСЛЕДНЯЯ ошибка серии. Он не
+    /// вся история и ею не притворяется: он вход в неё. По нему читатель
+    /// находит VerdictOverturned / ArbiterTimedOut / AppealVoteCast и видит,
+    /// три ли это разных спора или один, перевёрнутый трижды.
+    ///
+    /// Событие в селектор функции не входит — состав селекторов фасета этой
+    /// правкой не меняется, и это проверено хешем methodIdentifiers до и после,
+    /// а не принято на веру.
+    event ArbiterDemoted(
+        address      indexed arbiter,
+        address      indexed by,
+        DemotionPath indexed path,
+        address              agreement
+    );
     event ArbiterResigned(address indexed arbiter, uint256 bondRefunded);
     event DisputeFeeCredited(address indexed arbiter, uint256 toArbiter, uint256 toTreasury);
     event TreasurySlicePushed(address indexed to, uint256 amount);
@@ -1446,7 +1493,11 @@ contract ArbiterRegistryFacet {
         ReputationStorage.Data storage rep = ReputationStorage.data();
         _slashArbiterXP(rep, slashedArbiter);
 
-        _recordArbiterMistake(d, rep, slashedArbiter);
+        // `by` — СЫРОЙ msg.sender, и это не оплошность: роль на этой двери
+        // проверил модификатор onlyOwnerOrDAO по нему же. Взять здесь
+        // _msgSender() значило бы записать в вечную ленту одного, а решение
+        // приписать другому (запись в script/gasless-sender.allow).
+        _recordArbiterMistake(d, rep, slashedArbiter, msg.sender, DemotionPath.OwnerOverturn, agreement);
 
         emit VerdictOverturned(agreement, slashedArbiter, newClientWins);
     }
@@ -1467,7 +1518,9 @@ contract ArbiterRegistryFacet {
         if (arbiterAddr == address(0)) return; // никто не забирал спор — не на кого списывать
 
         ReputationStorage.Data storage rep = ReputationStorage.data();
-        _recordArbiterMistake(d, rep, arbiterAddr);
+        // `by` нулевой: msg.sender здесь — сам агримент (проверено выше),
+        // человека за вызовом нет вовсе.
+        _recordArbiterMistake(d, rep, arbiterAddr, address(0), DemotionPath.AgreementTimeout, agreement);
     }
 
     /// @notice Списывает OVERTURN_XP_SLASH у арбитра, не давая уйти в underflow.
@@ -1545,7 +1598,10 @@ contract ArbiterRegistryFacet {
     function _recordArbiterMistake(
         ArbiterRegistryStorage.Data storage d,
         ReputationStorage.Data storage rep,
-        address arbiterAddr
+        address arbiterAddr,
+        address by,
+        DemotionPath path,
+        address agreement
     ) private {
         uint256 mistakes = d.arbiterMistakeStreak[arbiterAddr] + 1;
         d.arbiterMistakeStreak[arbiterAddr] = mistakes;
@@ -1598,7 +1654,7 @@ contract ArbiterRegistryFacet {
 
             ArbiterRegistryStorage.clearSeat(d, arbiterAddr);
 
-            emit ArbiterDemoted(arbiterAddr);
+            emit ArbiterDemoted(arbiterAddr, by, path, agreement);
         }
     }
 
@@ -1720,7 +1776,10 @@ contract ArbiterRegistryFacet {
 
             ReputationStorage.Data storage rep = ReputationStorage.data();
             _slashArbiterXP(rep, slashedArbiter);
-            _recordArbiterMistake(d, rep, slashedArbiter);
+            // `by` нулевой: resolveAppeal зовёт кто угодно, а решают ГОЛОСА.
+            // Назвать нажавшего «подвести итог» виновником было бы худшей из
+            // трёх возможных неправд.
+            _recordArbiterMistake(d, rep, slashedArbiter, address(0), DemotionPath.AppealVote, agreement);
 
             bool refundOk = IUSDCFull(usdc).transfer(v.appellant, APPEAL_DEPOSIT);
             require(refundOk, "ArbiterRegistry: deposit refund failed");

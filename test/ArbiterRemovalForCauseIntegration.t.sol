@@ -1119,4 +1119,125 @@ contract ArbiterRemovalForCauseIntegrationTest is Test {
             unicode"форвардеру ответ не принадлежит"
         );
     }
+
+    // ============================================================
+    //  ЗАПИСЬ ОБ АВТОСНЯТИИ НАЗЫВАЕТ ПРОИСХОЖДЕНИЕ (п. 65, 16 августа 2026)
+    //
+    //  Одного поданного вердикта хватает, чтобы владелец тремя вызовами
+    //  overturnVerdict по ОДНОМУ агрименту снял арбитра, минуя дверь с
+    //  поводом. Прежнее событие из одного поля читалось как автоматика — то
+    //  есть валило вину на снятого. Путей у автоснятия ровно три, и каждый
+    //  обязан быть назван своим.
+    // ============================================================
+
+    /// Путь первый: владелец переворачивает вердикт. Нажавший есть, и он
+    /// назван. Три переворота ОДНОГО агримента — ровно тот сценарий, ради
+    /// которого правка делалась.
+    function test_ArbiterDemotedNamesOwnerOnTheOverturnPath() public {
+        address agr = _disputeAndSubmit(address(0x651), address(0x652));
+
+        ArbiterRegistryFacet(address(diamond)).overturnVerdict(agr, false);
+        ArbiterRegistryFacet(address(diamond)).overturnVerdict(agr, true);
+
+        vm.expectEmit(true, true, true, true, address(diamond));
+        emit ArbiterRegistryFacet.ArbiterDemoted(
+            arbiter, owner, ArbiterRegistryFacet.DemotionPath.OwnerOverturn, agr
+        );
+        ArbiterRegistryFacet(address(diamond)).overturnVerdict(agr, false);
+
+        assertFalse(
+            ArbiterRegistryFacet(address(diamond)).isRegisteredArbiter(arbiter),
+            unicode"третий переворот снял арбитра"
+        );
+    }
+
+    /// Путь второй: спор не доведён, агримент сам сообщает о таймауте.
+    /// Нажавшего нет вовсе — msg.sender здесь это САМ АГРИМЕНТ, и записывать
+    /// его как «кто нажал» значило бы врать. Поэтому `by` нулевой, а сделка
+    /// названа отдельным полем.
+    function test_ArbiterDemotedNamesNobodyOnTheTimeoutPath() public {
+        _disputeAndOverturn(address(0x653), address(0x654));
+        _disputeAndOverturn(address(0x655), address(0x656));
+
+        // Третья сделка: спор взят и НЕ доведён до вердикта.
+        address cli = address(0x657);
+        address exec = address(0x658);
+        usdc.mint(cli, 1_000_000 * 10 ** 6);
+        vm.prank(cli);
+        usdc.approve(address(diamond), 10 * 10 ** 6);
+        vm.prank(cli);
+        address agr = FactoryFacet(address(diamond)).deployAgreement(
+            cli, exec, arbiter, AMOUNT, DEADLINE, TERMS, 0
+        );
+        vm.prank(cli);
+        usdc.approve(agr, AMOUNT);
+        vm.prank(cli);
+        Agreement(agr).fund();
+        vm.prank(exec);
+        Agreement(agr).activate();
+        vm.prank(cli);
+        Agreement(agr).raiseDispute();
+        _claimDisputeAs(agr, arbiter);
+
+        // DISPUTE_WINDOW = 4 days (src/Agreement.sol:278); строго БОЛЬШЕ.
+        vm.warp(vm.getBlockTimestamp() + 4 days + 1);
+
+        vm.expectEmit(true, true, true, true, address(diamond));
+        emit ArbiterRegistryFacet.ArbiterDemoted(
+            arbiter, address(0), ArbiterRegistryFacet.DemotionPath.AgreementTimeout, agr
+        );
+        vm.prank(cli);
+        Agreement(agr).triggerArbiterTimeout();
+
+        assertFalse(
+            ArbiterRegistryFacet(address(diamond)).isRegisteredArbiter(arbiter),
+            unicode"третья ошибка подряд — таймаутом, и она тоже снимает"
+        );
+    }
+
+    /// Путь третий: апелляция. Нажавшего тоже нет — resolveAppeal звать может
+    /// кто угодно, и записать его как виновника было бы худшей из трёх
+    /// возможных неправд: решают ГОЛОСА, а не тот, кто нажал «подвести итог».
+    /// `by` нулевой, голосовавшие читаются из AppealVoteCast по тому же
+    /// агрименту.
+    function test_ArbiterDemotedNamesNobodyOnTheAppealPath() public {
+        _disputeAndOverturn(address(0x659), address(0x65A));
+        _disputeAndOverturn(address(0x65B), address(0x65C));
+
+        address v1 = address(0x6A1);
+        address v2 = address(0x6A2);
+        address v3 = address(0x6A3);
+        ArbiterRegistryFacet(address(diamond)).addArbiter(v1);
+        ArbiterRegistryFacet(address(diamond)).addArbiter(v2);
+        ArbiterRegistryFacet(address(diamond)).addArbiter(v3);
+
+        address cli = address(0x65D);
+        address exec = address(0x65E);
+        address agr = _disputeAndSubmit(cli, exec);
+        // submitVerdict(agr, true) — выиграл клиент, значит апеллирует
+        // исполнитель. APPEAL_DEPOSIT — 20 USDC.
+        usdc.mint(exec, 100 * 10 ** 6);
+        vm.prank(exec);
+        usdc.approve(address(diamond), 20 * 10 ** 6);
+        vm.prank(exec);
+        ArbiterRegistryFacet(address(diamond)).raiseAppeal(agr);
+
+        vm.prank(v1);
+        ArbiterRegistryFacet(address(diamond)).voteOnAppeal(agr, true);   // перевернуть
+        vm.prank(v2);
+        ArbiterRegistryFacet(address(diamond)).voteOnAppeal(agr, true);   // перевернуть
+        vm.prank(v3);
+        ArbiterRegistryFacet(address(diamond)).voteOnAppeal(agr, false);  // оставить
+
+        vm.expectEmit(true, true, true, true, address(diamond));
+        emit ArbiterRegistryFacet.ArbiterDemoted(
+            arbiter, address(0), ArbiterRegistryFacet.DemotionPath.AppealVote, agr
+        );
+        ArbiterRegistryFacet(address(diamond)).resolveAppeal(agr);
+
+        assertFalse(
+            ArbiterRegistryFacet(address(diamond)).isRegisteredArbiter(arbiter),
+            unicode"голоса перевернули вердикт — и это третья ошибка подряд"
+        );
+    }
 }
