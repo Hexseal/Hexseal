@@ -494,6 +494,15 @@ contract ArbiterSuspensionTest is Test, ArbiterTwoFacetBench {
     uint256 constant SLOT_XP             = 0;
     uint256 constant SLOT_CLEAN_STREAK   = 9;
 
+    /// Вечная запись о сносах (п. 72, 16 августа 2026) — дописана в конец
+    /// структуры, значит её смещения идут следом за removedAt (31). Числа
+    /// выведены счётом полей И проверены поведенчески тут же: при неверном
+    /// смещении vm.store молча пишет в чужое поле, и assertEq на своё число
+    /// в test_StandingDistinguishesEveryField падает.
+    uint256 constant SLOT_REMOVAL_COUNT       = 32;
+    uint256 constant SLOT_LAST_REMOVAL_AT     = 33;
+    uint256 constant SLOT_LAST_REMOVAL_CAUSE  = 34;
+
     function _storeUint(bytes32 base, uint256 offset, address who, uint256 value) internal {
         bytes32 slot = keccak256(abi.encode(who, uint256(base) + offset));
         vm.store(address(acc), slot, bytes32(value));
@@ -517,7 +526,10 @@ contract ArbiterSuspensionTest is Test, ArbiterTwoFacetBench {
             uint256 openClaims,
             uint256 cleanVerdicts,
             uint256 removedAt,
-            bool    hasLiveRemovalProposal
+            bool    hasLiveRemovalProposal,
+            uint256 removalCount,
+            uint256 lastRemovalAt,
+            uint8   lastRemovalCause
         ) = acc.getArbiterStanding(arbiter);
 
         assertEq(xp, 0);
@@ -530,6 +542,9 @@ contract ArbiterSuspensionTest is Test, ArbiterTwoFacetBench {
         assertEq(cleanVerdicts, 0, unicode"судейского стажа ещё нет");
         assertEq(removedAt, 0, unicode"не снимали — ноль, а не мусор");
         assertFalse(hasLiveRemovalProposal, unicode"предложения о сносе не было");
+        assertEq(removalCount, 0, unicode"не снимали ни разу — ноль, а не мусор");
+        assertEq(lastRemovalAt, 0, unicode"момента прошлого сноса нет");
+        assertEq(lastRemovalCause, 0, unicode"ноль означает «не снимали», а не Cause номер ноль");
     }
 
     /// Мутационная проба: КАЖДОЕ числовое/адресное поле получает своё
@@ -549,6 +564,12 @@ contract ArbiterSuspensionTest is Test, ArbiterTwoFacetBench {
         _storeUint(ARB_BASE, SLOT_OPEN_CLAIMS, arbiter, 506);
         _storeUint(ARB_BASE, SLOT_CLEAN_VERDICTS, arbiter, 507);
         _storeUint(ARB_BASE, SLOT_REMOVED_AT, arbiter, 508);
+        _storeUint(ARB_BASE, SLOT_REMOVAL_COUNT, arbiter, 509);
+        _storeUint(ARB_BASE, SLOT_LAST_REMOVAL_AT, arbiter, 510);
+        // Повод — uint8, в 509/510 он не влезает, поэтому свой маркер из того
+        // же ряда, но в диапазоне типа: 211 не совпадает ни с одним настоящим
+        // кодом (1..6) и не равен AUTO_REMOVAL_CODE (255).
+        _storeUint(ARB_BASE, SLOT_LAST_REMOVAL_CAUSE, arbiter, 211);
 
         // suspendedUntil — через боевой вызов, а не маркер: значение (t0 + 72h)
         // уже отличается от всех восьми маркеров выше на любом разумном t0.
@@ -571,7 +592,10 @@ contract ArbiterSuspensionTest is Test, ArbiterTwoFacetBench {
             uint256 openClaims,
             uint256 cleanVerdicts,
             uint256 removedAt,
-            bool    hasLiveRemovalProposal
+            bool    hasLiveRemovalProposal,
+            uint256 removalCount,
+            uint256 lastRemovalAt,
+            uint8   lastRemovalCause
         ) = acc.getArbiterStanding(arbiter);
 
         assertEq(xp, 501, "xp");
@@ -584,5 +608,8 @@ contract ArbiterSuspensionTest is Test, ArbiterTwoFacetBench {
         assertEq(cleanVerdicts, 507, "cleanVerdicts");
         assertEq(removedAt, 508, "removedAt");
         assertTrue(hasLiveRemovalProposal, "hasLiveRemovalProposal");
+        assertEq(removalCount, 509, unicode"поле сносов отдаёт своё число");
+        assertEq(lastRemovalAt, 510, unicode"поле момента отдаёт своё");
+        assertEq(lastRemovalCause, uint8(211), unicode"поле повода отдаёт своё");
     }
 }

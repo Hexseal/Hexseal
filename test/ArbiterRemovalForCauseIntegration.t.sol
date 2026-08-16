@@ -1295,4 +1295,92 @@ contract ArbiterRemovalForCauseIntegrationTest is Test {
             unicode"голоса перевернули вердикт — и это третья ошибка подряд"
         );
     }
+
+    // ============================================================
+    //  ВЕЧНАЯ ЗАПИСЬ О СНОСАХ (п. 72, 16 августа 2026)
+    //
+    //  removedAt и removalReply стираются любой повторной посадкой, и это
+    //  верно: они отвечают на вопрос «отвечал ли он на ТЕКУЩЕЕ обвинение».
+    //  Но тогда карточка показывает чистого человека тому, кого сносили
+    //  трижды, — а стирающая дверь принадлежит обвинителю (addArbiter) и,
+    //  после включения ДАО, самому обвиняемому (applyAsArbiter).
+    // ============================================================
+
+    /// Снос по поводу → посадка обратно → снос по ДРУГОМУ поводу.
+    /// Стираемая половина обнуляется, вечная растёт.
+    function test_StandingRemembersRemovalsAcrossReseating() public {
+        ArbiterAccountabilityFacet(address(diamond)).removeArbiterForCause(
+            arbiter, ArbiterAccountabilityFacet.Cause.Collusion, keccak256("evidence"), address(0)
+        );
+
+        (, , , , , , , , uint256 removedAt1, , uint256 count1, uint256 lastAt1, uint8 cause1)
+            = ArbiterAccountabilityFacet(address(diamond)).getArbiterStanding(arbiter);
+        assertGt(removedAt1, 0, unicode"текущий снос отмечен");
+        assertEq(count1, 1, unicode"сносов один");
+        assertEq(lastAt1, vm.getBlockTimestamp(), unicode"момент последнего сноса записан");
+        assertEq(cause1, uint8(ArbiterAccountabilityFacet.Cause.Collusion) + 1,
+            unicode"повод записан со сдвигом: ноль обязан значить «не снимали»");
+
+        ArbiterRegistryFacet(address(diamond)).addArbiter(arbiter);
+
+        (, , , , , , , , uint256 removedAt2, , uint256 count2, uint256 lastAt2, uint8 cause2)
+            = ArbiterAccountabilityFacet(address(diamond)).getArbiterStanding(arbiter);
+        assertEq(removedAt2, 0, unicode"текущего сноса нет — его отменили посадкой");
+        assertEq(count2, 1, unicode"а прошлый снос посадка не стирает");
+        assertEq(lastAt2, lastAt1, unicode"момент прошлого сноса остался");
+        assertEq(cause2, cause1, unicode"повод прошлого сноса остался");
+
+        vm.warp(vm.getBlockTimestamp() + 1 days);
+        ArbiterAccountabilityFacet(address(diamond)).removeArbiterForCause(
+            arbiter, ArbiterAccountabilityFacet.Cause.Leak, keccak256("leak"), address(0)
+        );
+
+        (, , , , , , , , , , uint256 count3, uint256 lastAt3, uint8 cause3)
+            = ArbiterAccountabilityFacet(address(diamond)).getArbiterStanding(arbiter);
+        assertEq(count3, 2, unicode"второй снос — счётчик два");
+        assertEq(lastAt3, vm.getBlockTimestamp(), unicode"момент обновился на последний");
+        assertEq(cause3, uint8(ArbiterAccountabilityFacet.Cause.Leak) + 1, unicode"повод обновился");
+    }
+
+    /// Автодемоушен — тоже снос, и он тоже помнится. Повода у него нет:
+    /// цепь сняла арбитра по серии ошибок, а не по чьему-то обвинению, и
+    /// код это говорит прямо, а не притворяется поводом номер ноль.
+    function test_AutoDemotionIsRememberedWithoutACause() public {
+        _disputeAndOverturn(address(0x721), address(0x722));
+        _disputeAndOverturn(address(0x723), address(0x724));
+        _disputeAndOverturn(address(0x725), address(0x726));
+
+        assertFalse(ArbiterRegistryFacet(address(diamond)).isRegisteredArbiter(arbiter));
+
+        (, , , , , , , , , , uint256 count, uint256 lastAt, uint8 cause)
+            = ArbiterAccountabilityFacet(address(diamond)).getArbiterStanding(arbiter);
+        assertEq(count, 1, unicode"автомат снял — счётчик вырос так же, как от руки");
+        assertEq(lastAt, vm.getBlockTimestamp(), unicode"момент автоснятия записан");
+        assertEq(cause, 255, unicode"AUTO_REMOVAL_CODE: повода нет вовсе, и это сказано прямо");
+    }
+
+    /// Самая острая половина: после включения ДАО стирающая дверь достаётся
+    /// САМОМУ обвиняемому. applyAsArbiter зовёт тот же clearRemovalRecord —
+    /// и не должен уносить с собой историю.
+    function test_SelfRegistrationCannotEraseTheRemovalHistory() public {
+        ArbiterAccountabilityFacet(address(diamond)).removeArbiterForCause(
+            arbiter, ArbiterAccountabilityFacet.Cause.Collusion, keccak256("evidence"), address(0)
+        );
+
+        _setUniqueActiveUsers(ArbiterRegistryFacet(address(diamond)).getDaoThreshold());
+        _grantSelfRegistrationGate(arbiter);
+        vm.prank(arbiter);
+        ArbiterRegistryFacet(address(diamond)).applyAsArbiter();
+        assertTrue(
+            ArbiterRegistryFacet(address(diamond)).isRegisteredArbiter(arbiter),
+            unicode"сетап: самозапись прошла"
+        );
+
+        (, , , , , , , , uint256 removedAt, , uint256 count, , uint8 cause)
+            = ArbiterAccountabilityFacet(address(diamond)).getArbiterStanding(arbiter);
+        assertEq(removedAt, 0, unicode"текущий снос самозапись снимает — это её право");
+        assertEq(count, 1, unicode"а историю обвиняемый обнулить не может");
+        assertEq(cause, uint8(ArbiterAccountabilityFacet.Cause.Collusion) + 1,
+            unicode"и повод прошлого сноса остаётся читаемым");
+    }
 }

@@ -613,6 +613,11 @@ contract ArbiterAccountabilityFacet {
         // любой посторонний мог бы «ответить» на несуществующее обвинение.
         d.removedAt[arbiter] = block.timestamp;
 
+        // Вечная половина той же записи (п. 72). Кодирует библиотека — здесь
+        // передаётся сырой номер повода, ровно тот же, что уезжает в событие
+        // ArbiterRemovedForCause ниже.
+        ArbiterRegistryStorage.recordRemovalForCause(d, arbiter, uint8(cause));
+
         // ⚠️ СНОС ПОДРАЗУМЕВАЕТ ПРИОСТАНОВКУ (финальный обзор ветки, C-1,
         // 16 августа 2026). Без этой строки сильная мера была СЛАБЕЕ слабой —
         // инверсия всего замысла:
@@ -876,6 +881,22 @@ contract ArbiterAccountabilityFacet {
     ///
     /// XP и cleanStreak читаются из ReputationStorage — чужого неймспейса,
     /// тем же приёмом, что и _isDaoActive выше: фасет уже умеет туда ходить.
+    ///
+    /// `removalCount` / `lastRemovalAt` / `lastRemovalCause` — история сносов
+    /// (п. 72, 16 августа 2026). Она отвечает на вопрос, на который остальные
+    /// поля ответить не могут: `removedAt` выше говорит только про ТЕКУЩИЙ,
+    /// ещё не отменённый снос и обнуляется любой повторной посадкой — а
+    /// повторную посадку делает обвинитель, и после включения ДАО ещё и сам
+    /// обвиняемый. Без этих трёх полей карточка показывала бы чистого
+    /// человека тому, кого сносили трижды.
+    ///
+    /// `lastRemovalCause` закодирован: 0 — не снимали ни разу, 1..6 — Cause
+    /// плюс единица, 255 — автодемоушен (повода нет). Кодировку держит
+    /// ArbiterRegistryStorage, здесь только чтение.
+    ///
+    /// Селектор функции от типа возврата не зависит — расширение кортежа
+    /// каскад деплоя не трогает; читателей у функции сегодня ноль
+    /// (проверено грепом по frontend/src), ломать нечего.
     function getArbiterStanding(address arbiter) external view returns (
         uint256 xp,
         uint256 cleanStreak,
@@ -886,7 +907,10 @@ contract ArbiterAccountabilityFacet {
         uint256 openClaims,
         uint256 cleanVerdicts,
         uint256 removedAt,
-        bool    hasLiveRemovalProposal
+        bool    hasLiveRemovalProposal,
+        uint256 removalCount,
+        uint256 lastRemovalAt,
+        uint8   lastRemovalCause
     ) {
         ArbiterRegistryStorage.Data storage d = ArbiterRegistryStorage.data();
         ReputationStorage.Data storage rep = ReputationStorage.data();
@@ -900,7 +924,10 @@ contract ArbiterAccountabilityFacet {
             d.openClaimCount[arbiter],
             d.cleanVerdicts[arbiter],
             d.removedAt[arbiter],
-            hasLiveProposal(arbiter)
+            hasLiveProposal(arbiter),
+            d.removalCount[arbiter],
+            d.lastRemovalAt[arbiter],
+            d.lastRemovalCause[arbiter]
         );
     }
 
