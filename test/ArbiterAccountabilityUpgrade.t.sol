@@ -98,26 +98,73 @@ contract ArbiterAccountabilityUpgradeTest is Test {
     /// поедет новым кодом, половина старым, поверх одного и того же хранилища,
     /// в которое задачи 1-8 дописали шесть полей. Худший из возможных исходов
     /// разреза, и снаружи он выглядит как «всё прошло, транзакция зелёная».
+    /// ⚠️ ПЕРЕПИСАН ЗАДАЧЕЙ 4.5 (16 августа 2026) И УСИЛЕН, А НЕ ОСЛАБЛЕН.
+    ///
+    /// Прежняя редакция знала один фасет и складывала `replaceSelectors() +
+    /// addRegistrySelectors()`, сверяя сумму с ABI реестра. После того как
+    /// четырнадцать чтений уехали в фасет ответственности, эта сумма перестала
+    /// быть осмысленной: общий Replace содержит теперь селекторы ОБОИХ фасетов.
+    ///
+    /// Новая редакция проверяет БОЛЬШЕ, чем прежняя: каждая из четырёх групп
+    /// сверяется со СВОИМ фасетом ПОИМЁННО и ПО СЧЁТУ. То есть теперь пиннится
+    /// не только «селектор не забыт», но и «селектор лежит в той группе, чей
+    /// адрес его реализует» — ровно тот разъезд, который в этой задаче и
+    /// возможен впервые.
+    ///
+    /// Что исчезнет из поведения, если снять: забытый в обеих группах селектор
+    /// останется смонтированным на СТАРЫЙ адрес фасета — половина даймонда
+    /// поедет новым кодом, половина старым, поверх одного хранилища. А селектор,
+    /// попавший в группу ЧУЖОГО фасета, смонтируется на адрес, который его не
+    /// реализует: diamondCut на это не ревертит (проверяет только «адрес другой
+    /// и есть код»), и вызов начнёт ревертить уже в цепи.
     function test_ReplaceAndAddCoverWholeRegistryABI() public view {
-        bytes4[] memory replaceSels = upgrade.replaceSelectors();
-        bytes4[] memory addReg      = upgrade.addRegistrySelectors();
-        bytes4[] memory abiSels     = _abiSelectors("ArbiterRegistryFacet");
+        _assertGroupsCoverFacetExactly(
+            "ArbiterRegistryFacet",
+            upgrade.replaceRegistrySelectors(),
+            upgrade.addRegistrySelectors()
+        );
+        _assertGroupsCoverFacetExactly(
+            "ArbiterAccountabilityFacet",
+            upgrade.replaceAccountabilitySelectors(),
+            upgrade.addAccountabilitySelectors()
+        );
+    }
 
-        assertGt(replaceSels.length, 0, unicode"список замены пуст — скрипт ничего не заменит");
+    /// Объединение двух групп ОДНОГО фасета обязано совпадать с его ABI —
+    /// поимённо в обе стороны и по счёту. Счёт здесь не декоративен: без него
+    /// список с повтором прошёл бы поимённую проверку.
+    function _assertGroupsCoverFacetExactly(
+        string memory facetName,
+        bytes4[] memory replaceGroup,
+        bytes4[] memory addGroup
+    ) internal view {
+        bytes4[] memory abiSels = _abiSelectors(facetName);
+        assertGt(abiSels.length, 0, unicode"ABI фасета пуст — читать нечего");
 
+        // Ни один селектор фасета не забыт.
         for (uint256 i = 0; i < abiSels.length; i++) {
             assertTrue(
-                _contains(replaceSels, abiSels[i]) || _contains(addReg, abiSels[i]),
-                unicode"селектор ArbiterRegistryFacet не попал ни в Replace, ни в Add"
+                _contains(replaceGroup, abiSels[i]) || _contains(addGroup, abiSels[i]),
+                string.concat(unicode"селектор не попал ни в Replace, ни в Add: ", facetName)
             );
         }
-
-        // И обратная сторона счётом: ABI фасета ровно равен объединению.
-        // removeArbiter в ABI больше нет вовсе — задача 6 удалила её из кода,
-        // поэтому вычитать её здесь не из чего.
+        // Ни один селектор группы не чужой этому фасету.
+        for (uint256 i = 0; i < replaceGroup.length; i++) {
+            assertTrue(
+                _contains(abiSels, replaceGroup[i]),
+                string.concat(unicode"Replace-группа несёт селектор чужого фасета: ", facetName)
+            );
+        }
+        for (uint256 i = 0; i < addGroup.length; i++) {
+            assertTrue(
+                _contains(abiSels, addGroup[i]),
+                string.concat(unicode"Add-группа несёт селектор чужого фасета: ", facetName)
+            );
+        }
+        // И счётом — иначе повтор внутри группы прошёл бы обе проверки выше.
         assertEq(
-            replaceSels.length + addReg.length, abiSels.length,
-            unicode"Replace+Add не совпадает с ABI фасета по числу селекторов"
+            replaceGroup.length + addGroup.length, abiSels.length,
+            string.concat(unicode"Replace+Add не совпадает с ABI по числу селекторов: ", facetName)
         );
     }
 
@@ -127,22 +174,34 @@ contract ArbiterAccountabilityUpgradeTest is Test {
     /// которой в даймонде нет. Фронт зовёт — «Diamond: function not found».
     /// Мёртвая кнопка, и узнаем мы о ней от человека, который на неё нажал.
     function test_AddCoversWholeAccountabilityABI() public view {
-        bytes4[] memory addAcc  = upgrade.addAccountabilitySelectors();
-        bytes4[] memory abiSels = _abiSelectors("ArbiterAccountabilityFacet");
+        bytes4[] memory addAcc     = upgrade.addAccountabilitySelectors();
+        bytes4[] memory replaceAcc = upgrade.replaceAccountabilitySelectors();
+        bytes4[] memory abiSels    = _abiSelectors("ArbiterAccountabilityFacet");
 
+        // ⚠️ Задача 4.5 (16 августа 2026): фасет ответственности приезжает
+        // теперь ДВУМЯ группами, а не одной. Одиннадцать переехавших чтений
+        // уже смонтированы в цепи, поэтому едут Replace'ом на новый адрес;
+        // остальные двадцать — по-прежнему Add. Требовать «весь ABI лежит в
+        // Add» стало бы неправдой, требовать «весь ABI лежит в объединении» —
+        // ровно та же сила, что была.
         assertEq(
-            addAcc.length, abiSels.length,
-            unicode"число добавляемых селекторов не совпадает с ABI нового фасета"
+            addAcc.length + replaceAcc.length, abiSels.length,
+            unicode"число монтируемых селекторов не совпадает с ABI нового фасета"
         );
         for (uint256 i = 0; i < abiSels.length; i++) {
-            assertTrue(_contains(addAcc, abiSels[i]), unicode"селектор нового фасета забыт в Add");
+            assertTrue(
+                _contains(addAcc, abiSels[i]) || _contains(replaceAcc, abiSels[i]),
+                unicode"селектор нового фасета забыт и в Add, и в Replace"
+            );
         }
 
-        // Полный addSelectors() обязан содержать их все — из него берёт
-        // пред-полёт и итоговый счёт.
+        // Полный addSelectors() обязан содержать всю Add-половину — из него
+        // берёт пред-полёт (эти селекторы обязаны быть НЕ смонтированы) и
+        // итоговый счёт. Replace-половина туда не входит по определению: она
+        // в цепи уже есть.
         bytes4[] memory addAll = upgrade.addSelectors();
-        for (uint256 i = 0; i < abiSels.length; i++) {
-            assertTrue(_contains(addAll, abiSels[i]), unicode"селектор нового фасета потерялся в общем списке Add");
+        for (uint256 i = 0; i < addAcc.length; i++) {
+            assertTrue(_contains(addAll, addAcc[i]), unicode"селектор нового фасета потерялся в общем списке Add");
         }
     }
 
@@ -168,15 +227,12 @@ contract ArbiterAccountabilityUpgradeTest is Test {
     /// смонтировала бы новый селектор, а фронт продолжал бы звать старый и
     /// получал «Diamond: function not found».
     function test_AddSelectorsMatchLiteralSignatures() public view {
-        string[] memory regSigs = new string[](6);
-        regSigs[0] = "getSeatedBy(address)";
-        regSigs[1] = "getSeatedCountBy(address)";
-        regSigs[2] = "getChiefBloc()";
-        regSigs[3] = "getMaxClaimsPerArbiter()";
-        regSigs[4] = "getCleanVerdicts(address)";
-        regSigs[5] = "getMaxArbiterMistakes()";
+        string[] memory regSigs = new string[](3);
+        regSigs[0] = "getChiefBloc()";
+        regSigs[1] = "getMaxClaimsPerArbiter()";
+        regSigs[2] = "getMaxArbiterMistakes()";
 
-        string[] memory accSigs = new string[](17);
+        string[] memory accSigs = new string[](20);
         accSigs[0]  = "suspendArbiter(address)";
         accSigs[1]  = "liftSuspension(address)";
         accSigs[2]  = "isSuspended(address)";
@@ -194,6 +250,11 @@ contract ArbiterAccountabilityUpgradeTest is Test {
         accSigs[14] = "respondToRemoval(bytes32)";
         accSigs[15] = "getRemovalReply(address)";
         accSigs[16] = "getArbiterStanding(address)";
+        // Задача 4.5: три чтения переехали из реестра и ЕЩЁ НЕ смонтированы,
+        // потому остались Add — просто в другом списке и на другой адрес.
+        accSigs[17] = "getSeatedBy(address)";
+        accSigs[18] = "getSeatedCountBy(address)";
+        accSigs[19] = "getCleanVerdicts(address)";
 
         bytes4[] memory declaredReg = upgrade.addRegistrySelectors();
         assertEq(declaredReg.length, regSigs.length, unicode"Add-реестр: число селекторов разошлось с числом подписей");
@@ -309,34 +370,63 @@ contract ArbiterAccountabilityUpgradeTest is Test {
         for (uint256 i = 0; i < acc.length; i++) assertTrue(_contains(addAll, acc[i]));
     }
 
-    /// Состав buildCuts(): четыре записи, свои действия, свои адреса.
-    /// Четыре, а не три, потому что группа Add едет на ДВА разных адреса —
-    /// один элемент FacetCut несёт ровно один адрес.
+    /// Состав buildCuts(): ПЯТЬ записей, свои действия, свои адреса.
+    /// Пять, а не три, потому что И Replace, И Add едут на ДВА разных адреса —
+    /// один элемент FacetCut несёт ровно один адрес (задача 4.5, 16 августа
+    /// 2026: одиннадцать смонтированных чтений переехали на фасет
+    /// ответственности и остались Replace, потому что в цепи они уже есть).
+    ///
+    /// Что исчезнет из поведения, если снять: перепутанный адрес у половины
+    /// Replace смонтировал бы одиннадцать чтений на фасет, который их не
+    /// реализует. diamondCut на это НЕ ревертит — он проверяет только «адрес
+    /// другой и есть код». Тихий разъезд «смонтировано, но не работает».
     function test_BuildCutsShapeAndAddresses() public view {
         address reg = address(0xBEEF);
         address acc = address(0xCAFE);
         IDiamondCut.FacetCut[] memory cuts = upgrade.buildCuts(reg, acc);
 
-        assertEq(cuts.length, 4, unicode"buildCuts: ожидались ровно четыре записи FacetCut");
+        assertEq(cuts.length, 5, unicode"buildCuts: ожидались ровно пять записей FacetCut");
 
         assertTrue(cuts[0].action == IDiamondCut.FacetCutAction.Replace, unicode"cuts[0] должен быть Replace");
-        assertEq(cuts[0].facetAddress, reg, unicode"Replace: адрес обязан быть новым реестром");
-        assertEq(cuts[0].functionSelectors.length, upgrade.replaceSelectors().length);
+        assertEq(cuts[0].facetAddress, reg, unicode"Replace-реестр: адрес обязан быть новым реестром");
+        assertEq(cuts[0].functionSelectors.length, upgrade.replaceRegistrySelectors().length);
 
-        assertTrue(cuts[1].action == IDiamondCut.FacetCutAction.Add, unicode"cuts[1] должен быть Add");
-        assertEq(cuts[1].facetAddress, reg, unicode"Add-реестр: адрес обязан быть новым реестром");
-        assertEq(cuts[1].functionSelectors.length, upgrade.addRegistrySelectors().length);
+        assertTrue(cuts[1].action == IDiamondCut.FacetCutAction.Replace, unicode"cuts[1] должен быть Replace");
+        assertEq(cuts[1].facetAddress, acc, unicode"Replace-ответственность: адрес обязан быть новым фасетом");
+        assertEq(cuts[1].functionSelectors.length, upgrade.replaceAccountabilitySelectors().length);
 
         assertTrue(cuts[2].action == IDiamondCut.FacetCutAction.Add, unicode"cuts[2] должен быть Add");
-        assertEq(cuts[2].facetAddress, acc, unicode"Add-ответственность: адрес обязан быть новым фасетом");
-        assertEq(cuts[2].functionSelectors.length, upgrade.addAccountabilitySelectors().length);
+        assertEq(cuts[2].facetAddress, reg, unicode"Add-реестр: адрес обязан быть новым реестром");
+        assertEq(cuts[2].functionSelectors.length, upgrade.addRegistrySelectors().length);
+
+        assertTrue(cuts[3].action == IDiamondCut.FacetCutAction.Add, unicode"cuts[3] должен быть Add");
+        assertEq(cuts[3].facetAddress, acc, unicode"Add-ответственность: адрес обязан быть новым фасетом");
+        assertEq(cuts[3].functionSelectors.length, upgrade.addAccountabilitySelectors().length);
 
         // Remove — последним и с нулевым адресом: DiamondCutLib.removeFunctions
         // требует ровно этого ("Diamond: remove needs zero address"), а
         // последним — чтобы никакое следующее действие не вернуло селектор.
-        assertTrue(cuts[3].action == IDiamondCut.FacetCutAction.Remove, unicode"cuts[3] должен быть Remove");
-        assertEq(cuts[3].facetAddress, address(0), unicode"Remove: адрес обязан быть нулевым");
-        assertEq(cuts[3].functionSelectors.length, 1, unicode"Remove: ровно один селектор");
+        assertTrue(cuts[4].action == IDiamondCut.FacetCutAction.Remove, unicode"cuts[4] должен быть Remove");
+        assertEq(cuts[4].facetAddress, address(0), unicode"Remove: адрес обязан быть нулевым");
+        assertEq(cuts[4].functionSelectors.length, 1, unicode"Remove: ровно один селектор");
+    }
+
+    /// Общий Replace — ровно объединение своих двух половин, как и общий Add.
+    /// Он не декоративен: из него берёт пред-полёт checkReplaceGroup, который
+    /// требует, чтобы ВСЕ заменяемые селекторы сидели сегодня на ОДНОМ адресе.
+    ///
+    /// Что исчезнет из поведения, если снять: половина, выпавшая из общего
+    /// списка, не попала бы под пред-полёт вовсе — и её несмонтированность
+    /// выяснилась бы боевым "Diamond: selector not found" уже после броадкаста
+    /// двух новых фасетов.
+    function test_ReplaceSelectorsIsExactlyTheUnionOfItsTwoHalves() public view {
+        bytes4[] memory all = upgrade.replaceSelectors();
+        bytes4[] memory reg = upgrade.replaceRegistrySelectors();
+        bytes4[] memory acc = upgrade.replaceAccountabilitySelectors();
+
+        assertEq(all.length, reg.length + acc.length, unicode"общий Replace не равен сумме половин");
+        for (uint256 i = 0; i < reg.length; i++) assertTrue(_contains(all, reg[i]), unicode"половина реестра потерялась в общем Replace");
+        for (uint256 i = 0; i < acc.length; i++) assertTrue(_contains(all, acc[i]), unicode"половина ответственности потерялась в общем Replace");
     }
 
     // ════════════════════════════════════════════════════════════════════
@@ -769,8 +859,8 @@ contract ArbiterAccountabilityUpgradeTest is Test {
         );
 
         ArbiterRegistryFacet d = ArbiterRegistryFacet(address(diamond));
-        assertEq(d.getSeatedBy(arb), address(this), unicode"addArbiter обязан записать провенанс");
-        assertEq(d.getSeatedCountBy(address(this)), 1, unicode"addArbiter обязан поднять счётчик посадок");
+        assertEq(ArbiterAccountabilityFacet(address(diamond)).getSeatedBy(arb), address(this), unicode"addArbiter обязан записать провенанс");
+        assertEq(ArbiterAccountabilityFacet(address(diamond)).getSeatedCountBy(address(this)), 1, unicode"addArbiter обязан поднять счётчик посадок");
 
         vm.store(address(diamond), keccak256(abi.encode(arb, uint256(ARB_POS) + SLOT_SEATED_BY)), bytes32(0));
         vm.store(
@@ -778,8 +868,8 @@ contract ArbiterAccountabilityUpgradeTest is Test {
             keccak256(abi.encode(address(this), uint256(ARB_POS) + SLOT_SEATED_COUNT_BY)),
             bytes32(0)
         );
-        assertEq(d.getSeatedBy(arb), address(0), unicode"смещение seatedBy уехало — сырая запись не попала в поле");
-        assertEq(d.getSeatedCountBy(address(this)), 0, unicode"смещение seatedCountBy уехало");
+        assertEq(ArbiterAccountabilityFacet(address(diamond)).getSeatedBy(arb), address(0), unicode"смещение seatedBy уехало — сырая запись не попала в поле");
+        assertEq(ArbiterAccountabilityFacet(address(diamond)).getSeatedCountBy(address(this)), 0, unicode"смещение seatedCountBy уехало");
     }
 
     /// Backfill дописывает только пустое и не трогает уже записанное.
@@ -815,9 +905,9 @@ contract ArbiterAccountabilityUpgradeTest is Test {
             abi.encodeCall(ArbiterProvenanceInit.backfillSeatedBy, (pending, seater))
         );
 
-        assertEq(d.getSeatedBy(blank), seater, unicode"пустой провенанс не дописан");
-        assertEq(d.getSeatedBy(known), address(this), unicode"чужой провенанс переписан — так нельзя");
-        assertEq(d.getSeatedCountBy(seater), 1, unicode"счётчик посадок не поднят");
+        assertEq(ArbiterAccountabilityFacet(address(diamond)).getSeatedBy(blank), seater, unicode"пустой провенанс не дописан");
+        assertEq(ArbiterAccountabilityFacet(address(diamond)).getSeatedBy(known), address(this), unicode"чужой провенанс переписан — так нельзя");
+        assertEq(ArbiterAccountabilityFacet(address(diamond)).getSeatedCountBy(seater), 1, unicode"счётчик посадок не поднят");
 
         // Повторный прогон по ТОМУ ЖЕ списку не должен менять ничего.
         IDiamondCut(address(diamond)).diamondCut(
@@ -825,7 +915,7 @@ contract ArbiterAccountabilityUpgradeTest is Test {
             address(init),
             abi.encodeCall(ArbiterProvenanceInit.backfillSeatedBy, (pending, seater))
         );
-        assertEq(d.getSeatedCountBy(seater), 1, unicode"повторная миграция раздула счётчик посадок");
+        assertEq(ArbiterAccountabilityFacet(address(diamond)).getSeatedCountBy(seater), 1, unicode"повторная миграция раздула счётчик посадок");
     }
 
     /// Не-арбитр в списке — отказ, а не тихий пропуск: записать провенанс
@@ -871,8 +961,8 @@ contract ArbiterAccountabilityUpgradeTest is Test {
         upgrade.run();
 
         ArbiterRegistryFacet d = ArbiterRegistryFacet(address(diamond));
-        assertEq(d.getSeatedBy(arb), ownerAddr, unicode"провенанс не дописан миграцией");
-        assertEq(d.getSeatedCountBy(ownerAddr), 1, unicode"счётчик посадок владельца не поднят");
+        assertEq(ArbiterAccountabilityFacet(address(diamond)).getSeatedBy(arb), ownerAddr, unicode"провенанс не дописан миграцией");
+        assertEq(ArbiterAccountabilityFacet(address(diamond)).getSeatedCountBy(ownerAddr), 1, unicode"счётчик посадок владельца не поднят");
         assertEq(upgrade.arbitersMissingProvenance(address(diamond)).length, 0, unicode"после миграции пустых мест быть не должно");
     }
 
@@ -889,8 +979,8 @@ contract ArbiterAccountabilityUpgradeTest is Test {
         upgrade.run();
 
         ArbiterRegistryFacet d = ArbiterRegistryFacet(address(diamond));
-        assertEq(d.getSeatedBy(arb), address(this), unicode"провенанс переписан на владельца — так нельзя");
-        assertEq(d.getSeatedCountBy(vm.addr(pk)), 0, unicode"владельцу засчитана посадка, которой он не делал");
+        assertEq(ArbiterAccountabilityFacet(address(diamond)).getSeatedBy(arb), address(this), unicode"провенанс переписан на владельца — так нельзя");
+        assertEq(ArbiterAccountabilityFacet(address(diamond)).getSeatedCountBy(vm.addr(pk)), 0, unicode"владельцу засчитана посадка, которой он не делал");
     }
 
     /// Аварийный вход работает сам по себе: разрез уже лёг (повторный run()
@@ -916,15 +1006,15 @@ contract ArbiterAccountabilityUpgradeTest is Test {
         uint256 pk = _armRun(diamond);
         address ownerAddr = vm.addr(pk);
         ArbiterRegistryFacet d = ArbiterRegistryFacet(address(diamond));
-        assertEq(d.getSeatedBy(arb), address(0), unicode"предпосылка: провенанс ещё не дописан");
+        assertEq(ArbiterAccountabilityFacet(address(diamond)).getSeatedBy(arb), address(0), unicode"предпосылка: провенанс ещё не дописан");
 
         upgrade.migrateProvenanceOnly();
-        assertEq(d.getSeatedBy(arb), ownerAddr, unicode"аварийный вход не дописал провенанс");
-        assertEq(d.getSeatedCountBy(ownerAddr), 1, unicode"счётчик посадок не поднят");
+        assertEq(ArbiterAccountabilityFacet(address(diamond)).getSeatedBy(arb), ownerAddr, unicode"аварийный вход не дописал провенанс");
+        assertEq(ArbiterAccountabilityFacet(address(diamond)).getSeatedCountBy(ownerAddr), 1, unicode"счётчик посадок не поднят");
 
         // Повторный вызов ничего не меняет и не шлёт транзакций.
         upgrade.migrateProvenanceOnly();
-        assertEq(d.getSeatedCountBy(ownerAddr), 1, unicode"повторный аварийный вход раздул счётчик");
+        assertEq(ArbiterAccountabilityFacet(address(diamond)).getSeatedCountBy(ownerAddr), 1, unicode"повторный аварийный вход раздул счётчик");
     }
 
     // ════════════════════════════════════════════════════════════════════
@@ -965,7 +1055,13 @@ contract ArbiterAccountabilityUpgradeTest is Test {
         address newAcc = IDiamondLoupe(address(diamond)).facetAddress(ArbiterAccountabilityFacet.suspendArbiter.selector);
         assertTrue(newReg != address(0) && newReg != oldFacetAddr, unicode"реестр не переехал на новый адрес");
         assertTrue(newAcc != address(0) && newAcc != newReg, unicode"ответственность обязана быть отдельным фасетом");
-        upgrade.assertRouted(upgrade.replaceSelectors(), newReg, address(diamond));
+        // ⚠️ ЧЕТЫРЕ ГРУППЫ, А НЕ ТРИ (задача 4.5, 16 августа 2026). Общий
+        // replaceSelectors() здесь больше не годится: он содержит селекторы
+        // ОБОИХ фасетов, и проверка «все на newReg» была бы заведомо ложной.
+        // Каждая половина сверяется со СВОИМ адресом — это строже прежнего,
+        // потому что пиннит ещё и принадлежность, а не только «переехало».
+        upgrade.assertRouted(upgrade.replaceRegistrySelectors(), newReg, address(diamond));
+        upgrade.assertRouted(upgrade.replaceAccountabilitySelectors(), newAcc, address(diamond));
         upgrade.assertRouted(upgrade.addRegistrySelectors(), newReg, address(diamond));
         upgrade.assertRouted(upgrade.addAccountabilitySelectors(), newAcc, address(diamond));
 
@@ -992,13 +1088,13 @@ contract ArbiterAccountabilityUpgradeTest is Test {
         assertFalse(ArbiterAccountabilityFacet(address(diamond)).hasLiveProposal(arb), unicode"против свежего арбитра нет предложения");
         assertEq(d.getMaxClaimsPerArbiter(), 10, unicode"потолок споров на арбитра не отвечает");
         assertGt(d.getMaxArbiterMistakes(), 0, unicode"порог судейских ошибок не отвечает");
-        assertEq(d.getCleanVerdicts(arb), 0, unicode"судейский стаж свежего арбитра обязан быть нулём");
+        assertEq(ArbiterAccountabilityFacet(address(diamond)).getCleanVerdicts(arb), 0, unicode"судейский стаж свежего арбитра обязан быть нулём");
 
         // Провенанс дописан второй транзакцией, и блок директора считается по
         // нему: директор не назначен, значит блок — ноль, а посадка засчитана
         // владельцу.
-        assertEq(d.getSeatedBy(arb), ownerAddr, unicode"провенанс не мигрирован");
-        assertEq(d.getSeatedCountBy(ownerAddr), 1, unicode"счётчик посадок владельца не поднят");
+        assertEq(ArbiterAccountabilityFacet(address(diamond)).getSeatedBy(arb), ownerAddr, unicode"провенанс не мигрирован");
+        assertEq(ArbiterAccountabilityFacet(address(diamond)).getSeatedCountBy(ownerAddr), 1, unicode"счётчик посадок владельца не поднят");
         assertEq(d.getChiefBloc(), 0, unicode"директора нет — блок обязан быть нулевым");
 
         // Пишущая функция нового фасета — тоже через даймонд. Отказ ожидаем и

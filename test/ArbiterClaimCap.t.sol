@@ -15,9 +15,16 @@ pragma solidity ^0.8.20;
 
 import "forge-std/Test.sol";
 import {ArbiterRegistryFacet} from "../src/facets/ArbiterRegistryFacet.sol";
+import {ArbiterAccountabilityFacet} from "../src/facets/ArbiterAccountabilityFacet.sol";
+import {ArbiterTwoFacetBench} from "./ArbiterTwoFacetBench.sol";
 
-contract ArbiterClaimCapTest is Test {
+contract ArbiterClaimCapTest is Test, ArbiterTwoFacetBench {
+    /// Оба хендла указывают на ОДИН адрес — прокси с обоими фасетами
+    /// (см. test/ArbiterTwoFacetBench.sol). `facet` оставлен под прежним
+    /// именем нарочно: все vm.store(address(facet), ...) ниже продолжают
+    /// бить в то же самое хранилище.
     ArbiterRegistryFacet facet;
+    ArbiterAccountabilityFacet accFacet;
     address arbiter;
 
     bytes32 constant ARB_BASE = 0xaae71de0594cbcb5434f0ab7f7501c1be178552bf788b418a1c2624ba9718d00;
@@ -32,7 +39,7 @@ contract ArbiterClaimCapTest is Test {
     uint256 constant SLOT_OPEN_CLAIM_COUNT = 13;
 
     function setUp() public {
-        facet = new ArbiterRegistryFacet();
+        (facet, accFacet) = _deployArbiterBench();
         arbiter = address(0xA1);
         vm.store(address(facet), keccak256(abi.encode(arbiter, uint256(ARB_BASE))), bytes32(uint256(1)));
     }
@@ -41,7 +48,7 @@ contract ArbiterClaimCapTest is Test {
     /// писать не туда и молча позеленеет.
     function test_OpenClaimCountSlotMatchesLiveStorage() public {
         _setOpenClaims(arbiter, 7);
-        assertEq(facet.getOpenClaimCount(arbiter), 7, unicode"смещение слота openClaimCount уехало");
+        assertEq(accFacet.getOpenClaimCount(arbiter), 7, unicode"смещение слота openClaimCount уехало");
     }
 
     function test_CapIsTen() public view {

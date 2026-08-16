@@ -12,6 +12,7 @@ import "../src/FactoryFacet.sol";
 import "../src/AgreementDeployer.sol";
 import "../src/Agreement.sol";
 import "../src/facets/ArbiterRegistryFacet.sol";
+import {ArbiterAccountabilityFacet} from "../src/facets/ArbiterAccountabilityFacet.sol";
 import "../src/facets/JobBoardFacet.sol";
 import "../src/facets/ServiceBoardFacet.sol";
 
@@ -182,39 +183,45 @@ contract CriticalInvariantTest is Test {
         svcSels[19] = ServiceBoardFacet.getPendingRequests.selector;
 
         // ---- ArbiterRegistryFacet selectors (13) ----
-        bytes4[] memory arbSels = new bytes4[](32);
-        arbSels[0]  = ArbiterRegistryFacet.setChiefArbiter.selector;
-        arbSels[1]  = ArbiterRegistryFacet.addArbiter.selector;
-        arbSels[2]  = ArbiterRegistryFacet.commitDisputeClaim.selector;
-        arbSels[3]  = ArbiterRegistryFacet.claimDispute.selector;
-        arbSels[4]  = ArbiterRegistryFacet.releaseDisputeClaim.selector;
-        arbSels[5]  = ArbiterRegistryFacet.clearDisputeClaim.selector;
-        arbSels[6]  = ArbiterRegistryFacet.getChiefArbiter.selector;
-        arbSels[7]  = ArbiterRegistryFacet.isRegisteredArbiter.selector;
-        arbSels[8]  = ArbiterRegistryFacet.getArbiters.selector;
+        bytes4[] memory arbSels = new bytes4[](30);
+        arbSels[0] = ArbiterRegistryFacet.setChiefArbiter.selector;
+        arbSels[1] = ArbiterRegistryFacet.addArbiter.selector;
+        arbSels[2] = ArbiterRegistryFacet.commitDisputeClaim.selector;
+        arbSels[3] = ArbiterRegistryFacet.claimDispute.selector;
+        arbSels[4] = ArbiterRegistryFacet.releaseDisputeClaim.selector;
+        arbSels[5] = ArbiterRegistryFacet.clearDisputeClaim.selector;
+        arbSels[6] = ArbiterRegistryFacet.getChiefArbiter.selector;
+        arbSels[7] = ArbiterRegistryFacet.isRegisteredArbiter.selector;
+        arbSels[8] = ArbiterRegistryFacet.getArbiters.selector;
         arbSels[9] = ArbiterRegistryFacet.getDisputeClaimer.selector;
-        arbSels[10] = ArbiterRegistryFacet.getArbiterDeals.selector;
-        arbSels[11] = ArbiterRegistryFacet.getClaimCommitment.selector;
-        arbSels[12] = ArbiterRegistryFacet.activateDAO.selector;
-        arbSels[13] = ArbiterRegistryFacet.applyAsArbiter.selector;
-        arbSels[14] = ArbiterRegistryFacet.isDaoActive.selector;
-        arbSels[15] = ArbiterRegistryFacet.getMinXPToRegister.selector;
-        arbSels[16] = ArbiterRegistryFacet.getDaoThreshold.selector;
-        arbSels[17] = ArbiterRegistryFacet.submitVerdict.selector;
-        arbSels[18] = ArbiterRegistryFacet.finalizeVerdict.selector;
-        arbSels[19] = ArbiterRegistryFacet.overturnVerdict.selector;
-        arbSels[20] = ArbiterRegistryFacet.freezeVerdict.selector;
-        arbSels[21] = ArbiterRegistryFacet.unfreezeVerdict.selector;
-        arbSels[22] = ArbiterRegistryFacet.withdrawArbiterReward.selector;
-        arbSels[23] = ArbiterRegistryFacet.fundVault.selector;
-        arbSels[24] = ArbiterRegistryFacet.setRewardPerDispute.selector;
-        arbSels[25] = ArbiterRegistryFacet.setDAOAddress.selector;
-        arbSels[26] = ArbiterRegistryFacet.getPendingVerdict.selector;
-        arbSels[27] = ArbiterRegistryFacet.getArbiterReward.selector;
-        arbSels[28] = ArbiterRegistryFacet.getVaultBalance.selector;
-        arbSels[29] = ArbiterRegistryFacet.getRewardPerDispute.selector;
-        arbSels[30] = ArbiterRegistryFacet.getDAOAddress.selector;
-        arbSels[31] = ArbiterRegistryFacet.clearStuckVerdict.selector;
+        arbSels[10] = ArbiterRegistryFacet.getClaimCommitment.selector;
+        arbSels[11] = ArbiterRegistryFacet.activateDAO.selector;
+        arbSels[12] = ArbiterRegistryFacet.applyAsArbiter.selector;
+        arbSels[13] = ArbiterRegistryFacet.isDaoActive.selector;
+        arbSels[14] = ArbiterRegistryFacet.getMinXPToRegister.selector;
+        arbSels[15] = ArbiterRegistryFacet.getDaoThreshold.selector;
+        arbSels[16] = ArbiterRegistryFacet.submitVerdict.selector;
+        arbSels[17] = ArbiterRegistryFacet.finalizeVerdict.selector;
+        arbSels[18] = ArbiterRegistryFacet.overturnVerdict.selector;
+        arbSels[19] = ArbiterRegistryFacet.freezeVerdict.selector;
+        arbSels[20] = ArbiterRegistryFacet.unfreezeVerdict.selector;
+        arbSels[21] = ArbiterRegistryFacet.withdrawArbiterReward.selector;
+        arbSels[22] = ArbiterRegistryFacet.fundVault.selector;
+        arbSels[23] = ArbiterRegistryFacet.setRewardPerDispute.selector;
+        arbSels[24] = ArbiterRegistryFacet.setDAOAddress.selector;
+        arbSels[25] = ArbiterRegistryFacet.getPendingVerdict.selector;
+        arbSels[26] = ArbiterRegistryFacet.getVaultBalance.selector;
+        arbSels[27] = ArbiterRegistryFacet.getRewardPerDispute.selector;
+        arbSels[28] = ArbiterRegistryFacet.getDAOAddress.selector;
+        arbSels[29] = ArbiterRegistryFacet.clearStuckVerdict.selector;
+
+        // Задача 4.5 (16 августа 2026): эти чтения живут в
+        // ArbiterAccountabilityFacet, значит и монтировать их надо на него.
+        // Оставить их в списке выше значило бы маршрут на фасет, который их
+        // не реализует, — вызов доходит и ревертит.
+        bytes4[] memory accSels = new bytes4[](2);
+        accSels[0] = ArbiterAccountabilityFacet.getArbiterDeals.selector;
+        accSels[1] = ArbiterAccountabilityFacet.getArbiterReward.selector;
 
         // ---- Infrastructure selectors ----
         bytes4[] memory cutSels = new bytes4[](1);
@@ -233,13 +240,16 @@ contract CriticalInvariantTest is Test {
         ownSels[2] = OwnershipFacet.acceptOwnership.selector;
         ownSels[3] = OwnershipFacet.pendingOwner.selector;
 
-        IDiamondCut.FacetCut[] memory cut = new IDiamondCut.FacetCut[](8);
+        IDiamondCut.FacetCut[] memory cut = new IDiamondCut.FacetCut[](9);
         cut[0] = IDiamondCut.FacetCut(address(registryFacet),        IDiamondCut.FacetCutAction.Add, regSels);
         cut[1] = IDiamondCut.FacetCut(address(factoryFacet),         IDiamondCut.FacetCutAction.Add, facSels);
         cut[2] = IDiamondCut.FacetCut(address(diamondCutFacet),      IDiamondCut.FacetCutAction.Add, cutSels);
         cut[3] = IDiamondCut.FacetCut(address(diamondLoupeFacet),    IDiamondCut.FacetCutAction.Add, loupeSels);
         cut[4] = IDiamondCut.FacetCut(address(ownershipFacet),       IDiamondCut.FacetCutAction.Add, ownSels);
         cut[5] = IDiamondCut.FacetCut(address(arbiterRegistryFacet), IDiamondCut.FacetCutAction.Add, arbSels);
+        cut[8] = IDiamondCut.FacetCut(
+            address(new ArbiterAccountabilityFacet()), IDiamondCut.FacetCutAction.Add, accSels
+        );
         cut[6] = IDiamondCut.FacetCut(address(jobBoardFacet),        IDiamondCut.FacetCutAction.Add, jobSels);
         cut[7] = IDiamondCut.FacetCut(address(serviceBoardFacet),    IDiamondCut.FacetCutAction.Add, svcSels);
 

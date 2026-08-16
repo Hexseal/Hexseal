@@ -23,11 +23,18 @@ pragma solidity ^0.8.20;
 // которое обязано быть замерено, а не объявлено верным по конструкции EVM.
 import "forge-std/Test.sol";
 import {ArbiterRegistryFacet} from "../src/facets/ArbiterRegistryFacet.sol";
+import {ArbiterAccountabilityFacet} from "../src/facets/ArbiterAccountabilityFacet.sol";
+import {ArbiterTwoFacetBench} from "./ArbiterTwoFacetBench.sol";
 
-contract ArbiterChatKeyCircumstancesTest is Test {
+contract ArbiterChatKeyCircumstancesTest is Test, ArbiterTwoFacetBench {
+    /// Оба хендла указывают на ОДИН адрес — прокси с обоими фасетами
+    /// (см. test/ArbiterTwoFacetBench.sol). `facet` оставлен под прежним
+    /// именем нарочно: все vm.store(address(facet), ...) ниже продолжают
+    /// бить в то же самое хранилище.
     ArbiterRegistryFacet facet;
+    ArbiterAccountabilityFacet accFacet;
 
-    function setUp() public { facet = new ArbiterRegistryFacet(); }
+    function setUp() public { (facet, accFacet) = _deployArbiterBench(); }
 
     function _makeArbiter(address who) internal {
         bytes32 pos = 0xaae71de0594cbcb5434f0ab7f7501c1be178552bf788b418a1c2624ba9718d00;
@@ -58,7 +65,7 @@ contract ArbiterChatKeyCircumstancesTest is Test {
         vm.expectRevert(ArbiterRegistryFacet.ZeroChatKey.selector);
         facet.setArbiterChatKey(bytes32(uint256(0x99)), bytes32(0));
 
-        (bytes32 box, bytes32 sign) = facet.getArbiterChatKeys(arb);
+        (bytes32 box, bytes32 sign) = accFacet.getArbiterChatKeys(arb);
         assertEq(box,  bytes32(uint256(0x11)), unicode"неудачная смена затёрла рабочий ключ");
         assertEq(sign, bytes32(uint256(0x22)), unicode"неудачная смена затёрла рабочий ключ");
     }
@@ -83,8 +90,8 @@ contract ArbiterChatKeyCircumstancesTest is Test {
         vm.prank(a); facet.setArbiterChatKey(bytes32(uint256(0xA0)), bytes32(uint256(0xA1)));
         vm.prank(b); facet.setArbiterChatKey(bytes32(uint256(0xB0)), bytes32(uint256(0xB1)));
 
-        (bytes32 aBox,) = facet.getArbiterChatKeys(a);
-        (bytes32 bBox,) = facet.getArbiterChatKeys(b);
+        (bytes32 aBox,) = accFacet.getArbiterChatKeys(a);
+        (bytes32 bBox,) = accFacet.getArbiterChatKeys(b);
         assertEq(aBox, bytes32(uint256(0xA0)));
         assertEq(bBox, bytes32(uint256(0xB0)));
     }
@@ -115,12 +122,12 @@ contract ArbiterChatKeyCircumstancesTest is Test {
             facet.setArbiterChatKey(bytes32(i), bytes32(i + 1000));
         }
 
-        (bytes32 box, bytes32 sign) = facet.getArbiterChatKeys(arb);
+        (bytes32 box, bytes32 sign) = accFacet.getArbiterChatKeys(arb);
         assertEq(box, bytes32(uint256(100)));
         assertEq(sign, bytes32(uint256(1100)));
 
         // Сосед не задет: ни на один бит, несмотря на сто чужих записей.
-        (bytes32 neighborBoxAfter, bytes32 neighborSignAfter) = facet.getArbiterChatKeys(neighbor);
+        (bytes32 neighborBoxAfter, bytes32 neighborSignAfter) = accFacet.getArbiterChatKeys(neighbor);
         assertEq(neighborBoxAfter,  neighborBoxBefore,  unicode"долбёжка первого арбитра задела ключ соседа");
         assertEq(neighborSignAfter, neighborSignBefore, unicode"долбёжка первого арбитра задела ключ соседа");
     }
@@ -133,7 +140,7 @@ contract ArbiterChatKeyCircumstancesTest is Test {
         _makeArbiter(arb);
         vm.prank(arb); facet.setArbiterChatKey(bytes32(uint256(7)), bytes32(uint256(8)));
         vm.prank(arb); facet.setArbiterChatKey(bytes32(uint256(7)), bytes32(uint256(8)));
-        (bytes32 box,) = facet.getArbiterChatKeys(arb);
+        (bytes32 box,) = accFacet.getArbiterChatKeys(arb);
         assertEq(box, bytes32(uint256(7)));
     }
 }

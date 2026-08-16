@@ -15,9 +15,16 @@ pragma solidity ^0.8.20;
 
 import "forge-std/Test.sol";
 import {ArbiterRegistryFacet} from "../src/facets/ArbiterRegistryFacet.sol";
+import {ArbiterAccountabilityFacet} from "../src/facets/ArbiterAccountabilityFacet.sol";
+import {ArbiterTwoFacetBench} from "./ArbiterTwoFacetBench.sol";
 
-contract ArbiterProvenanceTest is Test {
+contract ArbiterProvenanceTest is Test, ArbiterTwoFacetBench {
+    /// Оба хендла указывают на ОДИН адрес — прокси с обоими фасетами
+    /// (см. test/ArbiterTwoFacetBench.sol). `facet` оставлен под прежним
+    /// именем нарочно: все vm.store(address(facet), ...) ниже продолжают
+    /// бить в то же самое хранилище.
     ArbiterRegistryFacet facet;
+    ArbiterAccountabilityFacet accFacet;
 
     address owner;
     address chief;
@@ -40,7 +47,7 @@ contract ArbiterProvenanceTest is Test {
     bytes32 constant OWNER_SLOT = 0x178642b411f9f4783b21ef338f3e96db6c1272d763f0b7500ec93464dafb8604;
 
     function setUp() public {
-        facet = new ArbiterRegistryFacet();
+        (facet, accFacet) = _deployArbiterBench();
         owner = address(0x0);
         chief = address(0xC4);
         seat1 = address(0xA1);
@@ -57,17 +64,17 @@ contract ArbiterProvenanceTest is Test {
 
         facet.addArbiter(seat1);
 
-        assertEq(facet.getSeatedBy(seat1), owner, unicode"цепь обязана помнить, что посадил владелец");
-        assertEq(facet.getSeatedCountBy(owner), 1, unicode"счётчик посадок владельца обязан вырасти");
+        assertEq(accFacet.getSeatedBy(seat1), owner, unicode"цепь обязана помнить, что посадил владелец");
+        assertEq(accFacet.getSeatedCountBy(owner), 1, unicode"счётчик посадок владельца обязан вырасти");
     }
 
     function test_ChiefSeatIsAttributedToChief() public {
         vm.prank(chief);
         facet.addArbiter(seat1);
 
-        assertEq(facet.getSeatedBy(seat1), chief, unicode"посадил директор — так и записано");
-        assertEq(facet.getSeatedCountBy(chief), 1, unicode"счётчик директора");
-        assertEq(facet.getSeatedCountBy(owner), 0, unicode"владельцу чужая посадка не приписывается");
+        assertEq(accFacet.getSeatedBy(seat1), chief, unicode"посадил директор — так и записано");
+        assertEq(accFacet.getSeatedCountBy(chief), 1, unicode"счётчик директора");
+        assertEq(accFacet.getSeatedCountBy(owner), 0, unicode"владельцу чужая посадка не приписывается");
     }
 
     /// removeArbiter в тестах намеренно не используется: более поздняя задача
@@ -79,13 +86,13 @@ contract ArbiterProvenanceTest is Test {
     function test_ResignDecrementsSeaterCount() public {
         vm.prank(chief);
         facet.addArbiter(seat1);
-        assertEq(facet.getSeatedCountBy(chief), 1);
+        assertEq(accFacet.getSeatedCountBy(chief), 1);
 
         vm.prank(seat1);
         facet.resignAsArbiter();
 
-        assertEq(facet.getSeatedCountBy(chief), 0, unicode"снятый больше не сидит — счётчик посадившего падает");
-        assertEq(facet.getSeatedBy(seat1), address(0), unicode"провенанс снятого очищается");
+        assertEq(accFacet.getSeatedCountBy(chief), 0, unicode"снятый больше не сидит — счётчик посадившего падает");
+        assertEq(accFacet.getSeatedBy(seat1), address(0), unicode"провенанс снятого очищается");
     }
 
     /// Счётчик посадок накапливается и не смешивает посадивших.
@@ -99,13 +106,13 @@ contract ArbiterProvenanceTest is Test {
     function test_TwoSeatsCountSeparately() public {
         facet.addArbiter(seat1);
         facet.addArbiter(seat2);
-        assertEq(facet.getSeatedCountBy(owner), 2, unicode"две посадки — счётчик два");
+        assertEq(accFacet.getSeatedCountBy(owner), 2, unicode"две посадки — счётчик два");
 
         vm.prank(chief);
         facet.addArbiter(address(0xA3));
 
-        assertEq(facet.getSeatedCountBy(owner), 2, unicode"чужая посадка счётчик владельца не двигает");
-        assertEq(facet.getSeatedCountBy(chief), 1, unicode"а своя ложится на счётчик директора");
+        assertEq(accFacet.getSeatedCountBy(owner), 2, unicode"чужая посадка счётчик владельца не двигает");
+        assertEq(accFacet.getSeatedCountBy(chief), 1, unicode"а своя ложится на счётчик директора");
     }
 
     // ============================================================
@@ -160,7 +167,7 @@ contract ArbiterProvenanceTest is Test {
         facet.addArbiter(seat2);
         facet.addArbiter(address(0xA3));
         facet.addArbiter(address(0xA4));
-        assertEq(facet.getSeatedCountBy(owner), 4, unicode"владелец сажает сколько нужно");
+        assertEq(accFacet.getSeatedCountBy(owner), 4, unicode"владелец сажает сколько нужно");
     }
 
     /// Ушёл один — освободилось место. Иначе директор, ошибшийся один раз,

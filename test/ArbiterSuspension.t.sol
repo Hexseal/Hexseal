@@ -18,6 +18,7 @@ pragma solidity ^0.8.20;
 
 import "forge-std/Test.sol";
 import {ArbiterRegistryFacet} from "../src/facets/ArbiterRegistryFacet.sol";
+import {ArbiterTwoFacetBench} from "./ArbiterTwoFacetBench.sol";
 import {ArbiterAccountabilityFacet} from "../src/facets/ArbiterAccountabilityFacet.sol";
 
 /// Минимальный мок Agreement — только то, что читает/зовёт finalizeVerdict
@@ -42,7 +43,7 @@ contract MockAgreementForFinalize {
     function resolveDispute(bool) external {}
 }
 
-contract ArbiterSuspensionTest is Test {
+contract ArbiterSuspensionTest is Test, ArbiterTwoFacetBench {
     ArbiterAccountabilityFacet acc;
     ArbiterRegistryFacet reg;
 
@@ -55,11 +56,17 @@ contract ArbiterSuspensionTest is Test {
     bytes32 constant OWNER_SLOT = 0x178642b411f9f4783b21ef338f3e96db6c1272d763f0b7500ec93464dafb8604;
 
     function setUp() public {
-        // Оба фасета разворачиваются отдельно, но пишут в ОДИН неймспейс,
-        // поэтому в лёгком стенде состояние у каждого своё. Тесты этой задачи
-        // трогают только счётчик приостановки, и он живёт в acc.
-        acc = new ArbiterAccountabilityFacet();
-        reg = new ArbiterRegistryFacet();
+        // ⚠️ ОДИН АДРЕС НА ОБА ФАСЕТА (задача 4.5, 16 августа 2026).
+        // Прежде здесь стояли два отдельных `new`, и у каждого фасета было
+        // СВОЁ хранилище по одному и тому же смещению неймспейса. Это
+        // работало, пока каждый тест трогал состояние ровно одного из них.
+        //
+        // Задача 4.5 увезла getCleanVerdicts в фасет ответственности, а пишет
+        // счётчик по-прежнему finalizeVerdict в реестре — то есть путь
+        // «записал через reg, прочитал через acc» стал обычным делом. На двух
+        // отдельных контрактах он давал бы чистый ноль и выглядел бы ответом.
+        // Стенд теперь даёт один прокси с кодом обоих фасетов, как в бою.
+        (reg, acc) = _deployArbiterBench();
 
         owner    = address(this);
         chief    = address(0xC4);
@@ -305,11 +312,18 @@ contract ArbiterSuspensionTest is Test {
         vm.store(address(reg), keccak256(abi.encode(who, uint256(base))), bytes32(until));
     }
 
+    /// ⚠️ Упрощён задачей 4.5 (16 августа 2026), и это усиление, а не потеря.
+    /// Прежде тест писал сырой слот в ОДИН контракт, убеждался, что ВТОРОЙ
+    /// отвечает нулём («это другой контракт»), и лишь потом дублировал запись
+    /// во второй, чтобы сверить смещение. Первая половина проверяла не
+    /// смещение, а тот факт, что у двух отдельных `new` разные хранилища.
+    ///
+    /// Стенд теперь один адрес на оба фасета, и проверка стала прямой: пишем
+    /// сырой слот ровно там, куда смотрит боевой геттер, и требуем от него
+    /// это значение. Смещение 27 сторожится по-прежнему — и теперь тем же
+    /// адресом, которым пользуется `_suspendInReg` во всех тестах зубов.
     function test_SuspendedUntilSlotMatchesLiveStorage() public {
         _suspendInReg(arbiter, 12345);
-        assertEq(acc.getSuspendedUntil(arbiter), 0, unicode"это другой контракт, ноль ожидаем");
-        // Сверяем через тот же контракт, в который писали:
-        vm.store(address(acc), keccak256(abi.encode(arbiter, uint256(bytes32(uint256(ARB_BASE) + SLOT_SUSPENDED_UNTIL)))), bytes32(uint256(12345)));
         assertEq(acc.getSuspendedUntil(arbiter), 12345, unicode"смещение слота suspendedUntil уехало");
     }
 
@@ -326,12 +340,12 @@ contract ArbiterSuspensionTest is Test {
         MockAgreementForFinalize agreement = new MockAgreementForFinalize(address(0xC2), address(0xE2));
         _advanceToSubmittedVerdict(agreement, bytes32(uint256(11)));
 
-        assertEq(reg.getCleanVerdicts(arbiter), 0, unicode"до финализации стажа нет");
+        assertEq(acc.getCleanVerdicts(arbiter), 0, unicode"до финализации стажа нет");
 
         vm.warp(vm.getBlockTimestamp() + 24 hours);
         reg.finalizeVerdict(address(agreement));
 
-        assertEq(reg.getCleanVerdicts(arbiter), 1, unicode"неперевёрнутый вердикт добавил стаж");
+        assertEq(acc.getCleanVerdicts(arbiter), 1, unicode"неперевёрнутый вердикт добавил стаж");
     }
 
     // ============================================================
@@ -404,7 +418,7 @@ contract ArbiterSuspensionTest is Test {
         vm.warp(t0 + 72 hours);
         reg.finalizeVerdict(address(victim));
 
-        assertEq(reg.getCleanVerdicts(arbiter), 1, unicode"после окна вердикт исполнился обычным порядком");
+        assertEq(acc.getCleanVerdicts(arbiter), 1, unicode"после окна вердикт исполнился обычным порядком");
     }
 
     function _makeArbiter(ArbiterAccountabilityFacet f, address who) internal {

@@ -27,6 +27,7 @@ pragma solidity ^0.8.20;
 import "forge-std/Script.sol";
 import "forge-std/console.sol";
 import "../../src/facets/ArbiterRegistryFacet.sol";
+import {ArbiterAccountabilityFacet} from "../../src/facets/ArbiterAccountabilityFacet.sol";
 import "../../src/DiamondProxy.sol";
 
 contract UpgradeArbiterRegistry is Script {
@@ -52,7 +53,7 @@ contract UpgradeArbiterRegistry is Script {
         replaceSels[6]  = ArbiterRegistryFacet.isRegisteredArbiter.selector;
         replaceSels[7]  = ArbiterRegistryFacet.getArbiters.selector;
         replaceSels[8]  = ArbiterRegistryFacet.getDisputeClaimer.selector;
-        replaceSels[9]  = ArbiterRegistryFacet.getArbiterDeals.selector;
+        replaceSels[9]  = ArbiterAccountabilityFacet.getArbiterDeals.selector;
         replaceSels[10] = ArbiterRegistryFacet.getClaimCommitment.selector;
 
         cuts[0] = IDiamondCut.FacetCut({

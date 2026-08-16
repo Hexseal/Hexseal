@@ -3,14 +3,34 @@ pragma solidity ^0.8.20;
 
 import "forge-std/Test.sol";
 import {ArbiterRegistryFacet} from "../src/facets/ArbiterRegistryFacet.sol";
+import {LegacyPreSplitArbiterFacet, ArbiterTwoFacetBench} from "./ArbiterTwoFacetBench.sol";
+import {ArbiterAccountabilityFacet} from "../src/facets/ArbiterAccountabilityFacet.sol";
 import {UpgradeArbiterChatKey} from "../script/archive/UpgradeArbiterChatKey.s.sol";
 import "../src/DiamondProxy.sol";
 
-contract ArbiterChatKeyUpgradeTest is Test {
+/// Тот же разрез, но разворачивающий двойник «фасет ДО задачи 4.5».
+///
+/// ⚠️ Зачем он есть. Разрез исполнен 10 августа 2026, когда все его селекторы
+/// реализовывал один ArbiterRegistryFacet. Задача 4.5 (16 августа 2026) увезла
+/// четырнадцать чтений — включая getArbiterChatKeys, на котором стоит
+/// ФУНКЦИОНАЛЬНЫЙ СМОУК внутри самого run(), — в ArbiterAccountabilityFacet.
+/// На сегодняшнем исходнике дословный повтор run() смонтировал бы этот селектор
+/// на фасет, который его не реализует, и упал бы на собственной пост-проверке.
+///
+/// Подменяется РОВНО деплой фасета и ничего больше: списки селекторов, порядок
+/// действий, пред- и пост-полёт остаются теми же самыми и исполняются целиком.
+/// Это точное воспроизведение того дня, а не ослабленная проверка.
+contract UpgradeArbiterChatKeyOnPreSplitFacet is UpgradeArbiterChatKey {
+    function _deployRegistryFacet() internal override returns (address) {
+        return address(new LegacyPreSplitArbiterFacet());
+    }
+}
+
+contract ArbiterChatKeyUpgradeTest is Test, ArbiterTwoFacetBench {
     UpgradeArbiterChatKey internal upgrade;
 
     function setUp() public {
-        upgrade = new UpgradeArbiterChatKey();
+        upgrade = new UpgradeArbiterChatKeyOnPreSplitFacet();
     }
 
     /// Старого входа заявки в фасете БОЛЬШЕ НЕТ. Замок против того, чтобы
@@ -181,7 +201,14 @@ contract ArbiterChatKeyUpgradeTest is Test {
     /// развёрнутом ArbiterRegistryFacet, не воскрешая удалённую сигнатуру в
     /// исходниках.
     function _mountOldFacet(DiamondProxy diamond) internal returns (address oldFacetAddr) {
-        ArbiterRegistryFacet oldFacet = new ArbiterRegistryFacet();
+        // ⚠️ Двойник «фасет до задачи 4.5» (16 августа 2026), а не боевой
+        // ArbiterRegistryFacet: этот стенд повторяет раскладку цепи НА МОМЕНТ
+        // того разреза — все селекторы на ОДНОМ адресе, — а с тех пор
+        // четырнадцать чтений уехали в ArbiterAccountabilityFacet, и ни один
+        // боевой контракт больше не реализует их все сразу. Голый фасет
+        // смонтировался бы (diamondCut требует лишь наличия кода), но
+        // пред-полёт зовёт getOpenClaimCount по-настоящему и ревертил бы.
+        LegacyPreSplitArbiterFacet oldFacet = new LegacyPreSplitArbiterFacet();
         bytes4[] memory replaceSels = upgrade.replaceSelectors();
         bytes4[] memory removeSels = upgrade.removeSelectors();
 
@@ -223,7 +250,7 @@ contract ArbiterChatKeyUpgradeTest is Test {
         bytes32 slot = keccak256(abi.encode(arbiter, uint256(ARB_POS) + 13));
         vm.store(address(diamond), slot, bytes32(n));
         assertEq(
-            ArbiterRegistryFacet(address(diamond)).getOpenClaimCount(arbiter), n,
+            ArbiterAccountabilityFacet(address(diamond)).getOpenClaimCount(arbiter), n,
             unicode"смещение openClaimCount в ArbiterRegistryStorage.Data уехало"
         );
     }
@@ -395,7 +422,10 @@ contract ArbiterChatKeyUpgradeTest is Test {
         uint256 before = upgrade.totalRoutedSelectors(address(diamond));
 
         // ── Сам cut — buildCuts(), та же функция, что зовёт run() ───────
-        ArbiterRegistryFacet newFacet = new ArbiterRegistryFacet();
+        // Двойник «фасет ДО задачи 4.5»: этот разрез исполнен 10 августа 2026,
+        // когда getArbiterChatKeys ещё жил в реестре. Смоук ниже зовёт его
+        // по-настоящему, поэтому воспроизводим тот день точно, а не приблизительно.
+        LegacyPreSplitArbiterFacet newFacet = new LegacyPreSplitArbiterFacet();
         IDiamondCut(address(diamond)).diamondCut(upgrade.buildCuts(address(newFacet)), address(0), "");
 
         // ── Post-flight (как в run()) ─────────────────────────────────
@@ -420,7 +450,7 @@ contract ArbiterChatKeyUpgradeTest is Test {
         // helper скрипта) — подтверждает, что делегирование реально
         // исполняет код нового фасета, а не просто не ревертит на пустом
         // fallback.
-        (bytes32 boxKey2, bytes32 signKey2) = ArbiterRegistryFacet(address(diamond)).getArbiterChatKeys(address(0xDEAD));
+        (bytes32 boxKey2, bytes32 signKey2) = ArbiterAccountabilityFacet(address(diamond)).getArbiterChatKeys(address(0xDEAD));
         assertEq(boxKey2, bytes32(0));
         assertEq(signKey2, bytes32(0));
     }
@@ -481,7 +511,7 @@ contract ArbiterChatKeyUpgradeTest is Test {
         uint256 afterTotal = upgrade.totalRoutedSelectors(address(diamond));
         assertEq(afterTotal, before_ - upgrade.removeSelectors().length + upgrade.addSelectors().length);
 
-        (bytes32 boxKey, bytes32 signKey) = ArbiterRegistryFacet(address(diamond)).getArbiterChatKeys(address(0xDEAD));
+        (bytes32 boxKey, bytes32 signKey) = ArbiterAccountabilityFacet(address(diamond)).getArbiterChatKeys(address(0xDEAD));
         assertEq(boxKey, bytes32(0));
         assertEq(signKey, bytes32(0));
 
@@ -491,7 +521,7 @@ contract ArbiterChatKeyUpgradeTest is Test {
         assertEq(afterCut.arbiterCount, before.arbiterCount, unicode"arbiterCount не пережил cut");
         assertEq(afterCut.vaultBalance, before.vaultBalance, unicode"vaultBalance не пережил cut");
 
-        (bytes32 seededBox, bytes32 seededSign) = ArbiterRegistryFacet(address(diamond)).getArbiterChatKeys(seededArbiter);
+        (bytes32 seededBox, bytes32 seededSign) = ArbiterAccountabilityFacet(address(diamond)).getArbiterChatKeys(seededArbiter);
         assertEq(seededBox, SEED_BOX_KEY, unicode"arbiterBoxKey, записанный ДО cut'а, не пережил замену фасета");
         assertEq(seededSign, SEED_SIGN_KEY, unicode"arbiterSignKey, записанный ДО cut'а, не пережил замену фасета");
     }
@@ -679,7 +709,7 @@ contract ArbiterChatKeyUpgradeTest is Test {
         // Сначала доказываем предпосылку: getArbiterChatKeys правда не
         // смонтирован на этом даймонде до cut'а.
         vm.expectRevert();
-        f.getArbiterChatKeys(arb);
+        ArbiterAccountabilityFacet(address(diamond)).getArbiterChatKeys(arb);
 
         // А предупреждение при этом отрабатывает без единого revert.
         address[] memory flagged = upgrade.findArbitersWithOpenClaimsMissingKeys(address(diamond));

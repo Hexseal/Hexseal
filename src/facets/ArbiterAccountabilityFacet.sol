@@ -903,4 +903,182 @@ contract ArbiterAccountabilityFacet {
             hasLiveProposal(arbiter)
         );
     }
+
+    // ============================================================
+    //  ЧТЕНИЯ, ПЕРЕЕХАВШИЕ ИЗ ArbiterRegistryFacet (задача 4.5, 16 августа 2026)
+    //
+    //  ⚠️ ЭТО ПЕРЕНОС, А НЕ ПРАВКА. Тела ниже — байт в байт те же, что стояли в
+    //  ArbiterRegistryFacet; ни одно поведение не изменено. Снаружи даймонда
+    //  перенос не виден вообще: вызывающий бьёт в тот же адрес прокси тем же
+    //  селектором и получает тот же ответ — меняется только строка во
+    //  внутренней таблице маршрутов.
+    //
+    //  ПОЧЕМУ ПЕРЕЕХАЛИ. ArbiterRegistryFacet упёрся в потолок EIP-170:
+    //  24 516 байт из 24 576, свободно 60 — «реестр арбитров больше нельзя
+    //  чинить». Соседний фасет занят на 18 %. Оба держат ОДИН неймспейс
+    //  (ArbiterRegistryStorage, тот же POSITION), поэтому переноса данных не
+    //  происходит вовсе и раскладка хранилища не тронута ни на бит.
+    //
+    //  ПОЧЕМУ ИМЕННО ЭТИ. Граница проведена по смыслу: сюда уехали чтения про
+    //  ПОВЕДЕНИЕ арбитра, его ПОЛОЖЕНИЕ и ДОКАЗАТЕЛЬСТВА — то, чем этот фасет и
+    //  занимается (прецедент задан getArbiterStanding выше, она читает те же
+    //  поля). В реестре осталось то, чему он хозяин: состав корпуса, споры,
+    //  вердикты, апелляции и деньги.
+    //
+    //  ⚠️ ЧЕГО ЗДЕСЬ НАМЕРЕННО НЕТ: геттеров КОНСТАНТ реестра
+    //  (getMinXPToRegister, getNoResponseFloor, getMaxArbiterMistakes,
+    //  getMaxClaimsPerArbiter). Их числа объявлены приватно в
+    //  ArbiterRegistryFacet и применяются остающимся там кодом; переезд геттера
+    //  завёл бы ВТОРОЕ объявление, и наружу отвечало бы зеркало, а правило
+    //  применялось бы по оригиналу — тот же класс дефекта, что разобран в
+    //  докстринге _msgSender выше как M-3. Нужны будут эти байты — константа
+    //  переносится в ArbiterRegistryStorage ОДНИМ объявлением на оба фасета,
+    //  как уже сделано с SUSPENSION_WINDOW.
+    // ============================================================
+
+    // ── Поведение и положение арбитра ──
+
+    /// @notice Серия судейских ошибок подряд. На MAX_ARBITER_MISTAKES
+    /// автодемоушен снимает статус и обнуляет счётчик, поэтому в покое значение
+    /// всегда строго меньше порога — разбор в докстринге MISTAKE_THRESHOLD.
+    function getArbiterMistakeStreak(address addr) external view returns (uint256) { return ArbiterRegistryStorage.data().arbiterMistakeStreak[addr]; }
+
+    /// @notice Сколько раз вердикт этого арбитра дошёл до финализации
+    /// неперевёрнутым. Задел под будущую конвертацию «залог плюс судейский
+    /// стаж» при включении ДАО (задача 5, 15 августа 2026) — сам перевод здесь
+    /// не реализован, только счётчик.
+    function getCleanVerdicts(address arbiterAddr) external view returns (uint256) {
+        return ArbiterRegistryStorage.data().cleanVerdicts[arbiterAddr];
+    }
+
+    /// @notice Залог арбитра. Форфейтится в банк при сносе по поводу и при
+    /// автодемоушене, возвращается целиком при resignAsArbiter.
+    function getArbiterBond(address addr) external view returns (uint256) { return ArbiterRegistryStorage.data().arbiterBond[addr]; }
+
+    /// @notice Сколько споров арбитр держит прямо сейчас. Потолок —
+    /// ArbiterRegistryFacet.getMaxClaimsPerArbiter().
+    function getOpenClaimCount(address addr) external view returns (uint256) { return ArbiterRegistryStorage.data().openClaimCount[addr]; }
+
+    /// @notice Накопленная доля сборов, которую арбитр ещё не забрал.
+    function getArbiterReward(address arbiter) external view returns (uint256) { return ArbiterRegistryStorage.data().arbiterRewards[arbiter]; }
+
+    /// @notice Послужной список: сделки, по которым этот арбитр брал спор.
+    function getArbiterDeals(address arbiter) external view returns (address[] memory) { return ArbiterRegistryStorage.data().arbiterDeals[arbiter]; }
+
+    // ── Провенанс посадки ──
+
+    /// @notice Кто посадил этого арбитра. `address(0)` — самозапись через
+    /// applyAsArbiter (нет ни залога, ни гейта по XP за ручной посадкой).
+    function getSeatedBy(address arbiter) external view returns (address) {
+        return ArbiterRegistryStorage.data().seatedBy[arbiter];
+    }
+
+    /// @notice Сколько арбитров этой посадки сидят прямо сейчас.
+    function getSeatedCountBy(address seater) external view returns (uint256) {
+        return ArbiterRegistryStorage.data().seatedCountBy[seater];
+    }
+
+    // ── Доказательства: якорь, молчание, отпечатки, ключи ──
+
+    /// @notice Когда ТЕКУЩИЙ клеймер взял этот спор, в секундах блока. Если он
+    /// брал его несколько раз — момент последнего взятия, от него и считается
+    /// пол. 0 — спор не взят (в том числе отпущен) или взят до разреза 4в-2.
+    ///
+    /// Подпись односоставная намеренно: спрашивающему нужен якорь того, кто
+    /// судит спор сейчас, а не история по каждому арбитру. История есть, она в
+    /// событиях DisputeClaimed/DisputeReleased.
+    function getDisputeClaimedAt(address agreement) external view returns (uint256) {
+        ArbiterRegistryStorage.Data storage d = ArbiterRegistryStorage.data();
+        return d.disputeClaimedAtBy[agreement][d.disputeClaims[agreement]];
+    }
+
+    /// @notice Когда текущий клеймер записал «просил, ответа нет». 0 — не записывал.
+    /// Ноль здесь же означает «спор ничей»: запись принадлежит арбитру, а не
+    /// сделке, и вместе с клеймом уходит из виду, не пропадая из цепи.
+    ///
+    /// ⚠️ Пол этой записи (NO_RESPONSE_FLOOR, 24 часа) объявлен и применяется в
+    /// ArbiterRegistryFacet — спрашивать его надо там, через
+    /// getNoResponseFloor(). Второго объявления здесь нет намеренно, см. шапку.
+    function getNoResponseAt(address agreement) external view returns (uint256) {
+        ArbiterRegistryStorage.Data storage d = ArbiterRegistryStorage.data();
+        return d.disputeNoResponseAtBy[agreement][d.disputeClaims[agreement]];
+    }
+
+    /// @notice Все отпечатки предъявлений по сделке, в порядке появления.
+    /// Порядок и есть содержание ответа: спор решается тем, что легло раньше.
+    ///
+    /// Удобен и честен на обычных числах, но список целиком при большом их
+    /// количестве упирается в потолок газа на eth_call — и ломается чтение У
+    /// АРБИТРА и у второй стороны, а не у того, кто список раздул. Кому нужна
+    /// гарантия — getPresentationDigestsPage ниже. Кто именно положил каждый
+    /// отпечаток, здесь не видно: это в событии PresentationDigestRecorded, и
+    /// туда же ходят за номером блока.
+    function getPresentationDigests(address agreement) external view returns (bytes32[] memory) {
+        return ArbiterRegistryStorage.data().presentationDigests[agreement];
+    }
+
+    /// @notice Отпечатки по сделке окном: с `offset`, не больше `limit` штук.
+    /// @dev Полный getPresentationDigests честен на малых числах, но при большом
+    /// списке упирается в потолок eth_call — и ломается чтение У АРБИТРА, а не у
+    /// того, кто список раздул. Окно даёт читателю выход без апгрейда контракта.
+    ///
+    /// ⚠️ На честном запросе НЕ ревертит никогда: читатель не обязан заранее
+    /// знать длину, а узнать её он может только вторым вызовом — то есть в
+    /// другом блоке, когда длина уже другая. Реверт на «offset за концом»
+    /// означал бы, что листающий обязан выиграть гонку с пишущим. Поэтому:
+    ///   - `offset` за концом списка (и пустой список)  → пустой массив;
+    ///   - `limit == 0`                                  → пустой массив;
+    ///   - `offset + limit` больше длины                 → хвост до конца.
+    /// Пустой ответ читается однозначно: «здесь больше ничего нет», и это
+    /// условие остановки для листающего. Отличить его от «мимо» можно
+    /// getPresentationDigestCount, но обычно незачем.
+    ///
+    /// Сумма `offset + limit` не считается нигде намеренно, и это не
+    /// придирка: на checked-арифметике 0.8 наивное `offset + limit` при
+    /// `limit` вроде type(uint256).max ПАНИКУЕТ (0x11), то есть ровно ломает
+    /// обещание «на честном запросе не ревертит» — а «дай всё с этого места»
+    /// запрос честный. Замерено мутацией: наивная сумма → красный тест
+    /// test_Page_HugeLimit_IsUpToTheEnd_NotARevert с panic 0x11.
+    function getPresentationDigestsPage(address agreement, uint256 offset, uint256 limit)
+        external
+        view
+        returns (bytes32[] memory)
+    {
+        bytes32[] storage all = ArbiterRegistryStorage.data().presentationDigests[agreement];
+        uint256 len = all.length;
+        if (offset >= len) return new bytes32[](0);
+
+        uint256 available = len - offset;
+        uint256 n = limit < available ? limit : available;
+
+        bytes32[] memory page = new bytes32[](n);
+        for (uint256 i = 0; i < n; i++) {
+            page[i] = all[offset + i];
+        }
+        return page;
+    }
+
+    /// @notice Сколько отпечатков лежит по сделке. Отдельно от списка — чтобы
+    /// экран, которому нужно только «есть или нет», не тащил весь массив.
+    function getPresentationDigestCount(address agreement) external view returns (uint256) {
+        return ArbiterRegistryStorage.data().presentationDigests[agreement].length;
+    }
+
+    /// Открытые половины ключей чата арбитра. Нули означают «ключей нет» —
+    /// для 4в это признак «предъявлять некому», и различать «нет записи» от
+    /// «записан нуль» незачем: нулевой ключ запрещён при записи.
+    ///
+    /// ⚠️ Обратное неверно: ненулевой ключ НЕ означает «действующий арбитр».
+    /// Ключ не стирается при потере статуса (removeArbiterForCause/
+    /// resignAsArbiter/демоушен) — см. предупреждение в setArbiterChatKey.
+    /// Статус читается отдельно, через ArbiterRegistryFacet.isRegisteredArbiter,
+    /// а не выводится из наличия ключа.
+    function getArbiterChatKeys(address arbiter)
+        external
+        view
+        returns (bytes32 boxKey, bytes32 signKey)
+    {
+        ArbiterRegistryStorage.Data storage d = ArbiterRegistryStorage.data();
+        return (d.arbiterBoxKey[arbiter], d.arbiterSignKey[arbiter]);
+    }
 }

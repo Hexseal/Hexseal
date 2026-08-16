@@ -35,6 +35,7 @@ pragma solidity ^0.8.20;
 import "forge-std/Script.sol";
 import "forge-std/console.sol";
 import "../../src/facets/ArbiterRegistryFacet.sol";
+import {ArbiterAccountabilityFacet} from "../../src/facets/ArbiterAccountabilityFacet.sol";
 import "../../src/DiamondProxy.sol";
 
 contract UpgradeArbiterRegistryV3 is Script {
@@ -62,7 +63,7 @@ contract UpgradeArbiterRegistryV3 is Script {
         replaceSels[8]  = ArbiterRegistryFacet.isRegisteredArbiter.selector;
         replaceSels[9]  = ArbiterRegistryFacet.getArbiters.selector;
         replaceSels[10] = ArbiterRegistryFacet.getDisputeClaimer.selector;
-        replaceSels[11] = ArbiterRegistryFacet.getArbiterDeals.selector;
+        replaceSels[11] = ArbiterAccountabilityFacet.getArbiterDeals.selector;
         replaceSels[12] = ArbiterRegistryFacet.getClaimCommitment.selector;
         replaceSels[13] = ArbiterRegistryFacet.activateDAO.selector;
         replaceSels[14] = ArbiterRegistryFacet.applyAsArbiter.selector;
@@ -88,7 +89,7 @@ contract UpgradeArbiterRegistryV3 is Script {
         addSels[7]  = ArbiterRegistryFacet.setRewardPerDispute.selector;
         addSels[8]  = ArbiterRegistryFacet.setDAOAddress.selector;
         addSels[9]  = ArbiterRegistryFacet.getPendingVerdict.selector;
-        addSels[10] = ArbiterRegistryFacet.getArbiterReward.selector;
+        addSels[10] = ArbiterAccountabilityFacet.getArbiterReward.selector;
         addSels[11] = ArbiterRegistryFacet.getVaultBalance.selector;
         addSels[12] = ArbiterRegistryFacet.getRewardPerDispute.selector;
         addSels[13] = ArbiterRegistryFacet.getDAOAddress.selector;

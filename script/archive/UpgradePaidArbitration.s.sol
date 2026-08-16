@@ -131,6 +131,7 @@ import "forge-std/console.sol";
 
 import "../../src/DiamondProxy.sol";
 import "../../src/facets/ArbiterRegistryFacet.sol";
+import {ArbiterAccountabilityFacet} from "../../src/facets/ArbiterAccountabilityFacet.sol";
 import "../../src/facets/ReputationFacet.sol";
 
 contract UpgradePaidArbitration is Script {
@@ -356,19 +357,19 @@ contract UpgradePaidArbitration is Script {
         sels[28] = ArbiterRegistryFacet.isRegisteredArbiter.selector;
         sels[29] = ArbiterRegistryFacet.getArbiters.selector;
         sels[30] = ArbiterRegistryFacet.getDisputeClaimer.selector;
-        sels[31] = ArbiterRegistryFacet.getArbiterDeals.selector;
+        sels[31] = ArbiterAccountabilityFacet.getArbiterDeals.selector;
         sels[32] = ArbiterRegistryFacet.getClaimCommitment.selector;
         sels[33] = ArbiterRegistryFacet.getPendingVerdict.selector;
-        sels[34] = ArbiterRegistryFacet.getArbiterReward.selector;
+        sels[34] = ArbiterAccountabilityFacet.getArbiterReward.selector;
         sels[35] = ArbiterRegistryFacet.getVaultBalance.selector;
         sels[36] = ArbiterRegistryFacet.getRewardPerDispute.selector; // retired: always reads 0, still mounted (see file header)
         sels[37] = ArbiterRegistryFacet.getDAOAddress.selector;
-        sels[38] = ArbiterRegistryFacet.getArbiterMistakeStreak.selector;
+        sels[38] = ArbiterAccountabilityFacet.getArbiterMistakeStreak.selector;
         sels[39] = ArbiterRegistryFacet.hasSubmittedVerdict.selector;
         sels[40] = ArbiterRegistryFacet.getAppealVotes.selector;
         sels[41] = ArbiterRegistryFacet.hasVotedOnAppeal.selector;
-        sels[42] = ArbiterRegistryFacet.getArbiterBond.selector;
-        sels[43] = ArbiterRegistryFacet.getOpenClaimCount.selector;
+        sels[42] = ArbiterAccountabilityFacet.getArbiterBond.selector;
+        sels[43] = ArbiterAccountabilityFacet.getOpenClaimCount.selector;
         sels[44] = ArbiterRegistryFacet.creditDisputeFee.selector;
         sels[45] = ArbiterRegistryFacet.withdrawTreasurySlice.selector;
         sels[46] = ArbiterRegistryFacet.getTreasurySlice.selector;

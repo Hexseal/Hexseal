@@ -68,7 +68,12 @@ pragma solidity ^0.8.20;
 // хранилище появились cleanVerdicts и removedAt, которых бриф не знал, оба
 // добавлены в возврат функции, плюс hasLiveRemovalProposal (вызовом
 // hasLiveProposal, не копией формулы) — новых полей хранилища задача не
-// потребовала, ArbiterRegistryFacet без изменений.
+// потребовала, ArbiterRegistryFacet без изменений. Число 199 задачей 4.5
+// (16 августа 2026) НЕ сдвинулось и сдвинуться не могло: она ПЕРЕЛОЖИЛА
+// четырнадцать чтений из ArbiterRegistryFacet в ArbiterAccountabilityFacet
+// (69 → 55 и 17 → 31), не добавив и не убрав ни одного селектора. Повод —
+// потолок EIP-170: реестр стоял на 24 516 из 24 576, свободно 60 байт, и
+// задача 5 в него не помещалась; после переноса 23 238, запас 1 338.
 // Пересчитать, не полагаясь на глаз:
 //   grep -o "new bytes4\[\]([0-9]*)" script/DeployFull.s.sol \
 //     | sed 's/.*(\([0-9]*\))/\1/' | awk '{s+=$1} END {print s}'
@@ -441,24 +446,24 @@ contract DeployFull is Script {
         sels[24] = ServiceBoardFacet.getPendingRequestCount.selector;
     }
 
-    // ArbiterRegistryFacet — 69 селекторов
+    // ArbiterRegistryFacet — 55 селекторов
     function arbiterRegistryFacetSelectors() public pure returns (bytes4[] memory sels) {
-        sels = new bytes4[](69);
+        sels = new bytes4[](55);
 
         // DAO-режим
-        sels[0]  = ArbiterRegistryFacet.activateDAO.selector;
-        sels[1]  = ArbiterRegistryFacet.applyAsArbiter.selector;
-        sels[2]  = ArbiterRegistryFacet.resignAsArbiter.selector;
+        sels[0] = ArbiterRegistryFacet.activateDAO.selector;
+        sels[1] = ArbiterRegistryFacet.applyAsArbiter.selector;
+        sels[2] = ArbiterRegistryFacet.resignAsArbiter.selector;
 
         // Admin: управление арбитрами
-        sels[3]  = ArbiterRegistryFacet.setChiefArbiter.selector;
-        sels[4]  = ArbiterRegistryFacet.addArbiter.selector;
+        sels[3] = ArbiterRegistryFacet.setChiefArbiter.selector;
+        sels[4] = ArbiterRegistryFacet.addArbiter.selector;
 
         // Клейм спора (commit-reveal)
-        sels[5]  = ArbiterRegistryFacet.commitDisputeClaim.selector;
-        sels[6]  = ArbiterRegistryFacet.claimDispute.selector;
-        sels[7]  = ArbiterRegistryFacet.releaseDisputeClaim.selector;
-        sels[8]  = ArbiterRegistryFacet.clearDisputeClaim.selector;
+        sels[5] = ArbiterRegistryFacet.commitDisputeClaim.selector;
+        sels[6] = ArbiterRegistryFacet.claimDispute.selector;
+        sels[7] = ArbiterRegistryFacet.releaseDisputeClaim.selector;
+        sels[8] = ArbiterRegistryFacet.clearDisputeClaim.selector;
 
         // Вердикт
         sels[9] = ArbiterRegistryFacet.submitVerdict.selector;
@@ -488,63 +493,58 @@ contract DeployFull is Script {
         sels[27] = ArbiterRegistryFacet.isRegisteredArbiter.selector;
         sels[28] = ArbiterRegistryFacet.getArbiters.selector;
         sels[29] = ArbiterRegistryFacet.getDisputeClaimer.selector;
-        sels[30] = ArbiterRegistryFacet.getArbiterDeals.selector;
-        sels[31] = ArbiterRegistryFacet.getClaimCommitment.selector;
-        sels[32] = ArbiterRegistryFacet.getPendingVerdict.selector;
-        sels[33] = ArbiterRegistryFacet.getArbiterReward.selector;
-        sels[34] = ArbiterRegistryFacet.getVaultBalance.selector;
-        sels[35] = ArbiterRegistryFacet.getRewardPerDispute.selector;
-        sels[36] = ArbiterRegistryFacet.getDAOAddress.selector;
-        sels[37] = ArbiterRegistryFacet.getArbiterMistakeStreak.selector;
-        sels[38] = ArbiterRegistryFacet.hasSubmittedVerdict.selector;
-        sels[39] = ArbiterRegistryFacet.getAppealVotes.selector;
-        sels[40] = ArbiterRegistryFacet.hasVotedOnAppeal.selector;
-        sels[41] = ArbiterRegistryFacet.getArbiterBond.selector;
-        sels[42] = ArbiterRegistryFacet.getOpenClaimCount.selector;
+        sels[30] = ArbiterRegistryFacet.getClaimCommitment.selector;
+        sels[31] = ArbiterRegistryFacet.getPendingVerdict.selector;
+        sels[32] = ArbiterRegistryFacet.getVaultBalance.selector;
+        sels[33] = ArbiterRegistryFacet.getRewardPerDispute.selector;
+        sels[34] = ArbiterRegistryFacet.getDAOAddress.selector;
+        sels[35] = ArbiterRegistryFacet.hasSubmittedVerdict.selector;
+        sels[36] = ArbiterRegistryFacet.getAppealVotes.selector;
+        sels[37] = ArbiterRegistryFacet.hasVotedOnAppeal.selector;
 
         // Сбор со спора (3% от спорной суммы, считает Agreement) — 80/20 арбитр/казна
-        sels[43] = ArbiterRegistryFacet.creditDisputeFee.selector;
-        sels[44] = ArbiterRegistryFacet.withdrawTreasurySlice.selector;
-        sels[45] = ArbiterRegistryFacet.getTreasurySlice.selector;
+        sels[38] = ArbiterRegistryFacet.creditDisputeFee.selector;
+        sels[39] = ArbiterRegistryFacet.withdrawTreasurySlice.selector;
+        sels[40] = ArbiterRegistryFacet.getTreasurySlice.selector;
 
         // Платный вызов арбитра: порог и котировка доплаты до него
-        sels[46] = ArbiterRegistryFacet.setArbiterFloor.selector;
-        sels[47] = ArbiterRegistryFacet.getArbiterFloor.selector;
-        sels[48] = ArbiterRegistryFacet.quoteDisputeTopUp.selector;
+        sels[41] = ArbiterRegistryFacet.setArbiterFloor.selector;
+        sels[42] = ArbiterRegistryFacet.getArbiterFloor.selector;
+        sels[43] = ArbiterRegistryFacet.quoteDisputeTopUp.selector;
 
         // Платный вызов арбитра: оплата и мягкий возврат доплаты
-        sels[49] = ArbiterRegistryFacet.fundDispute.selector;
-        sels[50] = ArbiterRegistryFacet.getDisputeBounty.selector;
-        sels[51] = ArbiterRegistryFacet.withdrawDisputeBounty.selector;
-        sels[52] = ArbiterRegistryFacet.getRefundableBounty.selector;
+        sels[44] = ArbiterRegistryFacet.fundDispute.selector;
+        sels[45] = ArbiterRegistryFacet.getDisputeBounty.selector;
+        sels[46] = ArbiterRegistryFacet.withdrawDisputeBounty.selector;
+        sels[47] = ArbiterRegistryFacet.getRefundableBounty.selector;
 
         // Ключи чата арбитра (4б, 9 августа 2026)
-        sels[53] = ArbiterRegistryFacet.getArbiterChatKeys.selector;
-        sels[54] = ArbiterRegistryFacet.setArbiterChatKey.selector;
+        sels[48] = ArbiterRegistryFacet.setArbiterChatKey.selector;
 
         // Запись «просил, ответа нет» и отпечаток предъявления
         // (4в-2 Выкатка 2, 14 августа 2026). На живой диамонд эти восемь
         // приезжают разрезом script/UpgradePresentationRecord.s.sol.
-        sels[55] = ArbiterRegistryFacet.getDisputeClaimedAt.selector;
-        sels[56] = ArbiterRegistryFacet.recordNoResponse.selector;
-        sels[57] = ArbiterRegistryFacet.getNoResponseAt.selector;
-        sels[58] = ArbiterRegistryFacet.getNoResponseFloor.selector;
-        sels[59] = ArbiterRegistryFacet.recordPresentationDigest.selector;
-        sels[60] = ArbiterRegistryFacet.getPresentationDigests.selector;
-        sels[61] = ArbiterRegistryFacet.getPresentationDigestCount.selector;
-        sels[62] = ArbiterRegistryFacet.getPresentationDigestsPage.selector;
+        //
+        // ⚠️ Здесь остались только ЗАПИСИ плюс геттер константы
+        // NO_RESPONSE_FLOOR: пять чтений этой группы (getDisputeClaimedAt,
+        // getNoResponseAt, getPresentationDigests/Page/Count) уехали в
+        // ArbiterAccountabilityFacet задачей 4.5, 16 августа 2026.
+        // getNoResponseFloor не уехала намеренно — она читает приватную
+        // константу, которую применяет recordNoResponse в том же файле.
+        sels[49] = ArbiterRegistryFacet.recordNoResponse.selector;
+        sels[50] = ArbiterRegistryFacet.getNoResponseFloor.selector;
+        sels[51] = ArbiterRegistryFacet.recordPresentationDigest.selector;
 
-        // Провенанс посадки: кто посадил арбитра (15 августа 2026). На живой
-        // диамонд эти два приезжают отдельным разрезом апгрейда, не этим
-        // скриптом — см. следующую задачу плана.
-        sels[63] = ArbiterRegistryFacet.getSeatedBy.selector;
-        sels[64] = ArbiterRegistryFacet.getSeatedCountBy.selector;
+        // Провенанс посадки (getSeatedBy/getSeatedCountBy) уехал в
+        // ArbiterAccountabilityFacet задачей 4.5, 16 августа 2026 — ЗАПИСЬ
+        // провенанса (addArbiter, ArbiterRegistryStorage.clearSeat) осталась
+        // здесь, уехало только чтение.
 
         // Потолок запаса директора (arbiter-accountability, задача 2,
         // 15 августа 2026): addArbiter теперь запрещает директору собрать
         // блок размером с кворум апелляции. На живой диамонд приезжает
         // отдельным разрезом апгрейда, не этим скриптом.
-        sels[65] = ArbiterRegistryFacet.getChiefBloc.selector;
+        sels[52] = ArbiterRegistryFacet.getChiefBloc.selector;
 
         // Потолок споров в руках (arbiter-accountability, задача 3,
         // 15 августа 2026): claimDispute отказывает арбитру, который уже
@@ -552,25 +552,22 @@ contract DeployFull is Script {
         // (доход без работы независимо от вердикта) не может расти
         // числом клеймов. На живой диамонд приезжает отдельным разрезом
         // апгрейда, не этим скриптом.
-        sels[66] = ArbiterRegistryFacet.getMaxClaimsPerArbiter.selector;
+        sels[53] = ArbiterRegistryFacet.getMaxClaimsPerArbiter.selector;
 
         // Зубы приостановки (arbiter-accountability, задача 5, 15 августа
         // 2026): claimDispute/resignAsArbiter/finalizeVerdict теперь
-        // отказывают приостановленному арбитру. getCleanVerdicts — счётчик
-        // неперевёрнутых финализированных вердиктов, задел под будущую
-        // конвертацию «залог плюс судейский стаж» при включении ДАО. На
-        // живой диамонд приезжает отдельным разрезом апгрейда, не этим
-        // скриптом.
-        sels[67] = ArbiterRegistryFacet.getCleanVerdicts.selector;
+        // отказывают приостановленному арбитру — это поведение, а не селектор.
+        // Счётчик getCleanVerdicts уехал в ArbiterAccountabilityFacet задачей
+        // 4.5, 16 августа 2026; пишет его finalizeVerdict здесь.
 
         // Порог серии судейских ошибок прочитанный с этой стороны
         // (arbiter-accountability, задача 6, 15 августа 2026): совпадает с
         // ArbiterAccountabilityFacet.getMistakeThreshold(), сверяется
         // test_MistakeThresholdMatchesRegistry.
-        sels[68] = ArbiterRegistryFacet.getMaxArbiterMistakes.selector;
+        sels[54] = ArbiterRegistryFacet.getMaxArbiterMistakes.selector;
     }
 
-    // ArbiterAccountabilityFacet — 17 селекторов (arbiter-accountability,
+    // ArbiterAccountabilityFacet — 31 селектор (arbiter-accountability,
     // задача 4, 15 августа 2026, пять; шестой, getChiefArbiterAddress, снят
     // задачей 5 того же дня — см. комментарий ниже; задача 6 того же дня
     // добавила пять (снос с поводом + четыре view), круг правок 1 ревью
@@ -591,7 +588,7 @@ contract DeployFull is Script {
     // (86.4%), запаса не хватало. Делит тот же ArbiterRegistryStorage
     // namespace — переноса данных нет.
     function arbiterAccountabilityFacetSelectors() public pure returns (bytes4[] memory sels) {
-        sels = new bytes4[](17);
+        sels = new bytes4[](31);
         sels[0] = ArbiterAccountabilityFacet.suspendArbiter.selector;
         sels[1] = ArbiterAccountabilityFacet.liftSuspension.selector;
         sels[2] = ArbiterAccountabilityFacet.isSuspended.selector;
@@ -650,6 +647,37 @@ contract DeployFull is Script {
         // view вместо семи-восьми отдельных запросов, которые между собой
         // могли разойтись на блок — залог прочитан до сноса, а статус после.
         sels[16] = ArbiterAccountabilityFacet.getArbiterStanding.selector;
+
+        // ── Задача 4.5 (16 августа 2026): ЧЕТЫРНАДЦАТЬ ЧТЕНИЙ ИЗ РЕЕСТРА ──
+        // ArbiterRegistryFacet упёрся в потолок EIP-170 (24 516 из 24 576,
+        // свободно 60) — задача 5 в него физически не помещалась. Чтения про
+        // поведение арбитра, его положение и доказательства переехали сюда;
+        // реестр стал 23 238 (запас 1 338), этот фасет — 6 327.
+        //
+        // ⚠️ ЭТО ПЕРЕНОС, НЕ НОВЫЕ ВХОДЫ. Общее множество селекторов даймонда
+        // не изменилось: 86 до и 86 после, побайтно то же множество (у реестра
+        // 69 → 55, здесь 17 → 31). Снаружи вызывающий не видит ничего.
+        //
+        // Поведение и положение арбитра
+        sels[17] = ArbiterAccountabilityFacet.getArbiterMistakeStreak.selector;
+        sels[18] = ArbiterAccountabilityFacet.getCleanVerdicts.selector;
+        sels[19] = ArbiterAccountabilityFacet.getArbiterBond.selector;
+        sels[20] = ArbiterAccountabilityFacet.getOpenClaimCount.selector;
+        sels[21] = ArbiterAccountabilityFacet.getArbiterReward.selector;
+        sels[22] = ArbiterAccountabilityFacet.getArbiterDeals.selector;
+
+        // Провенанс посадки (задача 1 плана, чтение переехало сюда задачей 4.5)
+        sels[23] = ArbiterAccountabilityFacet.getSeatedBy.selector;
+        sels[24] = ArbiterAccountabilityFacet.getSeatedCountBy.selector;
+
+        // Доказательства: ключи чата, якорь предъявления, запись о молчании,
+        // отпечатки (4б и 4в-2; записи остались в реестре)
+        sels[25] = ArbiterAccountabilityFacet.getArbiterChatKeys.selector;
+        sels[26] = ArbiterAccountabilityFacet.getDisputeClaimedAt.selector;
+        sels[27] = ArbiterAccountabilityFacet.getNoResponseAt.selector;
+        sels[28] = ArbiterAccountabilityFacet.getPresentationDigests.selector;
+        sels[29] = ArbiterAccountabilityFacet.getPresentationDigestCount.selector;
+        sels[30] = ArbiterAccountabilityFacet.getPresentationDigestsPage.selector;
     }
 
     // DealMetadataFacet — 1 селектор

@@ -36,11 +36,18 @@ pragma solidity ^0.8.20;
 
 import "forge-std/Test.sol";
 import {ArbiterRegistryFacet} from "../src/facets/ArbiterRegistryFacet.sol";
+import {ArbiterAccountabilityFacet} from "../src/facets/ArbiterAccountabilityFacet.sol";
+import {ArbiterTwoFacetBench} from "./ArbiterTwoFacetBench.sol";
 import {FactoryStorage} from "../src/FactoryFacet.sol";
 import {MinimalForwarder} from "../src/MinimalForwarder.sol";
 
-contract DisputeNoResponseTest is Test {
+contract DisputeNoResponseTest is Test, ArbiterTwoFacetBench {
+    /// Оба хендла указывают на ОДИН адрес — прокси с обоими фасетами
+    /// (см. test/ArbiterTwoFacetBench.sol). `facet` оставлен под прежним
+    /// именем нарочно: все vm.store(address(facet), ...) ниже продолжают
+    /// бить в то же самое хранилище.
     ArbiterRegistryFacet facet;
+    ArbiterAccountabilityFacet accFacet;
 
     address arbiter;
     address otherArbiter;
@@ -69,7 +76,7 @@ contract DisputeNoResponseTest is Test {
     uint256 constant SLOT_CLAIMED_AT_BY = 22;
 
     function setUp() public {
-        facet = new ArbiterRegistryFacet();
+        (facet, accFacet) = _deployArbiterBench();
         arbiter = address(0xA1);
         otherArbiter = address(0xA2);
         _makeArbiter(arbiter);
@@ -84,7 +91,7 @@ contract DisputeNoResponseTest is Test {
     function test_ClaimDispute_RecordsClaimMoment() public {
         _claimBy(arbiter, agreement);
         assertEq(
-            facet.getDisputeClaimedAt(agreement),
+            accFacet.getDisputeClaimedAt(agreement),
             vm.getBlockTimestamp(),
             unicode"время взятия обязано лечь в хранилище"
         );
@@ -95,7 +102,7 @@ contract DisputeNoResponseTest is Test {
     /// разреза (ClaimTimeUnknown ниже).
     function test_GetDisputeClaimedAt_ZeroBeforeClaim() public view {
         assertEq(
-            facet.getDisputeClaimedAt(agreement),
+            accFacet.getDisputeClaimedAt(agreement),
             0,
             unicode"невзятый спор не может иметь момента взятия"
         );
@@ -111,7 +118,7 @@ contract DisputeNoResponseTest is Test {
     /// закрывается.
     function test_ReclaimBySameArbiter_AnchorMovesForward() public {
         _claimBy(arbiter, agreement);
-        uint256 firstClaim = facet.getDisputeClaimedAt(agreement);
+        uint256 firstClaim = accFacet.getDisputeClaimedAt(agreement);
 
         vm.prank(arbiter);
         facet.releaseDisputeClaim(agreement);
@@ -120,7 +127,7 @@ contract DisputeNoResponseTest is Test {
         _claimBy(arbiter, agreement);
 
         assertEq(
-            facet.getDisputeClaimedAt(agreement),
+            accFacet.getDisputeClaimedAt(agreement),
             firstClaim + 25 hours,
             unicode"перевзятие обязано переставить якорь на момент последнего взятия"
         );
@@ -156,7 +163,7 @@ contract DisputeNoResponseTest is Test {
         vm.prank(arbiter);
         facet.releaseDisputeClaim(agreement);
         assertEq(
-            facet.getDisputeClaimedAt(agreement),
+            accFacet.getDisputeClaimedAt(agreement),
             0,
             unicode"клейм снят — геттер обязан молчать, спор ничей"
         );
@@ -170,7 +177,7 @@ contract DisputeNoResponseTest is Test {
         vm.prank(agreement); // clearDisputeClaim зовёт только сам Agreement
         facet.clearDisputeClaim(agreement);
         assertEq(
-            facet.getDisputeClaimedAt(agreement),
+            accFacet.getDisputeClaimedAt(agreement),
             0,
             unicode"клейм снят обратным вызовом — геттер обязан молчать"
         );
@@ -181,7 +188,7 @@ contract DisputeNoResponseTest is Test {
     /// записал бы молчание в ту же секунду, как взял спор.
     function test_OtherArbiter_GetsOwnAnchor() public {
         _claimBy(arbiter, agreement);
-        uint256 firstClaim = facet.getDisputeClaimedAt(agreement);
+        uint256 firstClaim = accFacet.getDisputeClaimedAt(agreement);
 
         vm.prank(arbiter);
         facet.releaseDisputeClaim(agreement);
@@ -190,7 +197,7 @@ contract DisputeNoResponseTest is Test {
         _claimBy(otherArbiter, agreement);
 
         assertEq(
-            facet.getDisputeClaimedAt(agreement),
+            accFacet.getDisputeClaimedAt(agreement),
             firstClaim + 25 hours,
             unicode"новый арбитр обязан получить СВОЙ якорь, а не чужой"
         );
@@ -222,8 +229,8 @@ contract DisputeNoResponseTest is Test {
         facet.recordNoResponse(agreement);
 
         // Обе величины видны — иначе замер ниже прошёл бы на пустом месте.
-        assertGt(facet.getDisputeClaimedAt(agreement), 0, unicode"якорь обязан быть виден до снятия");
-        assertGt(facet.getNoResponseAt(agreement), 0, unicode"запись обязана быть видна до снятия");
+        assertGt(accFacet.getDisputeClaimedAt(agreement), 0, unicode"якорь обязан быть виден до снятия");
+        assertGt(accFacet.getNoResponseAt(agreement), 0, unicode"запись обязана быть видна до снятия");
 
         // Снятие клейма ЛЮБЫМ путём, включая ещё не написанный.
         bytes32 claimSlot = keccak256(abi.encode(agreement, uint256(ARB_BASE) + SLOT_DISPUTE_CLAIMS));
@@ -235,9 +242,9 @@ contract DisputeNoResponseTest is Test {
         vm.store(address(facet), claimSlot, bytes32(0));
         assertEq(facet.getDisputeClaimer(agreement), address(0), unicode"клейм обязан сняться");
 
-        assertEq(facet.getDisputeClaimedAt(agreement), 0,
+        assertEq(accFacet.getDisputeClaimedAt(agreement), 0,
             unicode"клеймера нет — якорь обязан молчать, каким бы путём клейм ни снялся");
-        assertEq(facet.getNoResponseAt(agreement), 0,
+        assertEq(accFacet.getNoResponseAt(agreement), 0,
             unicode"клеймера нет — запись обязана молчать, каким бы путём клейм ни снялся");
     }
 
@@ -291,7 +298,7 @@ contract DisputeNoResponseTest is Test {
         facet.recordNoResponse(agreement);
 
         assertEq(
-            facet.getNoResponseAt(agreement),
+            accFacet.getNoResponseAt(agreement),
             vm.getBlockTimestamp(),
             unicode"пол пройден — запись обязана лечь в цепь секундой блока"
         );
@@ -316,7 +323,7 @@ contract DisputeNoResponseTest is Test {
         vm.warp(vm.getBlockTimestamp() + 24 hours);
         vm.prank(arbiter);
         facet.recordNoResponse(agreement);
-        uint256 recordedAt = facet.getNoResponseAt(agreement);
+        uint256 recordedAt = accFacet.getNoResponseAt(agreement);
 
         vm.prank(arbiter);
         facet.releaseDisputeClaim(agreement);
@@ -324,7 +331,7 @@ contract DisputeNoResponseTest is Test {
         _claimBy(arbiter, agreement);
 
         assertEq(
-            facet.getNoResponseAt(agreement),
+            accFacet.getNoResponseAt(agreement),
             recordedAt,
             unicode"перевзятие не имеет права переставить время уже сделанной записи"
         );
@@ -335,8 +342,8 @@ contract DisputeNoResponseTest is Test {
         // взятие. Утверждается здесь явно, чтобы следующий читатель не принял
         // это за баг и не «починил» обратно в «один раз навсегда».
         assertGt(
-            facet.getDisputeClaimedAt(agreement),
-            facet.getNoResponseAt(agreement),
+            accFacet.getDisputeClaimedAt(agreement),
+            accFacet.getNoResponseAt(agreement),
             unicode"якорь обязан переставиться на последнее взятие, даже если оно позже записи"
         );
 
@@ -422,14 +429,14 @@ contract DisputeNoResponseTest is Test {
         vm.stopPrank();
 
         assertEq(
-            facet.getNoResponseAt(agreement),
+            accFacet.getNoResponseAt(agreement),
             0,
             unicode"отпустил спор — прежняя запись о молчании не должна тянуться к новому арбитру"
         );
 
         _claimBy(otherArbiter, agreement);
         assertEq(
-            facet.getNoResponseAt(agreement),
+            accFacet.getNoResponseAt(agreement),
             0,
             unicode"новый арбитр обязан начать с чистого листа, а не с чужой записи"
         );
@@ -438,7 +445,7 @@ contract DisputeNoResponseTest is Test {
         vm.prank(otherArbiter);
         facet.recordNoResponse(agreement);
         assertEq(
-            facet.getNoResponseAt(agreement),
+            accFacet.getNoResponseAt(agreement),
             vm.getBlockTimestamp(),
             unicode"новый арбитр обязан мочь сделать СВОЮ запись"
         );
@@ -499,7 +506,7 @@ contract DisputeNoResponseTest is Test {
         assertTrue(ok, string.concat("forwarded recordNoResponse failed: ", vm.toString(ret)));
 
         assertEq(
-            facet.getNoResponseAt(agreement),
+            accFacet.getNoResponseAt(agreement),
             vm.getBlockTimestamp(),
             unicode"запись обязана лечь ПОДПИСАНТУ, а не форвардеру"
         );
@@ -547,7 +554,7 @@ contract DisputeNoResponseTest is Test {
         assertGt(uint256(vm.load(address(facet), slot)), 0,
             unicode"смещение disputeClaimedAtBy в struct Data уехало");
         vm.store(address(facet), slot, bytes32(0));
-        assertEq(facet.getDisputeClaimedAt(agr), 0, unicode"якорь обязан обнулиться");
+        assertEq(accFacet.getDisputeClaimedAt(agr), 0, unicode"якорь обязан обнулиться");
     }
 
     /// Смещение trustedForwarder внутри FactoryStorage.Layout — 3 слота от

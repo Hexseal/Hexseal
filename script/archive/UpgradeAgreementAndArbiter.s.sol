@@ -27,6 +27,7 @@ import "forge-std/console.sol";
 import "../../src/FactoryFacet.sol";
 import "../../src/RegistryFacet.sol";
 import "../../src/facets/ArbiterRegistryFacet.sol";
+import {ArbiterAccountabilityFacet} from "../../src/facets/ArbiterAccountabilityFacet.sol";
 import "../../src/DiamondProxy.sol";
 
 contract UpgradeAgreementAndArbiter is Script {
@@ -84,7 +85,7 @@ contract UpgradeAgreementAndArbiter is Script {
         arbiterSelectors[4] = ArbiterRegistryFacet.isRegisteredArbiter.selector;
         arbiterSelectors[5] = ArbiterRegistryFacet.getArbiters.selector;
         arbiterSelectors[6] = ArbiterRegistryFacet.getDisputeClaimer.selector;
-        arbiterSelectors[7] = ArbiterRegistryFacet.getArbiterDeals.selector;
+        arbiterSelectors[7] = ArbiterAccountabilityFacet.getArbiterDeals.selector;
 
         cuts[1] = IDiamondCut.FacetCut({
             facetAddress: address(arbiterFacet),

@@ -4,7 +4,27 @@ pragma solidity ^0.8.20;
 import "forge-std/Script.sol";
 import "forge-std/console.sol";
 import {ArbiterRegistryFacet} from "../src/facets/ArbiterRegistryFacet.sol";
+// Пять чтений этого разреза (getDisputeClaimedAt, getNoResponseAt,
+// getPresentationDigests/Count/Page) и шесть более старых переехали в фасет
+// ответственности задачей 4.5 (16 августа 2026). Разрез УЖЕ ИСПОЛНЕН и
+// переписыванию не подлежит: списки ниже — запись о том, что легло в цепь
+// 15 августа, а значения селекторов от переезда не изменились ни на бит.
+// Импорт нужен только чтобы `.selector` было откуда прочитать.
+import {ArbiterAccountabilityFacet} from "../src/facets/ArbiterAccountabilityFacet.sol";
 import {IDiamondCut, IDiamondLoupe} from "../src/DiamondProxy.sol";
+
+/// Один селектор, который этот УЖЕ ИСПОЛНЕННЫЙ разрез читает через даймонд.
+///
+/// Объявлен здесь местным интерфейсом, а не взят с фасета, намеренно (задача
+/// 4.5, 16 августа 2026): в момент, когда этот скрипт писался и запускался,
+/// `getOpenClaimCount` жил в ArbiterRegistryFacet; задачей 4.5 чтение переехало
+/// в ArbiterAccountabilityFacet. Скрипт бьёт в АДРЕС ДАЙМОНДА, а тому всё
+/// равно, какой фасет держит селектор сегодня, — и привязывать исполненный
+/// разрез к фасету, которого на момент его запуска не существовало, значило бы
+/// переписывать историю. Селектор от переезда не меняется.
+interface IOpenClaimCountProbe {
+    function getOpenClaimCount(address arbiter) external view returns (uint256);
+}
 
 /// Тот же getNoResponseFloor(), но объявленный `view`, а не `pure`.
 /// В самом фасете он pure — там он и правда только возвращает константу. А
@@ -292,11 +312,12 @@ contract UpgradePresentationRecord is Script {
     function findArbitersWithPreCutClaims(address diamond) public view returns (address[] memory flagged) {
         ArbiterRegistryFacet f = ArbiterRegistryFacet(diamond);
         address[] memory arbiters = f.getArbiters();
+        IOpenClaimCountProbe claims = IOpenClaimCountProbe(diamond);
 
         uint256 count;
         bool[] memory hit = new bool[](arbiters.length);
         for (uint256 i = 0; i < arbiters.length; i++) {
-            if (f.getOpenClaimCount(arbiters[i]) == 0) continue;
+            if (claims.getOpenClaimCount(arbiters[i]) == 0) continue;
             hit[i] = true;
             count++;
         }
@@ -317,7 +338,7 @@ contract UpgradePresentationRecord is Script {
         }
         for (uint256 i = 0; i < flagged.length; i++) {
             console.log("  NO CLAIM ANCHOR - arbiter:", flagged[i]);
-            console.log("    openClaimCount:", ArbiterRegistryFacet(diamond).getOpenClaimCount(flagged[i]));
+            console.log("    openClaimCount:", IOpenClaimCountProbe(diamond).getOpenClaimCount(flagged[i]));
             console.log("    -> recordNoResponse will revert ClaimTimeUnknown");
             console.log("    -> cure: releaseDisputeClaim(deal) and claim it again");
         }
@@ -347,18 +368,18 @@ contract UpgradePresentationRecord is Script {
         sels = new bytes4[](8);
 
         // Задача 1: момент взятия спора
-        sels[0] = ArbiterRegistryFacet.getDisputeClaimedAt.selector;
+        sels[0] = ArbiterAccountabilityFacet.getDisputeClaimedAt.selector;
 
         // Задача 2: запись «просил, ответа нет» + пол в сутки
         sels[1] = ArbiterRegistryFacet.recordNoResponse.selector;
-        sels[2] = ArbiterRegistryFacet.getNoResponseAt.selector;
+        sels[2] = ArbiterAccountabilityFacet.getNoResponseAt.selector;
         sels[3] = ArbiterRegistryFacet.getNoResponseFloor.selector;
 
         // Задача 3: отпечаток предъявления + чтение ленты
         sels[4] = ArbiterRegistryFacet.recordPresentationDigest.selector;
-        sels[5] = ArbiterRegistryFacet.getPresentationDigests.selector;
-        sels[6] = ArbiterRegistryFacet.getPresentationDigestCount.selector;
-        sels[7] = ArbiterRegistryFacet.getPresentationDigestsPage.selector;
+        sels[5] = ArbiterAccountabilityFacet.getPresentationDigests.selector;
+        sels[6] = ArbiterAccountabilityFacet.getPresentationDigestCount.selector;
+        sels[7] = ArbiterAccountabilityFacet.getPresentationDigestsPage.selector;
     }
 
     /// Все смонтированные сегодня селекторы фасета — 56 штук, тот же список,
@@ -413,19 +434,19 @@ contract UpgradePresentationRecord is Script {
         sels[28] = ArbiterRegistryFacet.isRegisteredArbiter.selector;
         sels[29] = ArbiterRegistryFacet.getArbiters.selector;
         sels[30] = ArbiterRegistryFacet.getDisputeClaimer.selector;
-        sels[31] = ArbiterRegistryFacet.getArbiterDeals.selector;
+        sels[31] = ArbiterAccountabilityFacet.getArbiterDeals.selector;
         sels[32] = ArbiterRegistryFacet.getClaimCommitment.selector;
         sels[33] = ArbiterRegistryFacet.getPendingVerdict.selector;
-        sels[34] = ArbiterRegistryFacet.getArbiterReward.selector;
+        sels[34] = ArbiterAccountabilityFacet.getArbiterReward.selector;
         sels[35] = ArbiterRegistryFacet.getVaultBalance.selector;
         sels[36] = ArbiterRegistryFacet.getRewardPerDispute.selector;
         sels[37] = ArbiterRegistryFacet.getDAOAddress.selector;
-        sels[38] = ArbiterRegistryFacet.getArbiterMistakeStreak.selector;
+        sels[38] = ArbiterAccountabilityFacet.getArbiterMistakeStreak.selector;
         sels[39] = ArbiterRegistryFacet.hasSubmittedVerdict.selector;
         sels[40] = ArbiterRegistryFacet.getAppealVotes.selector;
         sels[41] = ArbiterRegistryFacet.hasVotedOnAppeal.selector;
-        sels[42] = ArbiterRegistryFacet.getArbiterBond.selector;
-        sels[43] = ArbiterRegistryFacet.getOpenClaimCount.selector;
+        sels[42] = ArbiterAccountabilityFacet.getArbiterBond.selector;
+        sels[43] = ArbiterAccountabilityFacet.getOpenClaimCount.selector;
 
         // Сбор со спора (3% от спорной суммы) — 80/20 арбитр/казна
         sels[44] = ArbiterRegistryFacet.creditDisputeFee.selector;
@@ -444,7 +465,7 @@ contract UpgradePresentationRecord is Script {
         sels[53] = ArbiterRegistryFacet.getRefundableBounty.selector;
 
         // Ключи чата арбитра (4б, 9 августа 2026)
-        sels[54] = ArbiterRegistryFacet.getArbiterChatKeys.selector;
+        sels[54] = ArbiterAccountabilityFacet.getArbiterChatKeys.selector;
         sels[55] = ArbiterRegistryFacet.setArbiterChatKey.selector;
 
         // Восемь новых входов Задач 1-3 — в Add, не здесь (см. addSelectors()).

@@ -32,12 +32,19 @@ pragma solidity ^0.8.20;
 
 import "forge-std/Test.sol";
 import {ArbiterRegistryFacet} from "../src/facets/ArbiterRegistryFacet.sol";
+import {ArbiterAccountabilityFacet} from "../src/facets/ArbiterAccountabilityFacet.sol";
+import {ArbiterTwoFacetBench} from "./ArbiterTwoFacetBench.sol";
 import {RegistryStorage} from "../src/RegistryFacet.sol";
 import {FactoryStorage} from "../src/FactoryFacet.sol";
 import {MinimalForwarder} from "../src/MinimalForwarder.sol";
 
-contract PresentationDigestTest is Test {
+contract PresentationDigestTest is Test, ArbiterTwoFacetBench {
+    /// Оба хендла указывают на ОДИН адрес — прокси с обоими фасетами
+    /// (см. test/ArbiterTwoFacetBench.sol). `facet` оставлен под прежним
+    /// именем нарочно: все vm.store(address(facet), ...) ниже продолжают
+    /// бить в то же самое хранилище.
     ArbiterRegistryFacet facet;
+    ArbiterAccountabilityFacet accFacet;
 
     address client;
     address executor;
@@ -61,7 +68,7 @@ contract PresentationDigestTest is Test {
     uint256 constant REC_OFFSET_EXECUTOR = 2;
 
     function setUp() public {
-        facet = new ArbiterRegistryFacet();
+        (facet, accFacet) = _deployArbiterBench();
 
         client   = address(0xC1);
         executor = address(0xE1);
@@ -86,7 +93,7 @@ contract PresentationDigestTest is Test {
         vm.prank(client);
         facet.recordPresentationDigest(agreement, digest);
 
-        bytes32[] memory all = facet.getPresentationDigests(agreement);
+        bytes32[] memory all = accFacet.getPresentationDigests(agreement);
         assertEq(all.length, 1, unicode"отпечаток обязан лечь в цепь");
         assertEq(all[0], digest, unicode"в цепь обязаны лечь те самые 32 байта, что подписаны");
     }
@@ -97,7 +104,7 @@ contract PresentationDigestTest is Test {
         vm.prank(executor);
         facet.recordPresentationDigest(agreement, keccak256(unicode"работа сдана"));
         assertEq(
-            facet.getPresentationDigestCount(agreement),
+            accFacet.getPresentationDigestCount(agreement),
             1,
             unicode"исполнитель — сторона спора и предъявлять обязан мочь"
         );
@@ -109,7 +116,7 @@ contract PresentationDigestTest is Test {
         facet.recordPresentationDigest(agreement, keccak256(unicode"два"));
         vm.stopPrank();
         assertEq(
-            facet.getPresentationDigestCount(agreement),
+            accFacet.getPresentationDigestCount(agreement),
             2,
             unicode"переписка не влезает в один мешок — предъявлений столько, сколько нужно (2.7)"
         );
@@ -131,7 +138,7 @@ contract PresentationDigestTest is Test {
         vm.prank(executor);
         facet.recordPresentationDigest(agreement, second);
 
-        bytes32[] memory all = facet.getPresentationDigests(agreement);
+        bytes32[] memory all = accFacet.getPresentationDigests(agreement);
         assertEq(all.length, 2, unicode"оба отпечатка обязаны остаться");
         assertEq(all[0], first,  unicode"первым в списке обязан быть первый положенный");
         assertEq(all[1], second, unicode"порядок в списке — это и есть то, что доказывается");
@@ -172,12 +179,12 @@ contract PresentationDigestTest is Test {
 
     function test_CountIsZeroBeforeAnyDigest() public view {
         assertEq(
-            facet.getPresentationDigestCount(agreement),
+            accFacet.getPresentationDigestCount(agreement),
             0,
             unicode"пока не предъявляли — считать нечего"
         );
         assertEq(
-            facet.getPresentationDigests(agreement).length,
+            accFacet.getPresentationDigests(agreement).length,
             0,
             unicode"пустой список, а не мусор"
         );
@@ -199,7 +206,7 @@ contract PresentationDigestTest is Test {
     function test_Page_ReturnsWindow() public {
         bytes32[] memory put = _fillDigests(5);
 
-        bytes32[] memory page = facet.getPresentationDigestsPage(agreement, 1, 2);
+        bytes32[] memory page = accFacet.getPresentationDigestsPage(agreement, 1, 2);
         assertEq(page.length, 2, unicode"окно обязано отдать ровно limit, пока хватает списка");
         assertEq(page[0], put[1], unicode"окно обязано начинаться с offset");
         assertEq(page[1], put[2], unicode"порядок внутри окна — тот же, что в списке");
@@ -210,12 +217,12 @@ contract PresentationDigestTest is Test {
     function test_Page_OffsetPastEnd_ReturnsEmptyNotRevert() public {
         _fillDigests(3);
         assertEq(
-            facet.getPresentationDigestsPage(agreement, 3, 10).length,
+            accFacet.getPresentationDigestsPage(agreement, 3, 10).length,
             0,
             unicode"offset ровно за концом — пусто, и это ответ, а не ошибка"
         );
         assertEq(
-            facet.getPresentationDigestsPage(agreement, 999, 10).length,
+            accFacet.getPresentationDigestsPage(agreement, 999, 10).length,
             0,
             unicode"offset далеко за концом — тоже пусто, читатель длины не знал"
         );
@@ -225,7 +232,7 @@ contract PresentationDigestTest is Test {
     /// предъявления.
     function test_Page_EmptyList_ReturnsEmptyNotRevert() public view {
         assertEq(
-            facet.getPresentationDigestsPage(agreement, 0, 10).length,
+            accFacet.getPresentationDigestsPage(agreement, 0, 10).length,
             0,
             unicode"по пустому списку окно обязано отдать пусто, а не упасть"
         );
@@ -234,7 +241,7 @@ contract PresentationDigestTest is Test {
     function test_Page_ZeroLimit_ReturnsEmptyNotRevert() public {
         _fillDigests(3);
         assertEq(
-            facet.getPresentationDigestsPage(agreement, 0, 0).length,
+            accFacet.getPresentationDigestsPage(agreement, 0, 0).length,
             0,
             unicode"limit == 0 — законный запрос «ничего не надо», не ошибка"
         );
@@ -245,7 +252,7 @@ contract PresentationDigestTest is Test {
     function test_Page_LimitBeyondEnd_ReturnsTail() public {
         bytes32[] memory put = _fillDigests(3);
 
-        bytes32[] memory page = facet.getPresentationDigestsPage(agreement, 2, 100);
+        bytes32[] memory page = accFacet.getPresentationDigestsPage(agreement, 2, 100);
         assertEq(page.length, 1, unicode"хвост короче окна — отдаётся хвост, а не реверт");
         assertEq(page[0], put[2], unicode"в хвосте обязан быть последний положенный");
     }
@@ -260,7 +267,7 @@ contract PresentationDigestTest is Test {
     function test_Page_HugeLimit_IsUpToTheEnd_NotARevert() public {
         _fillDigests(3);
         assertEq(
-            facet.getPresentationDigestsPage(agreement, 1, type(uint256).max).length,
+            accFacet.getPresentationDigestsPage(agreement, 1, type(uint256).max).length,
             2,
             unicode"limit в потолок — это «до конца», а не панику на честном запросе"
         );
@@ -270,8 +277,8 @@ contract PresentationDigestTest is Test {
     /// не сходится» на экране зависело бы от того, каким геттером читали.
     function test_Page_AgreesWithFullGetter() public {
         _fillDigests(4);
-        bytes32[] memory full = facet.getPresentationDigests(agreement);
-        bytes32[] memory page = facet.getPresentationDigestsPage(agreement, 0, full.length);
+        bytes32[] memory full = accFacet.getPresentationDigests(agreement);
+        bytes32[] memory page = accFacet.getPresentationDigestsPage(agreement, 0, full.length);
 
         assertEq(page.length, full.length, unicode"окно во всю длину обязано дать весь список");
         for (uint256 i = 0; i < full.length; i++) {
@@ -286,7 +293,7 @@ contract PresentationDigestTest is Test {
 
         uint256 seen = 0;
         for (uint256 off = 0; off < 6; off += 2) {
-            bytes32[] memory page = facet.getPresentationDigestsPage(agreement, off, 2);
+            bytes32[] memory page = accFacet.getPresentationDigestsPage(agreement, off, 2);
             for (uint256 i = 0; i < page.length; i++) {
                 assertEq(page[i], put[seen], unicode"листание сбилось: не тот отпечаток на своём месте");
                 seen++;
@@ -314,7 +321,7 @@ contract PresentationDigestTest is Test {
         facet.recordNoResponse(agreement);
 
         assertGt(
-            facet.getNoResponseAt(agreement),
+            accFacet.getNoResponseAt(agreement),
             0,
             unicode"жёсткий запрет дал бы стороне щит: отпечаток пустышки и неуязвимость (2.11)"
         );
@@ -334,7 +341,7 @@ contract PresentationDigestTest is Test {
         facet.recordPresentationDigest(agreement, keccak256(unicode"поздно, но было"));
 
         assertEq(
-            facet.getPresentationDigestCount(agreement),
+            accFacet.getPresentationDigestCount(agreement),
             1,
             unicode"запись о молчании не имеет права запереть сторону"
         );
@@ -387,7 +394,7 @@ contract PresentationDigestTest is Test {
         (bool ok, bytes memory ret) = fwd.execute(req, _signFwd(fwd, clientPk, req));
         assertTrue(ok, string.concat("forwarded recordPresentationDigest failed: ", vm.toString(ret)));
 
-        bytes32[] memory all = facet.getPresentationDigests(agr);
+        bytes32[] memory all = accFacet.getPresentationDigests(agr);
         assertEq(all.length, 1, unicode"через форвардер отправителем обязан считаться человек, не форвардер");
         assertEq(all[0], digest, unicode"в цепь обязан лечь отпечаток из подписанного запроса");
     }

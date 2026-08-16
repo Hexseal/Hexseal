@@ -3,6 +3,8 @@ pragma solidity ^0.8.20;
 
 import "forge-std/Test.sol";
 import {ArbiterRegistryFacet} from "../src/facets/ArbiterRegistryFacet.sol";
+import {LegacyPreSplitArbiterFacet, ArbiterTwoFacetBench} from "./ArbiterTwoFacetBench.sol";
+import {ArbiterAccountabilityFacet} from "../src/facets/ArbiterAccountabilityFacet.sol";
 import {UpgradePresentationRecord} from "../script/UpgradePresentationRecord.s.sol";
 import "../src/DiamondProxy.sol";
 
@@ -16,7 +18,7 @@ contract WrongFloorStub {
     }
 }
 
-contract PresentationRecordUpgradeTest is Test {
+contract PresentationRecordUpgradeTest is Test, ArbiterTwoFacetBench {
     UpgradePresentationRecord internal upgrade;
 
     function setUp() public {
@@ -210,7 +212,14 @@ contract PresentationRecordUpgradeTest is Test {
     /// (169 селекторов всего, из них 56 арбитражных). Восемь новых НЕ
     /// монтируются: их и приносит этот разрез.
     function _mountOldFacet(DiamondProxy diamond) internal returns (address oldFacetAddr) {
-        ArbiterRegistryFacet oldFacet = new ArbiterRegistryFacet();
+        // ⚠️ Двойник «фасет до задачи 4.5» (16 августа 2026), а не боевой
+        // ArbiterRegistryFacet: этот стенд повторяет раскладку цепи НА МОМЕНТ
+        // того разреза — все селекторы на ОДНОМ адресе, — а с тех пор
+        // четырнадцать чтений уехали в ArbiterAccountabilityFacet, и ни один
+        // боевой контракт больше не реализует их все сразу. Голый фасет
+        // смонтировался бы (diamondCut требует лишь наличия кода), но
+        // пред-полёт зовёт getOpenClaimCount по-настоящему и ревертил бы.
+        LegacyPreSplitArbiterFacet oldFacet = new LegacyPreSplitArbiterFacet();
 
         IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](1);
         cuts[0] = IDiamondCut.FacetCut(address(oldFacet), IDiamondCut.FacetCutAction.Add, _oldFacetSelectors());
@@ -241,7 +250,7 @@ contract PresentationRecordUpgradeTest is Test {
     function _setOpenClaimCount(DiamondProxy diamond, address arbiter, uint256 n) internal {
         vm.store(address(diamond), keccak256(abi.encode(arbiter, uint256(ARB_POS) + 13)), bytes32(n));
         assertEq(
-            ArbiterRegistryFacet(address(diamond)).getOpenClaimCount(arbiter), n,
+            ArbiterAccountabilityFacet(address(diamond)).getOpenClaimCount(arbiter), n,
             unicode"смещение openClaimCount в ArbiterRegistryStorage.Data уехало"
         );
     }
@@ -554,7 +563,7 @@ contract PresentationRecordUpgradeTest is Test {
 
         // Сначала доказываем предпосылку: якорь правда не смонтирован до разреза.
         vm.expectRevert();
-        f.getDisputeClaimedAt(address(0xDEAD));
+        ArbiterAccountabilityFacet(address(diamond)).getDisputeClaimedAt(address(0xDEAD));
 
         // А предупреждение при этом отрабатывает без единого revert.
         address[] memory flagged = upgrade.findArbitersWithPreCutClaims(address(diamond));
@@ -583,7 +592,10 @@ contract PresentationRecordUpgradeTest is Test {
 
         uint256 before = upgrade.totalRoutedSelectors(address(diamond));
 
-        ArbiterRegistryFacet newFacet = new ArbiterRegistryFacet();
+        // Двойник «фасет ДО задачи 4.5» (16 августа 2026): этот разрез исполнен
+        // 15 августа, когда пять его чтений ещё жили в ArbiterRegistryFacet, а
+        // смоук ниже зовёт их по-настоящему. Воспроизводим тот день точно.
+        LegacyPreSplitArbiterFacet newFacet = new LegacyPreSplitArbiterFacet();
         IDiamondCut(address(diamond)).diamondCut(upgrade.buildCuts(address(newFacet)), address(0), "");
 
         upgrade.assertRouted(upgrade.replaceSelectors(), address(newFacet), address(diamond));
@@ -601,11 +613,11 @@ contract PresentationRecordUpgradeTest is Test {
         address probe = address(0xDEAD);
 
         assertEq(d.getNoResponseFloor(), 24 hours, unicode"пол записи о молчании через даймонд не сутки");
-        assertEq(d.getDisputeClaimedAt(probe), 0, unicode"якорь взятия по чистой сделке обязан быть нулём");
-        assertEq(d.getNoResponseAt(probe), 0, unicode"запись о молчании по чистой сделке обязана быть нулём");
-        assertEq(d.getPresentationDigestCount(probe), 0, unicode"счётчик отпечатков по чистой сделке обязан быть нулём");
-        assertEq(d.getPresentationDigests(probe).length, 0, unicode"лента отпечатков по чистой сделке обязана быть пустой");
-        assertEq(d.getPresentationDigestsPage(probe, 0, 10).length, 0, unicode"окно отпечатков по чистой сделке обязано быть пустым");
+        assertEq(ArbiterAccountabilityFacet(address(diamond)).getDisputeClaimedAt(probe), 0, unicode"якорь взятия по чистой сделке обязан быть нулём");
+        assertEq(ArbiterAccountabilityFacet(address(diamond)).getNoResponseAt(probe), 0, unicode"запись о молчании по чистой сделке обязана быть нулём");
+        assertEq(ArbiterAccountabilityFacet(address(diamond)).getPresentationDigestCount(probe), 0, unicode"счётчик отпечатков по чистой сделке обязан быть нулём");
+        assertEq(ArbiterAccountabilityFacet(address(diamond)).getPresentationDigests(probe).length, 0, unicode"лента отпечатков по чистой сделке обязана быть пустой");
+        assertEq(ArbiterAccountabilityFacet(address(diamond)).getPresentationDigestsPage(probe, 0, 10).length, 0, unicode"окно отпечатков по чистой сделке обязано быть пустым");
 
         // Две пишущие функции — тоже через даймонд. Отказ ожидаем и он же
         // доказательство, что маршрут исполняет НАШ код: пустой fallback
@@ -666,21 +678,31 @@ contract PresentationRecordUpgradeTest is Test {
         assertEq(afterCut.arbiterCount, before.arbiterCount, unicode"arbiterCount не пережил разрез");
         assertEq(afterCut.vaultBalance, before.vaultBalance, unicode"vaultBalance не пережил разрез");
 
+        // ⚠️ Задача 4.5 (16 августа 2026) — доигрываем переезд чтений, как и в
+        // соседнем тесте цикла. Здесь владение даймондом уже у ownerAddr,
+        // поэтому разрез идёт от его имени: diamondCut пускает только владельца.
+        // startPrank, а не prank: помощник делает несколько внешних вызовов
+        // (деплой фасета, чтения loupe и сам diamondCut), а prank держится
+        // ровно на один.
+        vm.startPrank(ownerAddr);
+        _applyTask45MoveAfterLegacyCut(diamond);
+        vm.stopPrank();
+
         // Сырые байты трёх НОВЫХ полей, записанные ДО того, как их геттеры
         // вообще существовали на этом даймонде, читаются обратно ЧЕРЕЗ НИХ
         // теперь, когда они смонтированы: раскладка append-only пережила
         // замену адреса фасета.
         ArbiterRegistryFacet d = ArbiterRegistryFacet(address(diamond));
         assertEq(
-            d.getDisputeClaimedAt(SEED_AGREEMENT), SEED_CLAIMED_AT,
+            ArbiterAccountabilityFacet(address(diamond)).getDisputeClaimedAt(SEED_AGREEMENT), SEED_CLAIMED_AT,
             unicode"якорь взятия, записанный ДО разреза, не пережил замену фасета"
         );
         assertEq(
-            d.getPresentationDigestCount(SEED_AGREEMENT), 1,
+            ArbiterAccountabilityFacet(address(diamond)).getPresentationDigestCount(SEED_AGREEMENT), 1,
             unicode"счётчик отпечатков, записанный ДО разреза, не пережил замену фасета"
         );
         assertEq(
-            d.getPresentationDigests(SEED_AGREEMENT)[0], SEED_DIGEST,
+            ArbiterAccountabilityFacet(address(diamond)).getPresentationDigests(SEED_AGREEMENT)[0], SEED_DIGEST,
             unicode"отпечаток, записанный ДО разреза, не пережил замену фасета"
         );
     }
@@ -871,7 +893,7 @@ contract PresentationRecordUpgradeTest is Test {
             address(diamond),
             abi.encodeWithSelector(
                 IDiamondLoupe.facetAddress.selector,
-                ArbiterRegistryFacet.getPresentationDigestsPage.selector
+                ArbiterAccountabilityFacet.getPresentationDigestsPage.selector
             ),
             abi.encode(address(0))
         );
@@ -963,7 +985,7 @@ contract PresentationRecordUpgradeTest is Test {
 
         vm.expectCall(
             address(diamond),
-            abi.encodeWithSelector(ArbiterRegistryFacet.getOpenClaimCount.selector, arb)
+            abi.encodeWithSelector(ArbiterAccountabilityFacet.getOpenClaimCount.selector, arb)
         );
         upgrade.run();
     }

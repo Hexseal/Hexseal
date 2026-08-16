@@ -2211,6 +2211,43 @@ contract ArbiterRegistryFacet {
     }
 
     // -------- VIEWS --------
+    //
+    // ⚠️ ГРАНИЦА С ArbiterAccountabilityFacet (задача 4.5, 16 августа 2026).
+    // Фасет упёрся в потолок EIP-170: 24 516 байт из 24 576, свободно 60. Любая
+    // следующая правка реестра физически не влезала бы. Четырнадцать ЧТЕНИЙ
+    // уехали в соседний фасет, который держит тот же ArbiterRegistryStorage и
+    // тот же POSITION, — снаружи даймонда перенос не виден вовсе: тот же адрес,
+    // тот же селектор, тот же ответ, меняется только строка в таблице маршрутов.
+    //
+    // Граница проведена по смыслу, а не по размеру:
+    //   уехало  — чтения про ПОВЕДЕНИЕ арбитра, его ПОЛОЖЕНИЕ и ДОКАЗАТЕЛЬСТВА
+    //             (счётчики ошибок и чистых вердиктов, залог, споры в руках,
+    //             провенанс посадки, награда, послужной список сделок, ключи
+    //             чата, якорь предъявления, запись о молчании, отпечатки);
+    //   осталось — реестр как ХОЗЯИН СОСТАВА, СПОРОВ, ВЕРДИКТОВ и АПЕЛЛЯЦИЙ
+    //             (getArbiters, isRegisteredArbiter, getChiefArbiter,
+    //             getDisputeClaimer, getClaimCommitment, getPendingVerdict,
+    //             hasSubmittedVerdict, getAppealVotes, hasVotedOnAppeal, деньги
+    //             спора и банка).
+    //
+    // ⚠️ ЧЕТЫРЕ ГЕТТЕРА КОНСТАНТ НЕ УЕХАЛИ, И ЭТО НЕ НЕДОСМОТР.
+    // getMinXPToRegister, getNoResponseFloor, getMaxArbiterMistakes,
+    // getMaxClaimsPerArbiter читают ПРИВАТНЫЕ КОНСТАНТЫ ЭТОГО ФАСЕТА, которые
+    // применяет остающийся здесь код (applyAsArbiter :851, recordNoResponse
+    // :1327, _recordArbiterMistake, claimDispute). Переезд геттера потребовал бы
+    // ВТОРОГО ОБЪЯВЛЕНИЯ числа в соседнем файле — и тогда наружу отвечало бы
+    // зеркало, а боевое правило применялось бы по оригиналу. Ровно тот класс,
+    // что этот план ловит весь: getMaxArbiterMistakes, переехав, превратил бы
+    // test_MistakeThresholdMatchesRegistry в сверку зеркала с самим собой.
+    // Понадобятся эти байты — константу переносят в ArbiterRegistryStorage
+    // ОДНИМ объявлением на оба фасета, как уже сделано с SUSPENSION_WINDOW; это
+    // отдельная работа, здесь не сделана.
+    //
+    // Три чтения не уехали по другой причине — их зовут ИЗНУТРИ: isDaoActive
+    // (модификатор onlyOwnerOrChief), getArbiterFloor (из quoteDisputeTopUp),
+    // quoteDisputeTopUp (из fundDispute). Плюс getChiefBloc — она зовёт
+    // приватную _chiefBloc, которую держит addArbiter, и переезд стоил бы
+    // второй копии тела.
 
     function isDaoActive() public view returns (bool) {
         if (ArbiterRegistryStorage.data().daoActiveManual) return true;
@@ -2231,25 +2268,11 @@ contract ArbiterRegistryFacet {
     function getArbiters()      external view returns (address[] memory) { return ArbiterRegistryStorage.data().arbiterList; }
     function getDisputeClaimer(address agreement) external view returns (address) { return ArbiterRegistryStorage.data().disputeClaims[agreement]; }
 
-    /// @notice Когда ТЕКУЩИЙ клеймер взял этот спор, в секундах блока. Если он
-    /// брал его несколько раз — момент последнего взятия, от него и считается
-    /// пол. 0 — спор не взят (в том числе отпущен) или взят до разреза 4в-2.
-    ///
-    /// Подпись односоставная намеренно: спрашивающему нужен якорь того, кто
-    /// судит спор сейчас, а не история по каждому арбитру. История есть, она в
-    /// событиях DisputeClaimed/DisputeReleased.
-    function getDisputeClaimedAt(address agreement) external view returns (uint256) {
-        ArbiterRegistryStorage.Data storage d = ArbiterRegistryStorage.data();
-        return d.disputeClaimedAtBy[agreement][d.disputeClaims[agreement]];
-    }
-
-    /// @notice Когда текущий клеймер записал «просил, ответа нет». 0 — не записывал.
-    /// Ноль здесь же означает «спор ничей»: запись принадлежит арбитру, а не
-    /// сделке, и вместе с клеймом уходит из виду, не пропадая из цепи.
-    function getNoResponseAt(address agreement) external view returns (uint256) {
-        ArbiterRegistryStorage.Data storage d = ArbiterRegistryStorage.data();
-        return d.disputeNoResponseAtBy[agreement][d.disputeClaims[agreement]];
-    }
+    // getDisputeClaimedAt / getNoResponseAt переехали в ArbiterAccountabilityFacet
+    // (задача 4.5, 16 августа 2026) — доказательства поведения арбитра. Здесь
+    // остаётся getNoResponseFloor: он читает приватную константу NO_RESPONSE_FLOOR,
+    // которую применяет recordNoResponse (:1327) в этом же файле, и переезд
+    // потребовал бы второго объявления числа. Разбор — в шапке VIEWS ниже.
 
     /// @notice Сколько должно пройти от взятия спора до записи о молчании.
     /// Фронт обязан спрашивать здесь, а не держать своё число (замысел 5.2).
@@ -2257,90 +2280,18 @@ contract ArbiterRegistryFacet {
         return NO_RESPONSE_FLOOR;
     }
 
-    /// @notice Все отпечатки предъявлений по сделке, в порядке появления.
-    /// Порядок и есть содержание ответа: спор решается тем, что легло раньше.
-    ///
-    /// Удобен и честен на обычных числах, но список целиком при большом их
-    /// количестве упирается в потолок газа на eth_call — и ломается чтение У
-    /// АРБИТРА и у второй стороны, а не у того, кто список раздул. Кому нужна
-    /// гарантия — getPresentationDigestsPage ниже. Кто именно положил каждый
-    /// отпечаток, здесь не видно: это в событии PresentationDigestRecorded, и
-    /// туда же ходят за номером блока.
-    function getPresentationDigests(address agreement) external view returns (bytes32[] memory) {
-        return ArbiterRegistryStorage.data().presentationDigests[agreement];
-    }
+    // getPresentationDigests / getPresentationDigestsPage /
+    // getPresentationDigestCount / getArbiterChatKeys / getArbiterDeals переехали
+    // в ArbiterAccountabilityFacet (задача 4.5, 16 августа 2026). Записи в этом
+    // файле (recordPresentationDigest, setArbiterChatKey) остались — уехали
+    // только чтения.
 
-    /// @notice Отпечатки по сделке окном: с `offset`, не больше `limit` штук.
-    /// @dev Полный getPresentationDigests честен на малых числах, но при большом
-    /// списке упирается в потолок eth_call — и ломается чтение У АРБИТРА, а не у
-    /// того, кто список раздул. Окно даёт читателю выход без апгрейда контракта.
-    ///
-    /// ⚠️ На честном запросе НЕ ревертит никогда: читатель не обязан заранее
-    /// знать длину, а узнать её он может только вторым вызовом — то есть в
-    /// другом блоке, когда длина уже другая. Реверт на «offset за концом»
-    /// означал бы, что листающий обязан выиграть гонку с пишущим. Поэтому:
-    ///   - `offset` за концом списка (и пустой список)  → пустой массив;
-    ///   - `limit == 0`                                  → пустой массив;
-    ///   - `offset + limit` больше длины                 → хвост до конца.
-    /// Пустой ответ читается однозначно: «здесь больше ничего нет», и это
-    /// условие остановки для листающего. Отличить его от «мимо» можно
-    /// getPresentationDigestCount, но обычно незачем.
-    ///
-    /// Сумма `offset + limit` не считается нигде намеренно, и это не
-    /// придирка: на checked-арифметике 0.8 наивное `offset + limit` при
-    /// `limit` вроде type(uint256).max ПАНИКУЕТ (0x11), то есть ровно ломает
-    /// обещание «на честном запросе не ревертит» — а «дай всё с этого места»
-    /// запрос честный. Замерено мутацией: наивная сумма → красный тест
-    /// test_Page_HugeLimit_IsUpToTheEnd_NotARevert с panic 0x11.
-    function getPresentationDigestsPage(address agreement, uint256 offset, uint256 limit)
-        external
-        view
-        returns (bytes32[] memory)
-    {
-        bytes32[] storage all = ArbiterRegistryStorage.data().presentationDigests[agreement];
-        uint256 len = all.length;
-        if (offset >= len) return new bytes32[](0);
-
-        uint256 available = len - offset;
-        uint256 n = limit < available ? limit : available;
-
-        bytes32[] memory page = new bytes32[](n);
-        for (uint256 i = 0; i < n; i++) {
-            page[i] = all[offset + i];
-        }
-        return page;
-    }
-
-    /// @notice Сколько отпечатков лежит по сделке. Отдельно от списка — чтобы
-    /// экран, которому нужно только «есть или нет», не тащил весь массив.
-    function getPresentationDigestCount(address agreement) external view returns (uint256) {
-        return ArbiterRegistryStorage.data().presentationDigests[agreement].length;
-    }
-
-    /// Открытые половины ключей чата арбитра. Нули означают «ключей нет» —
-    /// для 4в это признак «предъявлять некому», и различать «нет записи» от
-    /// «записан нуль» незачем: нулевой ключ запрещён при записи.
-    ///
-    /// ⚠️ Обратное неверно: ненулевой ключ НЕ означает «действующий арбитр».
-    /// Ключ не стирается при потере статуса (removeArbiter/resignAsArbiter/
-    /// демоушен) — см. предупреждение в setArbiterChatKey. Статус читается
-    /// отдельно, через isRegisteredArbiter, а не выводится из наличия ключа.
-    function getArbiterChatKeys(address arbiter)
-        external
-        view
-        returns (bytes32 boxKey, bytes32 signKey)
-    {
-        ArbiterRegistryStorage.Data storage d = ArbiterRegistryStorage.data();
-        return (d.arbiterBoxKey[arbiter], d.arbiterSignKey[arbiter]);
-    }
-    function getArbiterDeals(address arbiter) external view returns (address[] memory) { return ArbiterRegistryStorage.data().arbiterDeals[arbiter]; }
     function getClaimCommitment(bytes32 c) external view returns (uint256) { return ArbiterRegistryStorage.data().claimCommitments[c]; }
 
     function getPendingVerdict(address agreement) external view returns (ArbiterRegistryStorage.PendingVerdict memory) {
         return ArbiterRegistryStorage.data().pendingVerdicts[agreement];
     }
 
-    function getArbiterReward(address arbiter) external view returns (uint256) { return ArbiterRegistryStorage.data().arbiterRewards[arbiter]; }
     function getVaultBalance()  external view returns (uint256) { return ArbiterRegistryStorage.data().vaultBalance; }
     /// @notice Путь снят 31 июля 2026 (см. setRewardPerDispute) — поле, которое
     /// эта функция читает, больше никто не пишет, значение всегда 0.
@@ -2353,7 +2304,6 @@ contract ArbiterRegistryFacet {
         uint256 f = ArbiterRegistryStorage.data().arbiterFloor;
         return f == 0 ? DEFAULT_ARBITER_FLOOR : f;
     }
-    function getArbiterMistakeStreak(address addr) external view returns (uint256) { return ArbiterRegistryStorage.data().arbiterMistakeStreak[addr]; }
     function hasSubmittedVerdict(address agreement) external view returns (bool) {
         return ArbiterRegistryStorage.data().pendingVerdicts[agreement].submittedAt != 0;
     }
@@ -2365,9 +2315,6 @@ contract ArbiterRegistryFacet {
     function hasVotedOnAppeal(address agreement, address arbiterAddr) external view returns (bool) {
         return ArbiterRegistryStorage.data().hasVotedAppeal[agreement][arbiterAddr];
     }
-    function getArbiterBond(address addr) external view returns (uint256) { return ArbiterRegistryStorage.data().arbiterBond[addr]; }
-    function getOpenClaimCount(address addr) external view returns (uint256) { return ArbiterRegistryStorage.data().openClaimCount[addr]; }
-
     /// @notice Сколько надо доплатить, чтобы арбитр суммарно получил порог.
     /// Возвращает 0, если котёл и так достаточно велик — тогда кнопку доплаты
     /// показывать не надо вовсе.
@@ -2396,16 +2343,11 @@ contract ArbiterRegistryFacet {
         return arbiterGets >= floor_ ? 0 : floor_ - arbiterGets;
     }
 
-    /// @notice Кто посадил этого арбитра. `address(0)` — самозапись через
-    /// applyAsArbiter (нет ни залога, ни гейта по XP за ручной посадкой).
-    function getSeatedBy(address arbiter) external view returns (address) {
-        return ArbiterRegistryStorage.data().seatedBy[arbiter];
-    }
-
-    /// @notice Сколько арбитров этой посадки сидят прямо сейчас.
-    function getSeatedCountBy(address seater) external view returns (uint256) {
-        return ArbiterRegistryStorage.data().seatedCountBy[seater];
-    }
+    // getSeatedBy / getSeatedCountBy переехали в ArbiterAccountabilityFacet
+    // (задача 4.5, 16 августа 2026) — провенанс посадки. Запись провенанса
+    // (addArbiter, clearSeat) осталась здесь; уехало только чтение. Скрипт
+    // разреза читает их ЧЕРЕЗ ДАЙМОНД, поэтому миграция провенанса не
+    // затронута — адрес один и тот же.
 
     /// @notice Текущий блок директора: сколько голосов на апелляции достались
     /// бы ему, если бы все посаженные им арбитры и он сам (если он тоже
@@ -2433,11 +2375,7 @@ contract ArbiterRegistryFacet {
         return MAX_CLAIMS_PER_ARBITER;
     }
 
-    /// @notice Сколько раз вердикт этого арбитра дошёл до финализации
-    /// неперевёрнутым. Задел под будущую конвертацию «залог плюс судейский
-    /// стаж» при включении ДАО (задача 5, 15 августа 2026) — сам перевод здесь
-    /// не реализован, только счётчик.
-    function getCleanVerdicts(address arbiterAddr) external view returns (uint256) {
-        return ArbiterRegistryStorage.data().cleanVerdicts[arbiterAddr];
-    }
+    // getCleanVerdicts переехал в ArbiterAccountabilityFacet (задача 4.5,
+    // 16 августа 2026) — счётчик чистых вердиктов. Пишет его finalizeVerdict
+    // в этом файле, читают отсюда только снаружи.
 }

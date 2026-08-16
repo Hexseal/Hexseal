@@ -202,7 +202,7 @@ contract ArbiterRemovalForCauseIntegrationTest is Test {
         _disputeAndOverturn(address(0x103), address(0x104));
 
         assertEq(
-            ArbiterRegistryFacet(address(diamond)).getArbiterMistakeStreak(arbiter), 2,
+            ArbiterAccountabilityFacet(address(diamond)).getArbiterMistakeStreak(arbiter), 2,
             unicode"два реальных переворота обязаны довести счётчик до порога"
         );
         assertTrue(
@@ -1088,7 +1088,7 @@ contract ArbiterRemovalForCauseIntegrationTest is Test {
             abi.encodeWithSelector(ArbiterRegistryFacet.setArbiterChatKey.selector, boxKey, signKey)
         );
         (bytes32 gotBox, bytes32 gotSign) =
-            ArbiterRegistryFacet(address(diamond)).getArbiterChatKeys(human);
+            ArbiterAccountabilityFacet(address(diamond)).getArbiterChatKeys(human);
 
         // ── Реализация №2: ArbiterAccountabilityFacet._msgSender ──
         ArbiterAccountabilityFacet(address(diamond)).removeArbiterForCause(
@@ -1110,7 +1110,7 @@ contract ArbiterRemovalForCauseIntegrationTest is Test {
         // половины «обе записали человеку» ещё могло бы уживаться с тем, что
         // одна из копий пишет ОБОИМ.
         (bytes32 fwdBox, bytes32 fwdSign) =
-            ArbiterRegistryFacet(address(diamond)).getArbiterChatKeys(address(fwd));
+            ArbiterAccountabilityFacet(address(diamond)).getArbiterChatKeys(address(fwd));
         assertEq(fwdBox,  bytes32(0), unicode"форвардеру ключи не принадлежат");
         assertEq(fwdSign, bytes32(0), unicode"форвардеру ключи не принадлежат");
         assertEq(

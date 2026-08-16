@@ -15,6 +15,7 @@ import "../src/FactoryFacet.sol";
 import "../src/AgreementDeployer.sol";
 import "../src/Agreement.sol";
 import "../src/facets/ArbiterRegistryFacet.sol";
+import {ArbiterAccountabilityFacet} from "../src/facets/ArbiterAccountabilityFacet.sol";
 
 // ---------- MOCK USDC ----------
 
@@ -114,23 +115,32 @@ contract DisputeFeeTest is Test {
         // реального клейма спора вместо передачи arbiter_ аргументом (такого
         // аргумента в проде не существует, см. creditDisputeFee), поэтому тесты
         // теперь доводят агримент до DISPUTED и реально клеймят его арбитром.
-        bytes4[] memory arbSels = new bytes4[](11);
-        arbSels[0]  = ArbiterRegistryFacet.creditDisputeFee.selector;
-        arbSels[1]  = ArbiterRegistryFacet.getArbiterReward.selector;
-        arbSels[2]  = ArbiterRegistryFacet.getTreasurySlice.selector;
-        arbSels[3]  = ArbiterRegistryFacet.withdrawTreasurySlice.selector;
-        arbSels[4]  = ArbiterRegistryFacet.addArbiter.selector;
-        arbSels[5]  = ArbiterRegistryFacet.isRegisteredArbiter.selector;
-        arbSels[6]  = ArbiterRegistryFacet.commitDisputeClaim.selector;
-        arbSels[7]  = ArbiterRegistryFacet.claimDispute.selector;
-        arbSels[8]  = ArbiterRegistryFacet.submitVerdict.selector;
-        arbSels[9]  = ArbiterRegistryFacet.overturnVerdict.selector;
-        arbSels[10] = ArbiterRegistryFacet.withdrawArbiterReward.selector;
+        bytes4[] memory arbSels = new bytes4[](10);
+        arbSels[0] = ArbiterRegistryFacet.creditDisputeFee.selector;
+        arbSels[1] = ArbiterRegistryFacet.getTreasurySlice.selector;
+        arbSels[2] = ArbiterRegistryFacet.withdrawTreasurySlice.selector;
+        arbSels[3] = ArbiterRegistryFacet.addArbiter.selector;
+        arbSels[4] = ArbiterRegistryFacet.isRegisteredArbiter.selector;
+        arbSels[5] = ArbiterRegistryFacet.commitDisputeClaim.selector;
+        arbSels[6] = ArbiterRegistryFacet.claimDispute.selector;
+        arbSels[7] = ArbiterRegistryFacet.submitVerdict.selector;
+        arbSels[8] = ArbiterRegistryFacet.overturnVerdict.selector;
+        arbSels[9] = ArbiterRegistryFacet.withdrawArbiterReward.selector;
 
-        IDiamondCut.FacetCut[] memory cut = new IDiamondCut.FacetCut[](3);
+        // Задача 4.5 (16 августа 2026): эти чтения живут в
+        // ArbiterAccountabilityFacet, значит и монтировать их надо на него.
+        // Оставить их в списке выше значило бы маршрут на фасет, который их
+        // не реализует, — вызов доходит и ревертит.
+        bytes4[] memory accSels = new bytes4[](1);
+        accSels[0] = ArbiterAccountabilityFacet.getArbiterReward.selector;
+
+        IDiamondCut.FacetCut[] memory cut = new IDiamondCut.FacetCut[](4);
         cut[0] = IDiamondCut.FacetCut(address(registryFacet), IDiamondCut.FacetCutAction.Add, regSels);
         cut[1] = IDiamondCut.FacetCut(address(factoryFacet),  IDiamondCut.FacetCutAction.Add, facSels);
         cut[2] = IDiamondCut.FacetCut(address(arbiterFacet),  IDiamondCut.FacetCutAction.Add, arbSels);
+        cut[3] = IDiamondCut.FacetCut(
+            address(new ArbiterAccountabilityFacet()), IDiamondCut.FacetCutAction.Add, accSels
+        );
 
         diamond = new DiamondProxy(owner, cut, address(0), "");
 
@@ -305,7 +315,7 @@ contract DisputeFeeTest is Test {
         ArbiterRegistryFacet(address(diamond)).creditDisputeFee(6_000_000);
         vm.stopPrank();
 
-        assertEq(ArbiterRegistryFacet(address(diamond)).getArbiterReward(arb), 4_800_000, "arbiter 80%");
+        assertEq(ArbiterAccountabilityFacet(address(diamond)).getArbiterReward(arb), 4_800_000, "arbiter 80%");
         assertEq(ArbiterRegistryFacet(address(diamond)).getTreasurySlice(),      1_200_000, "treasury 20%");
     }
 
@@ -322,7 +332,7 @@ contract DisputeFeeTest is Test {
         ArbiterRegistryFacet(address(diamond)).creditDisputeFee(1_000_003);
         vm.stopPrank();
 
-        uint256 toArb = ArbiterRegistryFacet(address(diamond)).getArbiterReward(arb);
+        uint256 toArb = ArbiterAccountabilityFacet(address(diamond)).getArbiterReward(arb);
         uint256 toTre = ArbiterRegistryFacet(address(diamond)).getTreasurySlice();
         assertEq(toArb, 800_002, "arbiter share floors");
         assertEq(toArb + toTre, 1_000_003, "parts must sum to the whole");
@@ -352,7 +362,7 @@ contract DisputeFeeTest is Test {
         vm.stopPrank();
 
         // 6_000_000 -> 4_800_000/1_200_000; 1_000_003 -> 800_002/200_001.
-        assertEq(ArbiterRegistryFacet(address(diamond)).getArbiterReward(arb), 4_800_000 + 800_002, "arbiter reward must accumulate");
+        assertEq(ArbiterAccountabilityFacet(address(diamond)).getArbiterReward(arb), 4_800_000 + 800_002, "arbiter reward must accumulate");
         assertEq(ArbiterRegistryFacet(address(diamond)).getTreasurySlice(),      1_200_000 + 200_001, "treasury slice must accumulate");
     }
 
@@ -372,7 +382,7 @@ contract DisputeFeeTest is Test {
         ArbiterRegistryFacet(address(diamond)).creditDisputeFee(6_000_000);
         vm.stopPrank();
 
-        assertEq(ArbiterRegistryFacet(address(diamond)).getArbiterReward(arb), 0, "overturned arbiter gets nothing");
+        assertEq(ArbiterAccountabilityFacet(address(diamond)).getArbiterReward(arb), 0, "overturned arbiter gets nothing");
         assertEq(ArbiterRegistryFacet(address(diamond)).getTreasurySlice(),      6_000_000, "treasury gets the whole fee");
     }
 
@@ -398,7 +408,7 @@ contract DisputeFeeTest is Test {
         ArbiterRegistryFacet(address(diamond)).withdrawArbiterReward();
 
         assertEq(usdc.balanceOf(arb) - before, 4_800_000, "reward must actually reach the arbiter's wallet");
-        assertEq(ArbiterRegistryFacet(address(diamond)).getArbiterReward(arb), 0, "counter must be cleared");
+        assertEq(ArbiterAccountabilityFacet(address(diamond)).getArbiterReward(arb), 0, "counter must be cleared");
     }
 
     /// Выдача доли казны — открытая: деньги всё равно уходят только на

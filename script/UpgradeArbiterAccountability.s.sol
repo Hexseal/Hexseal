@@ -26,22 +26,39 @@ interface ISuspensionWindowProbe {
  * ОТВЕТСТВЕННОСТЬ РУЧНЫХ АРБИТРОВ — разрез даймонда (задачи 1-9 плана
  * 2026-08-15-arbiter-accountability).
  *
- * ОДИН diamondCut из ЧЕТЫРЁХ действий:
- *   Replace 63 → новый ArbiterRegistryFacet      (всё, что маршрутизируется
- *                                                 сегодня, кроме removeArbiter)
- *   Add      6 → тот же новый ArbiterRegistryFacet (входы, дописанные задачами
- *                                                 1, 2 и 5)
- *   Add     17 → новый ArbiterAccountabilityFacet (весь фасет целиком)
+ * ОДИН diamondCut из ПЯТИ действий:
+ *   Replace 52 → новый ArbiterRegistryFacet      (всё, что маршрутизируется
+ *                                                 сегодня и остаётся в реестре)
+ *   Replace 11 → новый ArbiterAccountabilityFacet (чтения, переехавшие туда
+ *                                                 задачей 4.5 — они СМОНТИРОВАНЫ
+ *                                                 сегодня, потому Replace)
+ *   Add      3 → тот же новый ArbiterRegistryFacet (входы задач 2, 3 и 5,
+ *                                                 оставшиеся в реестре)
+ *   Add     20 → ArbiterAccountabilityFacet       (весь фасет целиком: 17 своих
+ *                                                 плюс 3 переехавших, которых в
+ *                                                 цепи ещё нет)
  *   Remove   1 → address(0): removeArbiter(address), 0x3487e08c
  *
- * ⚠️ ПОЧЕМУ ЧЕТЫРЕ ЭЛЕМЕНТА, А НЕ ТРИ. Группа Add едет на ДВА РАЗНЫХ адреса:
- * шесть новых входов старого фасета — на новый ArbiterRegistryFacet, семнадцать
- * входов ответственности — на ArbiterAccountabilityFacet. Один элемент
- * FacetCut несёт ровно один адрес, поэтому Add физически не может быть одной
- * записью. Remove — пятый по счёту повод для отдельного элемента: он требует
- * `facetAddress == address(0)` (DiamondCutLib.removeFunctions,
- * "Diamond: remove needs zero address"), то есть смешать его с чем-либо
- * нельзя в принципе.
+ * ⚠️ ПОЧЕМУ ПЯТЬ ЭЛЕМЕНТОВ. И Replace, и Add едут на ДВА РАЗНЫХ адреса, а один
+ * элемент FacetCut несёт ровно один адрес — поэтому ни та, ни другая группа не
+ * может быть одной записью. Remove — пятый по счёту повод для отдельного
+ * элемента: он требует `facetAddress == address(0)`
+ * (DiamondCutLib.removeFunctions, "Diamond: remove needs zero address"), то
+ * есть смешать его с чем-либо нельзя в принципе.
+ *
+ * ⚠️ ЗАДАЧА 4.5 (16 августа 2026) — РАЗГРУЗКА РЕЕСТРА. ArbiterRegistryFacet
+ * упёрся в потолок EIP-170 (24 516 из 24 576, свободно 60), и задача 5 в него
+ * физически не помещалась. Четырнадцать ЧТЕНИЙ переехали в фасет
+ * ответственности: реестр 24 516 → 23 238 (запас 1 338), ответственность
+ * 4 500 → 6 327. Селекторов у реестра 69 → 55, у ответственности 17 → 31;
+ * ОБЩЕЕ МНОЖЕСТВО СЕЛЕКТОРОВ ДАЙМОНДА НЕ ИЗМЕНИЛОСЬ — 86 до и 86 после,
+ * побайтно то же множество. Снаружи перенос не виден: тот же адрес прокси, тот
+ * же селектор, тот же ответ.
+ *
+ * Одиннадцать из четырнадцати смонтированы в цепи сегодня → Replace на новый
+ * адрес. Три (getSeatedBy, getSeatedCountBy, getCleanVerdicts) не смонтированы
+ * → остаются Add, просто в другом списке. Итог по числам не сдвинулся:
+ * Add было 6+17=23, стало 3+20=23.
  *
  * ⚠️ ГЛАВНОЕ ПРАВИЛО ДЕЛЕНИЯ Replace/Add, из-за которого разрез отвергается
  * ЦЕЛИКОМ. `Replace` требует, чтобы селектор УЖЕ был смонтирован
@@ -62,7 +79,10 @@ interface ISuspensionWindowProbe {
  *   всего смонтировано               177 селекторов, 11 фасетов
  *   ArbiterRegistryFacet             0x1CF4c7DaA27f2241eafd8E818329719418403013, 64 селектора
  *   арбитров                         1 (0x42dCd14e…), банк 6 000 000, пол 10 000 000
- * После разреза: 177 + 23 − 1 = 199 селекторов, 12 фасетов.
+ * После разреза: 177 + 23 − 1 = 199 селекторов, 12 фасетов. Задача 4.5 это
+ * число НЕ сдвинула: она переложила селекторы между фасетами, не добавив и не
+ * убрав ни одного. Старый адрес по-прежнему опустошается ровно: 63 Replace
+ * (52 + 11) плюс 1 Remove — те самые 64, что сидят на нём сегодня.
  *
  * ── Что именно приезжает ──────────────────────────────────────────────────
  * Задача 1  провенанс посадки            getSeatedBy / getSeatedCountBy
@@ -195,7 +215,8 @@ contract UpgradeArbiterAccountability is Script {
 
         // ── Post-flight: маршруты ─────────────────────────────────────────
         console.log("=== Post-flight ===");
-        assertRouted(replaceSels, address(registryFacet), diamond);
+        assertRouted(replaceRegistrySelectors(), address(registryFacet), diamond);
+        assertRouted(replaceAccountabilitySelectors(), address(accountabilityFacet), diamond);
         assertRouted(addRegistrySelectors(), address(registryFacet), diamond);
         assertRouted(addAccountabilitySelectors(), address(accountabilityFacet), diamond);
         assertFacetHoldsNoSelectors(oldFacet, diamond);
@@ -281,7 +302,12 @@ contract UpgradeArbiterAccountability is Script {
         address seater = OwnershipFacet(diamond).owner();
         console.log("Backfilling seatedBy with the diamond owner:", seater);
 
-        uint256 seatedCountBefore = ArbiterRegistryFacet(diamond).getSeatedCountBy(seater);
+        // ⚠️ Каст на ArbiterAccountabilityFacet, а не на ArbiterRegistryFacet
+        // (задача 4.5, 16 августа 2026): провенанс ЧИТАЕТСЯ теперь оттуда.
+        // Адрес тот же — это диамонд; каст здесь только называет ABI, по
+        // которому кодируется вызов. Пишет провенанс по-прежнему реестр
+        // (addArbiter/clearSeat) и init-контракт миграции.
+        uint256 seatedCountBefore = ArbiterAccountabilityFacet(diamond).getSeatedCountBy(seater);
 
         vm.startBroadcast(pk);
         ArbiterProvenanceInit init = new ArbiterProvenanceInit();
@@ -306,8 +332,10 @@ contract UpgradeArbiterAccountability is Script {
     /// ⚠️ Читает getSeatedBy — селектор, который монтируется этим же разрезом.
     /// До cut'а вызывать нельзя.
     function arbitersMissingProvenance(address diamond) public view returns (address[] memory pending) {
-        ArbiterRegistryFacet f = ArbiterRegistryFacet(diamond);
-        address[] memory all = f.getArbiters();
+        // Состав корпуса читается у реестра, провенанс — у фасета
+        // ответственности (задача 4.5). Адрес один и тот же — диамонд.
+        address[] memory all = ArbiterRegistryFacet(diamond).getArbiters();
+        ArbiterAccountabilityFacet f = ArbiterAccountabilityFacet(diamond);
 
         uint256 count;
         bool[] memory hit = new bool[](all.length);
@@ -335,7 +363,7 @@ contract UpgradeArbiterAccountability is Script {
         address seater,
         uint256 seatedCountBefore
     ) public view {
-        ArbiterRegistryFacet f = ArbiterRegistryFacet(diamond);
+        ArbiterAccountabilityFacet f = ArbiterAccountabilityFacet(diamond);
         for (uint256 i = 0; i < migrated.length; i++) {
             require(
                 f.getSeatedBy(migrated[i]) == seater,
@@ -510,27 +538,66 @@ contract UpgradeArbiterAccountability is Script {
     // СОСТАВ РАЗРЕЗА
     // ════════════════════════════════════════════════════════════════════
 
-    /// Четыре элемента: Replace и Add на реестр, Add на ответственность,
-    /// Remove последним. Порядок Remove — последним — чтобы никакое
-    /// последующее действие не могло вернуть удалённый селектор обратно:
-    /// diamondCut применяет элементы по очереди.
+    /// ПЯТЬ элементов: Replace на реестр, Replace на ответственность, Add на
+    /// реестр, Add на ответственность, Remove последним. Порядок Remove —
+    /// последним — чтобы никакое последующее действие не могло вернуть
+    /// удалённый селектор обратно: diamondCut применяет элементы по очереди.
+    ///
+    /// ⚠️ ПЯТЫЙ ЭЛЕМЕНТ ПОЯВИЛСЯ ЗАДАЧЕЙ 4.5 (16 августа 2026). Одиннадцать
+    /// чтений переехали из реестра в фасет ответственности, и они СМОНТИРОВАНЫ
+    /// В ЦЕПИ СЕГОДНЯ — значит операция над ними по-прежнему `Replace` (селектор
+    /// в даймонде есть, меняется только адрес), но целится он на ДРУГОЙ адрес,
+    /// чем остальные 52. Один элемент FacetCut несёт ровно один адрес, поэтому
+    /// Replace физически не может остаться одной записью — ровно та же причина,
+    /// по которой Add уже был разделён надвое.
+    ///
+    /// Цена ошибки в делении: `Add` ревертит "Diamond: selector exists" на уже
+    /// смонтированном, `Replace` — "Diamond: selector not found" на
+    /// несмонтированном. Любая из двух роняет ВЕСЬ разрез одной боевой
+    /// транзакцией. Род каждого селектора выведен по спискам этого файла и
+    /// проверяется пред-полётом против живой цепи.
     function buildCuts(address registryFacet, address accountabilityFacet)
         public pure returns (IDiamondCut.FacetCut[] memory cuts)
     {
-        cuts = new IDiamondCut.FacetCut[](4);
-        cuts[0] = _cut(registryFacet,       IDiamondCut.FacetCutAction.Replace, replaceSelectors());
-        cuts[1] = _cut(registryFacet,       IDiamondCut.FacetCutAction.Add,     addRegistrySelectors());
-        cuts[2] = _cut(accountabilityFacet, IDiamondCut.FacetCutAction.Add,     addAccountabilitySelectors());
-        cuts[3] = _cut(address(0),          IDiamondCut.FacetCutAction.Remove,  removeSelectors());
+        cuts = new IDiamondCut.FacetCut[](5);
+        cuts[0] = _cut(registryFacet,       IDiamondCut.FacetCutAction.Replace, replaceRegistrySelectors());
+        cuts[1] = _cut(accountabilityFacet, IDiamondCut.FacetCutAction.Replace, replaceAccountabilitySelectors());
+        cuts[2] = _cut(registryFacet,       IDiamondCut.FacetCutAction.Add,     addRegistrySelectors());
+        cuts[3] = _cut(accountabilityFacet, IDiamondCut.FacetCutAction.Add,     addAccountabilitySelectors());
+        cuts[4] = _cut(address(0),          IDiamondCut.FacetCutAction.Remove,  removeSelectors());
     }
 
-    /// Всё, что маршрутизирует живой даймонд СЕГОДНЯ, кроме removeArbiter:
+    /// ВСЁ, что маршрутизирует живой даймонд СЕГОДНЯ, кроме removeArbiter:
     /// 56 селекторов деплоя 25 июля плюс 8, приехавших разрезом «цепь как
     /// свидетель предъявления» 15 августа, минус голая removeArbiter (она
     /// уходит в Remove). Полнота проверяется тестом против скомпилированного
     /// ABI и пред-полётом против цепи, не глазами.
+    ///
+    /// ⚠️ РАЗДЕЛЁН НА ДВЕ ПОЛОВИНЫ (задача 4.5, 16 августа 2026), потому что
+    /// они едут на РАЗНЫЕ АДРЕСА. Одиннадцать чтений про поведение арбитра
+    /// переехали в ArbiterAccountabilityFacet; они СМОНТИРОВАНЫ В ЦЕПИ
+    /// СЕГОДНЯ, поэтому остаются `Replace` — меняется только адрес фасета, не
+    /// наличие селектора. Соблазн переложить их в Add смертелен: `Add` ревертит
+    /// "Diamond: selector exists" на уже смонтированном, и падает ВЕСЬ разрез
+    /// одной боевой транзакцией.
+    ///
+    /// Этот общий список остаётся и остаётся ЕДИНЫМ: пред-полёт
+    /// checkReplaceGroup требует, чтобы все его селекторы сидели на ОДНОМ
+    /// адресе, и сегодня это верно для объединения — обе половины лежат на
+    /// старом ArbiterRegistryFacet. Разделяется он только в buildCuts().
     function replaceSelectors() public pure returns (bytes4[] memory sels) {
-        sels = new bytes4[](63);
+        bytes4[] memory reg = replaceRegistrySelectors();
+        bytes4[] memory acc = replaceAccountabilitySelectors();
+        sels = new bytes4[](reg.length + acc.length);
+        uint256 k;
+        for (uint256 i = 0; i < reg.length; i++) sels[k++] = reg[i];
+        for (uint256 i = 0; i < acc.length; i++) sels[k++] = acc[i];
+    }
+
+    /// Половина Replace, которая остаётся на реестре: состав корпуса, споры,
+    /// вердикты, апелляции, деньги.
+    function replaceRegistrySelectors() public pure returns (bytes4[] memory sels) {
+        sels = new bytes4[](52);
 
         // DAO-режим
         sels[0]  = ArbiterRegistryFacet.activateDAO.selector;
@@ -575,49 +642,69 @@ contract UpgradeArbiterAccountability is Script {
         sels[27] = ArbiterRegistryFacet.isRegisteredArbiter.selector;
         sels[28] = ArbiterRegistryFacet.getArbiters.selector;
         sels[29] = ArbiterRegistryFacet.getDisputeClaimer.selector;
-        sels[30] = ArbiterRegistryFacet.getArbiterDeals.selector;
-        sels[31] = ArbiterRegistryFacet.getClaimCommitment.selector;
-        sels[32] = ArbiterRegistryFacet.getPendingVerdict.selector;
-        sels[33] = ArbiterRegistryFacet.getArbiterReward.selector;
-        sels[34] = ArbiterRegistryFacet.getVaultBalance.selector;
-        sels[35] = ArbiterRegistryFacet.getRewardPerDispute.selector;
-        sels[36] = ArbiterRegistryFacet.getDAOAddress.selector;
-        sels[37] = ArbiterRegistryFacet.getArbiterMistakeStreak.selector;
-        sels[38] = ArbiterRegistryFacet.hasSubmittedVerdict.selector;
-        sels[39] = ArbiterRegistryFacet.getAppealVotes.selector;
-        sels[40] = ArbiterRegistryFacet.hasVotedOnAppeal.selector;
-        sels[41] = ArbiterRegistryFacet.getArbiterBond.selector;
-        sels[42] = ArbiterRegistryFacet.getOpenClaimCount.selector;
+        sels[30] = ArbiterRegistryFacet.getClaimCommitment.selector;
+        sels[31] = ArbiterRegistryFacet.getPendingVerdict.selector;
+        sels[32] = ArbiterRegistryFacet.getVaultBalance.selector;
+        sels[33] = ArbiterRegistryFacet.getRewardPerDispute.selector;
+        sels[34] = ArbiterRegistryFacet.getDAOAddress.selector;
+        sels[35] = ArbiterRegistryFacet.hasSubmittedVerdict.selector;
+        sels[36] = ArbiterRegistryFacet.getAppealVotes.selector;
+        sels[37] = ArbiterRegistryFacet.hasVotedOnAppeal.selector;
 
         // Сбор со спора (3% от спорной суммы) — 80/20 арбитр/казна
-        sels[43] = ArbiterRegistryFacet.creditDisputeFee.selector;
-        sels[44] = ArbiterRegistryFacet.withdrawTreasurySlice.selector;
-        sels[45] = ArbiterRegistryFacet.getTreasurySlice.selector;
+        sels[38] = ArbiterRegistryFacet.creditDisputeFee.selector;
+        sels[39] = ArbiterRegistryFacet.withdrawTreasurySlice.selector;
+        sels[40] = ArbiterRegistryFacet.getTreasurySlice.selector;
 
         // Платный вызов арбитра: порог и котировка доплаты до него
-        sels[46] = ArbiterRegistryFacet.setArbiterFloor.selector;
-        sels[47] = ArbiterRegistryFacet.getArbiterFloor.selector;
-        sels[48] = ArbiterRegistryFacet.quoteDisputeTopUp.selector;
+        sels[41] = ArbiterRegistryFacet.setArbiterFloor.selector;
+        sels[42] = ArbiterRegistryFacet.getArbiterFloor.selector;
+        sels[43] = ArbiterRegistryFacet.quoteDisputeTopUp.selector;
 
         // Платный вызов арбитра: оплата и мягкий возврат доплаты
-        sels[49] = ArbiterRegistryFacet.fundDispute.selector;
-        sels[50] = ArbiterRegistryFacet.getDisputeBounty.selector;
-        sels[51] = ArbiterRegistryFacet.withdrawDisputeBounty.selector;
-        sels[52] = ArbiterRegistryFacet.getRefundableBounty.selector;
+        sels[44] = ArbiterRegistryFacet.fundDispute.selector;
+        sels[45] = ArbiterRegistryFacet.getDisputeBounty.selector;
+        sels[46] = ArbiterRegistryFacet.withdrawDisputeBounty.selector;
+        sels[47] = ArbiterRegistryFacet.getRefundableBounty.selector;
 
-        // Ключи чата арбитра (4б, 9 августа 2026)
-        sels[53] = ArbiterRegistryFacet.getArbiterChatKeys.selector;
-        sels[54] = ArbiterRegistryFacet.setArbiterChatKey.selector;
+        // Ключи чата арбитра (4б, 9 августа 2026) — ЗАПИСЬ осталась здесь,
+        // чтение (getArbiterChatKeys) уехало, см. половину ниже.
+        sels[48] = ArbiterRegistryFacet.setArbiterChatKey.selector;
 
-        // Цепь как свидетель предъявления (4в-2 Выкатка 2, разрез 15 августа 2026)
-        sels[55] = ArbiterRegistryFacet.getDisputeClaimedAt.selector;
-        sels[56] = ArbiterRegistryFacet.recordNoResponse.selector;
-        sels[57] = ArbiterRegistryFacet.getNoResponseAt.selector;
-        sels[58] = ArbiterRegistryFacet.getNoResponseFloor.selector;
-        sels[59] = ArbiterRegistryFacet.recordPresentationDigest.selector;
-        sels[60] = ArbiterRegistryFacet.getPresentationDigests.selector;
-        sels[61] = ArbiterRegistryFacet.getPresentationDigestCount.selector;
-        sels[62] = ArbiterRegistryFacet.getPresentationDigestsPage.selector;
+        // Цепь как свидетель предъявления (4в-2 Выкатка 2, разрез 15 августа
+        // 2026) — здесь остались ЗАПИСИ и геттер константы NO_RESPONSE_FLOOR
+        // (её применяет recordNoResponse в этом же файле, переезд геттера
+        // потребовал бы второго объявления числа).
+        sels[49] = ArbiterRegistryFacet.recordNoResponse.selector;
+        sels[50] = ArbiterRegistryFacet.getNoResponseFloor.selector;
+        sels[51] = ArbiterRegistryFacet.recordPresentationDigest.selector;
+    }
+
+    /// Половина Replace, которая ПЕРЕЕЗЖАЕТ на ArbiterAccountabilityFacet
+    /// (задача 4.5, 16 августа 2026). Все одиннадцать смонтированы в цепи
+    /// сегодня на старом ArbiterRegistryFacet — потому Replace, а не Add.
+    ///
+    /// Что это за функции: чтения про ПОВЕДЕНИЕ арбитра, его ПОЛОЖЕНИЕ и
+    /// ДОКАЗАТЕЛЬСТВА. Тела перенесены без единой правки — снаружи даймонда
+    /// перенос не виден вовсе, отвечает тот же адрес прокси тем же ответом.
+    function replaceAccountabilitySelectors() public pure returns (bytes4[] memory sels) {
+        sels = new bytes4[](11);
+
+        // Поведение и положение арбитра
+        sels[0]  = ArbiterAccountabilityFacet.getArbiterMistakeStreak.selector;
+        sels[1]  = ArbiterAccountabilityFacet.getArbiterBond.selector;
+        sels[2]  = ArbiterAccountabilityFacet.getOpenClaimCount.selector;
+        sels[3]  = ArbiterAccountabilityFacet.getArbiterReward.selector;
+        sels[4]  = ArbiterAccountabilityFacet.getArbiterDeals.selector;
+
+        // Доказательства: ключи чата, якорь предъявления, запись о молчании,
+        // отпечатки
+        sels[5]  = ArbiterAccountabilityFacet.getArbiterChatKeys.selector;
+        sels[6]  = ArbiterAccountabilityFacet.getDisputeClaimedAt.selector;
+        sels[7]  = ArbiterAccountabilityFacet.getNoResponseAt.selector;
+        sels[8]  = ArbiterAccountabilityFacet.getPresentationDigests.selector;
+        sels[9]  = ArbiterAccountabilityFacet.getPresentationDigestCount.selector;
+        sels[10] = ArbiterAccountabilityFacet.getPresentationDigestsPage.selector;
     }
 
     /// ВСЁ, что монтируется впервые: шесть новых входов старого фасета плюс
@@ -633,24 +720,33 @@ contract UpgradeArbiterAccountability is Script {
         for (uint256 i = 0; i < acc.length; i++) sels[k++] = acc[i];
     }
 
-    /// Новые входы, дописанные задачами 1-9 в СТАРЫЙ фасет. Их сегодня в
-    /// даймонде нет, значит Add, а не Replace, — см. шапку файла.
+    /// Новые входы, дописанные задачами 1-9 и ОСТАВШИЕСЯ в реестре. Их сегодня
+    /// в даймонде нет, значит Add, а не Replace, — см. шапку файла.
+    ///
+    /// ⚠️ Было шесть, стало три (задача 4.5, 16 августа 2026): getSeatedBy,
+    /// getSeatedCountBy и getCleanVerdicts уехали в фасет ответственности.
+    /// Они НЕ смонтированы в цепи, поэтому переезд не меняет операцию — Add
+    /// остаётся Add, просто в другом списке и на другой адрес.
+    ///
+    /// getChiefBloc осталась потому, что зовёт приватную _chiefBloc, которую
+    /// держит addArbiter, — переезд стоил бы второй копии тела.
+    /// getMaxClaimsPerArbiter и getMaxArbiterMistakes остались потому, что
+    /// читают ПРИВАТНЫЕ КОНСТАНТЫ реестра, применяемые остающимся там кодом:
+    /// переезд геттера завёл бы второе объявление числа, и наружу отвечало бы
+    /// зеркало, а правило применялось бы по оригиналу. Для
+    /// getMaxArbiterMistakes это вдобавок выродило бы
+    /// test_MistakeThresholdMatchesRegistry в сверку зеркала с самим собой.
     function addRegistrySelectors() public pure returns (bytes4[] memory sels) {
-        sels = new bytes4[](6);
-
-        // Задача 1: провенанс посадки арбитра
-        sels[0] = ArbiterRegistryFacet.getSeatedBy.selector;
-        sels[1] = ArbiterRegistryFacet.getSeatedCountBy.selector;
+        sels = new bytes4[](3);
 
         // Задача 2: блок директора — сколько мест он контролирует
-        sels[2] = ArbiterRegistryFacet.getChiefBloc.selector;
+        sels[0] = ArbiterRegistryFacet.getChiefBloc.selector;
 
         // Задача 3: потолок одновременных споров на арбитра
-        sels[3] = ArbiterRegistryFacet.getMaxClaimsPerArbiter.selector;
+        sels[1] = ArbiterRegistryFacet.getMaxClaimsPerArbiter.selector;
 
-        // Задача 5: судейский стаж и порог автоснятия
-        sels[4] = ArbiterRegistryFacet.getCleanVerdicts.selector;
-        sels[5] = ArbiterRegistryFacet.getMaxArbiterMistakes.selector;
+        // Задача 5: порог автоснятия
+        sels[2] = ArbiterRegistryFacet.getMaxArbiterMistakes.selector;
     }
 
     /// Весь ArbiterAccountabilityFacet целиком — двенадцатый фасет даймонда.
@@ -658,7 +754,7 @@ contract UpgradeArbiterAccountability is Script {
     /// означает функцию, которой в даймонде нет, то есть мёртвую кнопку во
     /// фронте.
     function addAccountabilitySelectors() public pure returns (bytes4[] memory sels) {
-        sels = new bytes4[](17);
+        sels = new bytes4[](20);
 
         // Задача 4: приостановка — быстрая, обратимая, протухает сама
         sels[0]  = ArbiterAccountabilityFacet.suspendArbiter.selector;
@@ -686,6 +782,15 @@ contract UpgradeArbiterAccountability is Script {
 
         // Задача 9: положение арбитра одним чтением
         sels[16] = ArbiterAccountabilityFacet.getArbiterStanding.selector;
+
+        // Задача 4.5 (16 августа 2026): три чтения, переехавшие из реестра и
+        // при этом ЕЩЁ НЕ СМОНТИРОВАННЫЕ в цепи — потому Add, а не Replace.
+        // Остальные одиннадцать переехавших смонтированы и едут группой
+        // replaceAccountabilitySelectors(). Род каждого определён по спискам
+        // этого файла и пред-полётом против цепи, не по интуиции.
+        sels[17] = ArbiterAccountabilityFacet.getSeatedBy.selector;
+        sels[18] = ArbiterAccountabilityFacet.getSeatedCountBy.selector;
+        sels[19] = ArbiterAccountabilityFacet.getCleanVerdicts.selector;
     }
 
     /// Ровно один: голая removeArbiter(address). Просто убрать её из исходника
