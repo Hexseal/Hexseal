@@ -88,57 +88,70 @@ contract ArbiterProvenanceTest is Test {
         assertEq(facet.getSeatedBy(seat1), address(0), unicode"провенанс снятого очищается");
     }
 
+    /// Счётчик посадок накапливается и не смешивает посадивших.
+    ///
+    /// ⚠️ Двоих сажает ВЛАДЕЛЕЦ, а не директор (п. 67, 16 августа 2026):
+    /// потолок блока директора опустился до единицы, и прежняя редакция —
+    /// две подряд посадки директором — теперь ревертит. Проверяемое свойство
+    /// здесь про счётчик, а не про потолок, поэтому взят тот, кого потолок не
+    /// касается; директор оставлен в сцене одной посадкой, иначе «раздельно»
+    /// проверять было бы не с кем.
     function test_TwoSeatsCountSeparately() public {
-        vm.startPrank(chief);
         facet.addArbiter(seat1);
         facet.addArbiter(seat2);
-        vm.stopPrank();
-        assertEq(facet.getSeatedCountBy(chief), 2, unicode"две посадки — счётчик два");
+        assertEq(facet.getSeatedCountBy(owner), 2, unicode"две посадки — счётчик два");
+
+        vm.prank(chief);
+        facet.addArbiter(address(0xA3));
+
+        assertEq(facet.getSeatedCountBy(owner), 2, unicode"чужая посадка счётчик владельца не двигает");
+        assertEq(facet.getSeatedCountBy(chief), 1, unicode"а своя ложится на счётчик директора");
     }
 
     // ============================================================
     //  ПОТОЛОК ЗАПАСА ДИРЕКТОРА
     //
-    //  Требуемое свойство — не число, а факт: директор НИКОГДА не держит
-    //  кворум апелляции. Кворум APPEAL_MIN_VOTES = 3, значит блок ≤ 2.
+    //  Требуемое свойство — не число, а факт: директор НИКОГДА не решает
+    //  апелляцию. Не «не держит кворум» — это слабее и ничего не даёт
+    //  (п. 67, 16 августа 2026): resolveAppeal подводит итог ПРОСТЫМ
+    //  БОЛЬШИНСТВОМ поданных голосов, как только их набралось
+    //  APPEAL_MIN_VOTES, и при явке ровно в кворум решают ДВА из трёх.
+    //  Значит потолок обязан держать двойку, а не тройку: блок ≤ 1.
+    //
     //  Потолок скорости («не чаще одного в неделю») этого свойства не даёт:
     //  за год набирается пятьдесят два.
     // ============================================================
 
-    function test_ChiefSeatsTwoFreely() public {
-        vm.startPrank(chief);
+    function test_ChiefSeatsOneFreely() public {
+        vm.prank(chief);
         facet.addArbiter(seat1);
-        facet.addArbiter(seat2);
-        vm.stopPrank();
-        assertEq(facet.getChiefBloc(), 2, unicode"двоих директор сажает сам");
+        assertEq(facet.getChiefBloc(), 1, unicode"одного директор сажает сам");
     }
 
-    function test_ChiefCannotReachQuorum() public {
+    /// Второй — уже большинство при явке в кворум, и его цепь не пускает.
+    function test_ChiefCannotDecideAppeal() public {
         vm.startPrank(chief);
         facet.addArbiter(seat1);
-        facet.addArbiter(seat2);
         vm.expectRevert(
-            abi.encodeWithSelector(ArbiterRegistryFacet.ChiefBlocWouldReachQuorum.selector, 3, 3)
+            abi.encodeWithSelector(ArbiterRegistryFacet.ChiefBlocWouldDecideAppeal.selector, 2, 2)
         );
-        facet.addArbiter(address(0xA3));
+        facet.addArbiter(seat2);
         vm.stopPrank();
     }
 
     /// Директор может быть арбитром сам — setChiefArbiter этого не запрещает.
-    /// Тогда двое его ставленников плюс он сам это уже три голоса, то есть
-    /// кворум. Значит он сам обязан считаться в блоке.
+    /// Тогда он сам плюс ОДИН ставленник — это уже два голоса, то есть
+    /// решающее большинство при явке в кворум. Значит он сам обязан считаться
+    /// в блоке, и первая же его посадка обязана отказать.
     function test_ChiefCountsHimselfWhenHeIsArbiter() public {
         facet.addArbiter(chief);            // владелец сажает директора арбитром
         assertEq(facet.getChiefBloc(), 1, unicode"директор-арбитр — уже единица блока");
 
         vm.prank(chief);
-        facet.addArbiter(seat1);
-
-        vm.prank(chief);
         vm.expectRevert(
-            abi.encodeWithSelector(ArbiterRegistryFacet.ChiefBlocWouldReachQuorum.selector, 3, 3)
+            abi.encodeWithSelector(ArbiterRegistryFacet.ChiefBlocWouldDecideAppeal.selector, 2, 2)
         );
-        facet.addArbiter(seat2);
+        facet.addArbiter(seat1);
     }
 
     /// Владельца потолок не касается: он и есть тот, кто решает.
@@ -154,20 +167,49 @@ contract ArbiterProvenanceTest is Test {
     /// заперт навсегда.
     ///
     /// ⚠️ Выход из корпуса здесь через `resignAsArbiter`, а НЕ через
-    /// `removeArbiter`: задача 6 этого же плана удаляет `removeArbiter`
-    /// целиком, и тест против неё пришлось бы выбросить. `resignAsArbiter`
-    /// переживает весь план и зовёт тот же хелпер очистки места.
+    /// `removeArbiter`: та удалена целиком (задача 6 плана
+    /// 2026-08-15-arbiter-accountability). `resignAsArbiter` зовёт тот же
+    /// хелпер очистки места.
     function test_ResignFreesChiefSlot() public {
-        vm.startPrank(chief);
+        vm.prank(chief);
         facet.addArbiter(seat1);
-        facet.addArbiter(seat2);
-        vm.stopPrank();
 
         vm.prank(seat1);
         facet.resignAsArbiter();
+        assertEq(facet.getChiefBloc(), 0, unicode"место освободилось");
 
         vm.prank(chief);
-        facet.addArbiter(address(0xA3));
-        assertEq(facet.getChiefBloc(), 2, unicode"место освободилось и занято заново");
+        facet.addArbiter(seat2);
+        assertEq(facet.getChiefBloc(), 1, unicode"и занято заново");
+    }
+
+    /// Пятая проверка, которой не было: потолок обязан быть СТРОГО НИЖЕ
+    /// кворума, а не равен ему. Это и есть вся разница между «не решает
+    /// апелляцию» и «не держит кворум», и без отдельной проверки её легко
+    /// потерять обратно при следующей правке — ровно так она и появилась.
+    ///
+    /// Число 2 читается из полезной нагрузки ошибки: приватную константу
+    /// снаружи не прочесть, а ревёрт её называет. Второй конец связи —
+    /// поведенческий и лежит в test/Diamond.t.sol: там два голоса из трёх
+    /// реально переворачивают вердикт.
+    function test_ChiefCapIsStrictlyBelowQuorum() public {
+        vm.prank(chief);
+        facet.addArbiter(seat1);
+
+        vm.prank(chief);
+        try facet.addArbiter(seat2) {
+            revert(unicode"вторая посадка директора обязана отказать");
+        } catch (bytes memory err) {
+            assertEq(bytes4(err), ArbiterRegistryFacet.ChiefBlocWouldDecideAppeal.selector);
+            (uint256 bloc, uint256 deciding) = abi.decode(_stripSelector(err), (uint256, uint256));
+            assertEq(bloc, 2, unicode"блок после посадки — двое");
+            assertEq(deciding, 2, unicode"решающее большинство при кворуме 3 — двое, не трое");
+        }
+    }
+
+    /// Обрезает четырёхбайтовый селектор ошибки, оставляя её поля.
+    function _stripSelector(bytes memory err) internal pure returns (bytes memory out) {
+        out = new bytes(err.length - 4);
+        for (uint256 i = 4; i < err.length; i++) out[i - 4] = err[i];
     }
 }
