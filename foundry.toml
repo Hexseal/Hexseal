@@ -22,6 +22,14 @@ ast = true
 # test/DeployFullSelectors.t.sol reads compiled ABI artifacts (out/<Facet>.sol/<Facet>.json)
 # to derive ground-truth selectors for the DeployFull.s.sol drift gate — read-only,
 # scoped to the build output directory only.
-fs_permissions = [{ access = "read", path = "./out" }]
+#
+# ./test/fixtures — перепись живой цепи (test/ArbiterChainCensus.sol). Артефакт из
+# ./out отвечает на вопрос «что умеет наш код», а перепись — на вопрос «что
+# смонтировано в даймонде СЕГОДНЯ», и второе из первого не выводится. Обе дороги
+# read-only и обе ведут внутрь репозитория.
+fs_permissions = [
+    { access = "read", path = "./out" },
+    { access = "read", path = "./test/fixtures" },
+]
 
 # See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options
