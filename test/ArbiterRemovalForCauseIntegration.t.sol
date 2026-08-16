@@ -100,6 +100,18 @@ contract ArbiterRemovalForCauseIntegrationTest is Test {
     bytes32 constant REP_BASE = 0xa32193c5e38bd2de27c8550f156d709eafdc63aaa4290e5e27473f2ffc097400;
     uint256 constant SLOT_UNIQUE_ACTIVE_USERS = 8;
 
+    /// Коды автоснятия в карточке getArbiterStanding.
+    ///
+    /// ⚠️ ЛИТЕРАЛЫ НАРОЧНО, а не `AUTO_REMOVAL_BASE + uint8(DemotionPath.X)`
+    /// (четвёртое правило, docs/PROCESS.md): выражение через константу
+    /// библиотеки и значение перечисления выводит ожидаемое из проверяемого —
+    /// сдвиньте базу или переставьте перечисление, и обе стороны сравнения
+    /// уедут вместе, а замок промолчит. Здесь ожидаемое взято извне кода:
+    /// 252 — путь не назван, 253 — переворот, 254 — таймаут, 255 — голоса.
+    uint8 constant AUTO_OVERTURN = 253;
+    uint8 constant AUTO_TIMEOUT  = 254;
+    uint8 constant AUTO_APPEAL   = 255;
+
     function setUp() public {
         owner = address(this);
         feeRecipient = address(0x4);
@@ -1345,7 +1357,13 @@ contract ArbiterRemovalForCauseIntegrationTest is Test {
     /// Автодемоушен — тоже снос, и он тоже помнится. Повода у него нет:
     /// цепь сняла арбитра по серии ошибок, а не по чьему-то обвинению, и
     /// код это говорит прямо, а не притворяется поводом номер ноль.
-    function test_AutoDemotionIsRememberedWithoutACause() public {
+    ///
+    /// Но «повода нет» ещё не значит «сказать нечего». Путь первый:
+    /// переворот владельцем. Код обязан отличаться от кодов двух других
+    /// путей — иначе различие, ради которого задача 4 потратила отдельное
+    /// поле события, теряется в ЕДИНСТВЕННОМ читаемом месте (п. 72: логи не
+    /// читает никто).
+    function test_AutoDemotionByOverturnRecordsItsOwnPath() public {
         _disputeAndOverturn(address(0x721), address(0x722));
         _disputeAndOverturn(address(0x723), address(0x724));
         _disputeAndOverturn(address(0x725), address(0x726));
@@ -1356,7 +1374,98 @@ contract ArbiterRemovalForCauseIntegrationTest is Test {
             = ArbiterAccountabilityFacet(address(diamond)).getArbiterStanding(arbiter);
         assertEq(count, 1, unicode"автомат снял — счётчик вырос так же, как от руки");
         assertEq(lastAt, vm.getBlockTimestamp(), unicode"момент автоснятия записан");
-        assertEq(cause, 255, unicode"AUTO_REMOVAL_CODE: повода нет вовсе, и это сказано прямо");
+        assertEq(cause, AUTO_OVERTURN,
+            unicode"карточка называет путь: снял ПЕРЕВОРОТ, а не таймаут и не голоса");
+        assertTrue(cause != AUTO_TIMEOUT,
+            unicode"и он обязан отличаться от таймаута");
+        assertTrue(cause != AUTO_APPEAL,
+            unicode"и от голосов по апелляции");
+    }
+
+    /// Путь второй в карточке: агримент сообщил о таймауте. Сцена та же, что
+    /// у test_ArbiterDemotedNamesNobodyOnTheTimeoutPath, но проверяется
+    /// ДРУГОЕ место — не лента, а карточка. Разделять пришлось потому, что
+    /// именно карточку и читают.
+    function test_AutoDemotionByTimeoutRecordsItsOwnPath() public {
+        _disputeAndOverturn(address(0x727), address(0x728));
+        _disputeAndOverturn(address(0x729), address(0x72A));
+
+        address cli = address(0x72B);
+        address exec = address(0x72C);
+        usdc.mint(cli, 1_000_000 * 10 ** 6);
+        vm.prank(cli);
+        usdc.approve(address(diamond), 10 * 10 ** 6);
+        vm.prank(cli);
+        address agr = FactoryFacet(address(diamond)).deployAgreement(
+            cli, exec, arbiter, AMOUNT, DEADLINE, TERMS, 0
+        );
+        vm.prank(cli);
+        usdc.approve(agr, AMOUNT);
+        vm.prank(cli);
+        Agreement(agr).fund();
+        vm.prank(exec);
+        Agreement(agr).activate();
+        vm.prank(cli);
+        Agreement(agr).raiseDispute();
+        _claimDisputeAs(agr, arbiter);
+
+        // DISPUTE_WINDOW = 4 days; строго БОЛЬШЕ.
+        vm.warp(vm.getBlockTimestamp() + 4 days + 1);
+        vm.prank(cli);
+        Agreement(agr).triggerArbiterTimeout();
+
+        assertFalse(ArbiterRegistryFacet(address(diamond)).isRegisteredArbiter(arbiter));
+
+        (, , , , , , , , , , uint256 count, , uint8 cause)
+            = ArbiterAccountabilityFacet(address(diamond)).getArbiterStanding(arbiter);
+        assertEq(count, 1, unicode"таймаут снял — счётчик вырос");
+        assertEq(cause, AUTO_TIMEOUT,
+            unicode"карточка называет путь: снял ТАЙМАУТ");
+        assertTrue(cause != AUTO_OVERTURN,
+            unicode"и он обязан отличаться от переворота владельцем");
+    }
+
+    /// Путь третий в карточке: перевернули ГОЛОСА по апелляции. Самый
+    /// нагруженный смыслом из трёх: «снят автоматом» и «снят решением
+    /// коллегии» — разные вещи для того, кто читает карточку арбитра.
+    function test_AutoDemotionByAppealRecordsItsOwnPath() public {
+        _disputeAndOverturn(address(0x72D), address(0x72E));
+        _disputeAndOverturn(address(0x72F), address(0x730));
+
+        address v1 = address(0x7A1);
+        address v2 = address(0x7A2);
+        address v3 = address(0x7A3);
+        ArbiterRegistryFacet(address(diamond)).addArbiter(v1);
+        ArbiterRegistryFacet(address(diamond)).addArbiter(v2);
+        ArbiterRegistryFacet(address(diamond)).addArbiter(v3);
+
+        address cli = address(0x731);
+        address exec = address(0x732);
+        address agr = _disputeAndSubmit(cli, exec);
+        usdc.mint(exec, 100 * 10 ** 6);
+        vm.prank(exec);
+        usdc.approve(address(diamond), 20 * 10 ** 6);
+        vm.prank(exec);
+        ArbiterRegistryFacet(address(diamond)).raiseAppeal(agr);
+
+        vm.prank(v1);
+        ArbiterRegistryFacet(address(diamond)).voteOnAppeal(agr, true);
+        vm.prank(v2);
+        ArbiterRegistryFacet(address(diamond)).voteOnAppeal(agr, true);
+        vm.prank(v3);
+        ArbiterRegistryFacet(address(diamond)).voteOnAppeal(agr, false);
+
+        ArbiterRegistryFacet(address(diamond)).resolveAppeal(agr);
+
+        assertFalse(ArbiterRegistryFacet(address(diamond)).isRegisteredArbiter(arbiter));
+
+        (, , , , , , , , , , uint256 count, , uint8 cause)
+            = ArbiterAccountabilityFacet(address(diamond)).getArbiterStanding(arbiter);
+        assertEq(count, 1, unicode"голоса сняли — счётчик вырос");
+        assertEq(cause, AUTO_APPEAL,
+            unicode"карточка называет путь: сняли ГОЛОСА");
+        assertTrue(cause != AUTO_OVERTURN,
+            unicode"и он обязан отличаться от переворота владельцем");
     }
 
     /// Самая острая половина: после включения ДАО стирающая дверь достаётся
