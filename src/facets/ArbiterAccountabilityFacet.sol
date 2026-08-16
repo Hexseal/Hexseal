@@ -228,11 +228,19 @@ contract ArbiterAccountabilityFacet {
     /// Владелец сохраняет все четыре функции — приостановка обратима и протухает
     /// сама, её он не теряет и после передачи сноса (см. докстринг
     /// suspendArbiter).
-    modifier onlyOwnerOrChief() {
+    /// Тело модификатора вынесено отдельной функцией (п. 66, круг правок 1,
+    /// 16 августа 2026), потому что у `liftSuspension` появились ДВЕ ветки прав
+    /// и ей нужно звать эту проверку в одной из них, а не во всех. Модификатор
+    /// ниже теперь только зовёт её — копии условия не заводится, роль
+    /// по-прежнему описана ровно в одном месте.
+    function _requireOwnerOrChief(ArbiterRegistryStorage.Data storage d) private view {
         if (msg.sender != OwnershipLib.contractOwner()) {
-            ArbiterRegistryStorage.Data storage d = ArbiterRegistryStorage.data();
             if (_isDaoActive(d) || msg.sender != d.chiefArbiter) revert NotOwnerOrChief();
         }
+    }
+
+    modifier onlyOwnerOrChief() {
+        _requireOwnerOrChief(ArbiterRegistryStorage.data());
         _;
     }
 
@@ -333,12 +341,49 @@ contract ArbiterAccountabilityFacet {
     /// стирается никогда — гейт на ней означал бы, что однажды снесённый
     /// человек, возвращённый в корпус, навсегда лишает директора права снять с
     /// него обычную приостановку. Здесь нужен признак «снос ТЕКУЩИЙ, ещё не
-    /// отменённый», и это ровно `removedAt`.
-    function liftSuspension(address arbiter) external onlyOwnerOrChief {
+    /// отменённый», и это ровно `removedAt`. Сторожится не докстрингом, а
+    /// тестом: ArbiterRemovalForCauseIntegration::
+    /// test_ChiefStillLiftsOrdinarySuspensionAfterReseat — снесли, вернули,
+    /// приостановили обычным порядком, директор снял. Заведён потому, что
+    /// симуляция этого промаха давала 0 красных из 831.
+    ///
+    /// ⚠️ ПРАВО ЕДЕТ ЗА ПРАВОМ СНОСИТЬ (круг правок 1, В-2, 16 августа 2026).
+    /// Не «владелец» вообще, а ТОТ, У КОГО СЕГОДНЯ СНОС: до передачи владелец,
+    /// после — названный преемник (_removalAuthority, одно выражение на оба
+    /// места). Прежняя редакция сравнивала с владельцем всегда, и это прямо
+    /// противоречило доводу, ради которого removeArbiterForCause владельца
+    /// выпихивает: «дороги назад нет — иначе сговор и слив переписки стали бы
+    /// неснимаемыми вовсе». Замерено ревью: после передачи управление своё же
+    /// окно снять не могло (модификатор его не видел), а владелец — снимал
+    /// ЧУЖОЕ, и вернуть приостановку после этого нельзя ничем.
+    ///
+    /// Отсюда и снятый модификатор: `onlyOwnerOrChief` не пустил бы преемника
+    /// в тело вовсе, и после передачи окно не открывал бы НИКТО — дверь без
+    /// открывающего хуже двери у владельца (тот же довод, что записан в
+    /// removeArbiterForCause про нулевой daoAddress). Обычная ветка ходит под
+    /// той же проверкой, что раньше, — _requireOwnerOrChief, то самое тело
+    /// модификатора, вызванное явно.
+    ///
+    /// ⚠️ Честная оговорка про происхождение окна (найдено ревью, 16 августа
+    /// 2026). Различитель отвечает на вопрос «висит ли на человеке снос», а не
+    /// «этим ли сносом поставлено окно», и на одном живом пути это уже
+    /// расходится: `applyAsArbiter` зовёт `clearRemovalRecord(..., false)` —
+    /// стирает `removedAt`, НАМЕРЕННО оставляя `suspendedUntil` (шов M-4: иначе
+    /// снятый покупал бы обход окна C-1 свежим залогом). После самозаписи
+    /// человек сидит с живым окном сноса и нулевым различителем, то есть эта
+    /// ветка на нём не срабатывает. Дыры сегодня нет только потому, что
+    /// `applyAsArbiter` требует активного ДАО, а при активном ДАО
+    /// `_requireOwnerOrChief` директора не видит вовсе. Инвариант держится на
+    /// совпадении двух независимых предикатов; память о том, КТО наложил
+    /// приостановку, — отдельная работа, и именно она это чинит по-настоящему.
+    function liftSuspension(address arbiter) external {
         ArbiterRegistryStorage.Data storage d = ArbiterRegistryStorage.data();
 
-        if (d.removedAt[arbiter] != 0 && msg.sender != OwnershipLib.contractOwner()) {
-            revert RemovalSuspensionIsOwnerOnly();
+        if (d.removedAt[arbiter] != 0) {
+            (address authority, ) = _removalAuthority(d);
+            if (msg.sender != authority) revert RemovalSuspensionIsOwnerOnly();
+        } else {
+            _requireOwnerOrChief(d);
         }
 
         delete d.suspendedUntil[arbiter];
@@ -437,6 +482,33 @@ contract ArbiterAccountabilityFacet {
         return ReputationStorage.data().uniqueActiveUsers >= DAO_THRESHOLD_MIRROR;
     }
 
+    /// КТО СЕГОДНЯ ВПРАВЕ СНОСИТЬ — единственное место, где это вычисляется
+    /// (п. 66, круг правок 1, 16 августа 2026). Отвечает сразу двумя вещами:
+    /// адресом права и признаком, уехало ли оно, — потому что вызывающим нужны
+    /// оба, а считать их по отдельности значило бы развести условие на копии.
+    ///
+    /// До правки предикат «передано» стоял здесь одной копией, в
+    /// removeArbiterForCause, и `liftSuspension` не знала о нём вовсе. Копий
+    /// этого условия по проекту уже три (тут, ArbiterRegistryFacet.
+    /// _requireSeatingNotHandedOver, ArbiterRegistryFacet.setDAOAddress), и
+    /// четвёртая, написанная своими словами, была бы ровно тем швом, который
+    /// в этой ветке ловили как M-3: два выражения, обещание «они совпадают», и
+    /// ничего, что покраснеет при расхождении.
+    ///
+    /// ⚠️ Про `&& d.daoAddress != address(0)`: передача защёлкивается только
+    /// когда преемник РЕАЛЬНО НАЗВАН. Без второй половины в окне «порог
+    /// заработан посторонними, преемник ещё не назначен» право уезжало бы на
+    /// нулевой адрес — то есть дверь не открывал бы никто. Полный разбор — в
+    /// докстринге removeArbiterForCause.
+    function _removalAuthority(ArbiterRegistryStorage.Data storage d)
+        private
+        view
+        returns (address authority, bool handedOver)
+    {
+        handedOver = _isDaoActive(d) && d.daoAddress != address(0);
+        authority = handedOver ? d.daoAddress : OwnershipLib.contractOwner();
+    }
+
     /// `disputeRef` читается ТОЛЬКО кодом Silence: молчание — признак по
     /// конкретному спору (`disputeNoResponseAtBy[сделка][арбитр]`), и без
     /// адреса спора проверить его нечем. Для остальных кодов параметр обязан
@@ -489,10 +561,17 @@ contract ArbiterAccountabilityFacet {
         // рабочей — ровно то, что публичный docs/DECENTRALIZATION.md, Stage 3
         // и обещает читателю: «once governance is active AND a successor
         // address has been named».
-        if (_isDaoActive(d) && d.daoAddress != address(0)) {
-            if (msg.sender != d.daoAddress) revert RemovalHandedOver();
-        } else {
-            if (msg.sender != OwnershipLib.contractOwner()) revert NotOwner();
+        //
+        // ⚠️ Само условие переехало в _removalAuthority (п. 66, круг правок 1,
+        // 16 августа 2026) — не ради красоты, а потому что у него появился
+        // ВТОРОЙ читатель: liftSuspension. Право отменить окно сноса обязано
+        // ехать вместе с правом сносить, и вычисляться по одному выражению, а
+        // не по двум похожим. Поведение здесь не изменилось ни на байт: ветка
+        // и обе ошибки те же.
+        (address authority, bool handedOver) = _removalAuthority(d);
+        if (msg.sender != authority) {
+            if (handedOver) revert RemovalHandedOver();
+            revert NotOwner();
         }
 
         if (!d.isArbiter[arbiter]) revert NotAnArbiter();

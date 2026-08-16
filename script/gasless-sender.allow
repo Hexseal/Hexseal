@@ -196,12 +196,17 @@ occurrences: 4
 # потому что не реализовывал _msgSender вовсе; respondToRemoval теперь его
 # завела, и файл переехал в ERC-2771-категорию) ──
 
-=== src/facets/ArbiterAccountabilityFacet.sol :: ArbiterAccountabilityFacet.onlyOwnerOrChief ===
+=== src/facets/ArbiterAccountabilityFacet.sol :: ArbiterAccountabilityFacet._requireOwnerOrChief ===
 occurrences: 2
 не гейслесс, потому что: расширение владельческой проверки на chiefArbiter,
-  то же самое, что ArbiterRegistryFacet.onlyOwnerOrChief выше — админ-роль,
+  то же самое, что ArbiterRegistryFacet.onlyOwnerOrChief ниже — админ-роль,
   назначаемая владельцем, гейслесс-пути у неё нет, а хвост calldata в проверке
   роли был бы той же дырой, что и в onlyOwner.
+  ⚠️ Оба обращения переехали сюда из тела модификатора onlyOwnerOrChief
+  (п. 66, круг правок 1, 16 августа 2026): у liftSuspension появились две
+  ветки прав, и ей нужно звать эту проверку в одной из них. Модификатор
+  остался, но теперь только зовёт эту функцию — обращений в нём ноль, и
+  записи под его именем больше нет. Условие роли по-прежнему в одном месте.
 
 === src/facets/ArbiterAccountabilityFacet.sol :: ArbiterAccountabilityFacet.suspendArbiter ===
 occurrences: 1
@@ -212,26 +217,33 @@ occurrences: 1
 
 === src/facets/ArbiterAccountabilityFacet.sol :: ArbiterAccountabilityFacet.liftSuspension ===
 occurrences: 2
-не гейслесс, потому что: функция под onlyOwnerOrChief, и оба обращения —
-  административные. Первое: msg.sender аргументом события
-  ArbiterSuspensionLifted, «кто снял». Второе (п. 66, 16 августа 2026):
-  сравнение отправителя с владельцем — приостановку, наложенную СНОСОМ
-  (removedAt != 0), снимает только он, директору доступна лишь обычная.
-  Модификатор гарантирует, что до этих строк доживает владелец либо директор;
-  брать отправителя через _msgSender() здесь значило бы отдать различение
-  «владелец или директор» форвардеру — та же дыра, что в onlyOwner.
+не гейслесс, потому что: обе ветки прав административные. Первое обращение
+  (п. 66, 16 августа 2026): сравнение отправителя с ТЕМ, У КОГО СЕГОДНЯ ПРАВО
+  СНОСИТЬ (_removalAuthority — владелец, а после передачи названный
+  преемник) — приостановку, наложенную СНОСОМ (removedAt != 0), снимает
+  только он; обычную по-прежнему снимает и директор, через
+  _requireOwnerOrChief в соседней ветке. Второе: msg.sender аргументом
+  события ArbiterSuspensionLifted, «кто снял».
+  Модификатор с функции снят намеренно (круг правок 1, В-2): он не пустил бы
+  в тело преемника, и после передачи окно не открывал бы никто. Проверки от
+  этого не убавилось — обе ветки проверяют явно, каждая своё.
+  Брать отправителя через _msgSender() здесь значило бы отдать различение
+  «владелец / преемник / директор» форвардеру — та же дыра, что в onlyOwner.
 
 === src/facets/ArbiterAccountabilityFacet.sol :: ArbiterAccountabilityFacet.removeArbiterForCause ===
-occurrences: 3
+occurrences: 2
 не гейслесс, потому что: снос по поводу — храповик передачи, НЕ через
   onlyOwnerOrChief (директор сюда не допущен вовсе, только владелец или,
-  после передачи, daoAddress). Два обращения — обе ветки одной проверки
-  (`msg.sender != d.daoAddress` в ветке «ДАО активна», `msg.sender !=
-  OwnershipLib.contractOwner()` в ветке «ДАО не активна»), третье — msg.sender
-  аргументом события ArbiterRemovedForCause, «кто нажал». До какой из первых
-  двух проверок вызов ни дойдёт, за форвардером человека нет: прямая
-  транзакция владельца или daoAddress-контракт, гейслесс-пути здесь нет —
+  после передачи, daoAddress). Первое обращение — сравнение с тем, у кого
+  право сносить; второе — msg.sender аргументом события
+  ArbiterRemovedForCause, «кто нажал». За форвардером здесь человека нет:
+  прямая транзакция владельца или daoAddress-контракт, гейслесс-пути нет —
   та же логика, что у ArbiterRegistryFacet.setDAOAddress.
+  ⚠️ Было 3 (п. 66, круг правок 1, 16 августа 2026): две ветки одной проверки
+  сравнивали отправителя каждая со своим адресом. Теперь адрес вычисляет
+  _removalAuthority (одно выражение, два читателя — сюда и в liftSuspension),
+  и сравнение осталось одно. Поведение не изменилось: ветка та же, обе
+  ошибки (RemovalHandedOver / NotOwner) те же.
 
 === src/facets/ArbiterAccountabilityFacet.sol :: ArbiterAccountabilityFacet.proposeRemoval ===
 occurrences: 2

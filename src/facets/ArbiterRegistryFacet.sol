@@ -655,6 +655,35 @@ contract ArbiterRegistryFacet {
     /// только для одной из двух дверей (найдено ревью, C-3, круг правок 1).
     error NotCurrentDaoAddress();
 
+    // ── Вес приостановки, вторая дверь (п. 66, круг правок 1, 16 августа 2026) ──
+    /// Возврат в корпус СНЕСЁННОГО — владельческое действие, директору
+    /// недоступно. Отмена сноса есть зеркало сноса, а сносить директор не
+    /// вправе вовсе.
+    ///
+    /// Найдено ревью задачи 2: гейт `ArbiterAccountabilityFacet.liftSuspension`
+    /// запер одну дверь, а `addArbiter` вела туда же и была открыта директору.
+    /// `clearRemovalRecord(d, arbiter, true)` ниже стирает `removedAt` И
+    /// `suspendedUntil` разом — то есть директор одной транзакцией снимал то
+    /// самое окно C-1, которое держит деньги по вердиктам снятого, да вдобавок
+    /// возвращал его в реестр с нетронутыми клеймами (снос не трогает ни
+    /// `disputeClaims`, ни `openClaimCount`). Замерено пробой на настоящем
+    /// даймонде: `liftSuspension` директору ревертит, `addArbiter` проходит.
+    ///
+    /// ⚠️ Почему отказ, а не «вернуть, но приостановку оставить» (мягкий
+    /// вариант рассмотрен и отвергнут): `clearRemovalRecord(..., false)` стёр
+    /// бы `removedAt`, оставив окно, — и следующей же транзакцией
+    /// `liftSuspension` прошла бы гейт п. 66, потому что различитель уже ноль.
+    /// Мягкий вариант не закрывает обход, а удлиняет его на одну транзакцию.
+    ///
+    /// Кого НЕ касается: посадку нового человека и возврат ушедшего
+    /// добровольно — `resignAsArbiter` `removedAt` не пишет, у таких он ноль,
+    /// и директор сажает их как раньше. Кого касается дополнительно: возврат
+    /// снятого АВТОМАТОМ — `_recordArbiterMistake` пишет `removedAt` наравне с
+    /// ручным сносом, значит и отменять автомат вправе только владелец. Так и
+    /// задумано: у автодемоушена нет автора, которому можно возразить, кроме
+    /// того, кто отвечает за корпус целиком.
+    error ReseatingRemovedIsOwnerOnly();
+
     // -------- MODIFIERS --------
 
     modifier onlyOwner() {
@@ -861,6 +890,12 @@ contract ArbiterRegistryFacet {
     /// больше не сажают арбитров, когда ДАО включено.
     ///
     /// ⚠️ Про `&& d.daoAddress != address(0)` — см. _requireSeatingNotHandedOver.
+    ///
+    /// ⚠️ ВОЗВРАТ СНЕСЁННОГО — ТОЛЬКО ВЛАДЕЛЬЦУ (п. 66, круг правок 1,
+    /// 16 августа 2026). Эта функция — вторая дверь к тому же результату, что
+    /// заперт в `ArbiterAccountabilityFacet.liftSuspension`: `clearRemovalRecord`
+    /// ниже стирает окно сноса заодно с записью о нём. Разбор — у объявления
+    /// ошибки ReseatingRemovedIsOwnerOnly выше.
     function addArbiter(address arbiter) external onlyOwnerOrChief {
         ArbiterRegistryStorage.Data storage d = ArbiterRegistryStorage.data();
         _requireSeatingNotHandedOver(d);
@@ -870,6 +905,11 @@ contract ArbiterRegistryFacet {
         // тот, кто решает состав, и ограничивать его этим правилом означало бы
         // ограничить его же способность разбавить блок директора.
         if (msg.sender != OwnershipLib.contractOwner()) {
+            // Отмена сноса — зеркало сноса, и она не его. Различитель тот же
+            // СТИРАЕМЫЙ `removedAt`, что у гейта liftSuspension: у ушедшего
+            // добровольно и у новичка он ноль, дверь им открыта как прежде.
+            if (d.removedAt[arbiter] != 0) revert ReseatingRemovedIsOwnerOnly();
+
             uint256 blocAfter = _chiefBloc(d) + 1;
             if (blocAfter >= APPEAL_MIN_VOTES) {
                 revert ChiefBlocWouldReachQuorum(blocAfter, APPEAL_MIN_VOTES);

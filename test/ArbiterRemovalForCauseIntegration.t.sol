@@ -541,6 +541,163 @@ contract ArbiterRemovalForCauseIntegrationTest is Test {
     }
 
     // ============================================================
+    //  КРУГ ПРАВОК 1 ревью задачи 2 (16 августа 2026)
+    //
+    //  Б-1: МЫ ЗАПЕРЛИ ОДНУ ДВЕРЬ, А СОСЕДНЯЯ ВЕЛА ТУДА ЖЕ.
+    //
+    //  liftSuspension директору отказала — а addArbiter под тем же
+    //  onlyOwnerOrChief звала clearRemovalRecord(d, arbiter, true), которая
+    //  стирает removedAt И suspendedUntil разом. Один вызов через дорогу давал
+    //  ровно тот результат, который запретили, да вдобавок возвращал
+    //  снесённого в реестр с нетронутыми клеймами.
+    //
+    //  Правило: отмена сноса есть зеркало сноса, а сносить директору нельзя.
+    // ============================================================
+
+    /// Прямая сторона: возврат СНЕСЁННОГО директору закрыт, и обход не
+    /// состоялся — проверяется не только ярлык ошибки, но и то, что за ней
+    /// ничего не произошло.
+    function test_ChiefCannotReseatRemovedArbiter() public {
+        address chief = address(0xC4);
+        ArbiterRegistryFacet(address(diamond)).setChiefArbiter(chief);
+
+        ArbiterAccountabilityFacet(address(diamond)).removeArbiterForCause(
+            arbiter, ArbiterAccountabilityFacet.Cause.Collusion, keccak256(unicode"переписка"), address(0)
+        );
+        assertTrue(
+            ArbiterAccountabilityFacet(address(diamond)).isSuspended(arbiter),
+            unicode"сетап: снос выставил окно C-1"
+        );
+
+        vm.prank(chief);
+        vm.expectRevert(ArbiterRegistryFacet.ReseatingRemovedIsOwnerOnly.selector);
+        ArbiterRegistryFacet(address(diamond)).addArbiter(arbiter);
+
+        assertTrue(
+            ArbiterAccountabilityFacet(address(diamond)).isSuspended(arbiter),
+            unicode"окно на месте — обходной дверью его тоже не сняли"
+        );
+        assertFalse(
+            ArbiterRegistryFacet(address(diamond)).isRegisteredArbiter(arbiter),
+            unicode"и в корпус снесённый не вернулся"
+        );
+    }
+
+    /// Обратная сторона, и без неё замок был бы слишком широким: посадка
+    /// вообще — по-прежнему работа директора. Взят ушедший ДОБРОВОЛЬНО, а не
+    /// новичок, потому что это ближайший к запрету случай: человека в корпусе
+    /// нет, но и сноса на нём нет — resignAsArbiter `removedAt` не пишет.
+    /// Проверка доказывает, что различитель читает СНОС, а не «отсутствие в
+    /// реестре».
+    function test_ChiefStillSeatsSomeoneWhoResigned() public {
+        address chief = address(0xC4);
+        ArbiterRegistryFacet(address(diamond)).setChiefArbiter(chief);
+
+        address who = address(0x5C);
+        _addFreshArbiter(who);
+        vm.prank(who);
+        ArbiterRegistryFacet(address(diamond)).resignAsArbiter();
+        assertFalse(ArbiterRegistryFacet(address(diamond)).isRegisteredArbiter(who));
+
+        vm.prank(chief);
+        ArbiterRegistryFacet(address(diamond)).addArbiter(who);
+
+        assertTrue(
+            ArbiterRegistryFacet(address(diamond)).isRegisteredArbiter(who),
+            unicode"ушёл сам — вернуть его директор вправе, снос тут ни при чём"
+        );
+    }
+
+    /// В-1: ЗАМОК ШВА С ЗАДАЧЕЙ 5. Возврат в корпус ОБЯЗАН отпускать гейт
+    /// п. 66. Гейт читает СТИРАЕМЫЙ removedAt; если задача 5 (п. 72) перевесит
+    /// его на вечную историю сносов (removalCount/lastRemovalAt), этот тест
+    /// покраснеет — а без него не покраснеет ничто: ревью симулировало этот
+    /// промах буквально и получило 0 красных из 831. Докстринг объясняет
+    /// ПОЧЕМУ, но объяснение и проверка — разные вещи.
+    ///
+    /// Возвращает ВЛАДЕЛЕЦ, не директор: после Б-1 выше возврат снесённого —
+    /// владельческое действие. Свойство от смены роли не меняется, эффект
+    /// (addArbiter стирает removedAt) тот же.
+    function test_ChiefStillLiftsOrdinarySuspensionAfterReseat() public {
+        address chief = address(0xC4);
+        ArbiterRegistryFacet(address(diamond)).setChiefArbiter(chief);
+
+        ArbiterAccountabilityFacet(address(diamond)).removeArbiterForCause(
+            arbiter, ArbiterAccountabilityFacet.Cause.Collusion, keccak256("x"), address(0)
+        );
+        ArbiterRegistryFacet(address(diamond)).addArbiter(arbiter);   // стирает removedAt
+
+        ArbiterAccountabilityFacet(address(diamond)).suspendArbiter(arbiter);
+        assertTrue(ArbiterAccountabilityFacet(address(diamond)).isSuspended(arbiter));
+
+        vm.prank(chief);
+        ArbiterAccountabilityFacet(address(diamond)).liftSuspension(arbiter);
+
+        assertFalse(
+            ArbiterAccountabilityFacet(address(diamond)).isSuspended(arbiter),
+            unicode"вернули в корпус — директор снова снимает обычную приостановку"
+        );
+    }
+
+    // ── В-2: право снять окно едет за правом сносить ──
+    //
+    // removeArbiterForCause намеренно выпихивает владельца после назначения
+    // преемника: «дороги назад нет — иначе сговор и слив переписки стали бы
+    // неснимаемыми вовсе». Но liftSuspension сравнивала с владельцем ВСЕГДА, и
+    // выходило обратное: преемник своё же окно снять не мог (модификатор его
+    // не видел), а владелец снимал ЧУЖОЕ — и вернуть приостановку после этого
+    // нельзя ничем, suspendArbiter требует isArbiter.
+
+    /// Общий сетап обеих проверок: ДАО включена заработанным путём, преемник
+    /// назван, он же и сносит. Владельцу сноса на этой сцене уже нет.
+    function _handOverRemovalAndRemove(address dao) internal {
+        _setUniqueActiveUsers(ArbiterRegistryFacet(address(diamond)).getDaoThreshold());
+        ArbiterRegistryFacet(address(diamond)).setDAOAddress(dao);
+
+        vm.prank(dao);
+        ArbiterAccountabilityFacet(address(diamond)).removeArbiterForCause(
+            arbiter, ArbiterAccountabilityFacet.Cause.Collusion, keccak256(unicode"переписка"), address(0)
+        );
+        assertTrue(
+            ArbiterAccountabilityFacet(address(diamond)).isSuspended(arbiter),
+            unicode"сетап: преемник снёс, окно выставлено"
+        );
+    }
+
+    /// Прямая сторона: тот, кто снёс, вправе своё окно и открыть. До правки он
+    /// не проходил даже модификатор — то есть после передачи окно не открывал
+    /// бы НИКТО, а дверь без открывающего хуже двери у владельца.
+    function test_DaoLiftsTheRemovalWindowAfterHandover() public {
+        address dao = address(0xDA0);
+        _handOverRemovalAndRemove(dao);
+
+        vm.prank(dao);
+        ArbiterAccountabilityFacet(address(diamond)).liftSuspension(arbiter);
+
+        assertFalse(
+            ArbiterAccountabilityFacet(address(diamond)).isSuspended(arbiter),
+            unicode"у кого право сносить, у того и право отменять свой снос"
+        );
+    }
+
+    /// Обратная сторона: бывший хозяин двери в неё больше не входит. Без этой
+    /// проверки «право едет за правом» осталось бы наполовину — владелец
+    /// продолжал бы открывать ЧУЖОЕ окно, ровно против довода, записанного в
+    /// removeArbiterForCause.
+    function test_OwnerCannotLiftTheRemovalWindowAfterHandover() public {
+        address dao = address(0xDA0);
+        _handOverRemovalAndRemove(dao);
+
+        vm.expectRevert(ArbiterAccountabilityFacet.RemovalSuspensionIsOwnerOnly.selector);
+        ArbiterAccountabilityFacet(address(diamond)).liftSuspension(arbiter);
+
+        assertTrue(
+            ArbiterAccountabilityFacet(address(diamond)).isSuspended(arbiter),
+            unicode"окно преемника владельцу не по зубам — снос он передал целиком"
+        );
+    }
+
+    // ============================================================
     //  ФИНАЛЬНЫЙ ОБЗОР ВЕТКИ, C-1 (16 августа 2026)
     //
     //  СНОС БЫЛ СЛАБЕЕ ПРИОСТАНОВКИ И ВДОБАВОК ЗАКРЫВАЛ ДВЕРЬ, КОТОРАЯ СПАСАЛА.
