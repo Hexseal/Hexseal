@@ -1383,4 +1383,54 @@ contract ArbiterRemovalForCauseIntegrationTest is Test {
         assertEq(cause, uint8(ArbiterAccountabilityFacet.Cause.Collusion) + 1,
             unicode"и повод прошлого сноса остаётся читаемым");
     }
+
+    // ============================================================
+    //  ФАКТ, НА КОТОРЫЙ ОПИРАЕТСЯ ПУБЛИЧНЫЙ ТЕКСТ (п. 64, 16 августа 2026)
+    // ============================================================
+
+    /// Факт, который утверждает docs/DECENTRALIZATION.md после правки
+    /// 16 августа 2026: снос форфейтит ТОТ залог, который есть, — а у арбитра
+    /// ручной посадки его нет вовсе.
+    ///
+    /// Ненулевой `arbiterBond` пишет ровно одна строка во всём `src/` —
+    /// `ArbiterRegistryFacet.applyAsArbiter`, а она первой же строкой ревертит
+    /// `DAONotActive`, пока ДАО выключена (решение владельца 1 августа 2026:
+    /// арбитры на старте ручные и свои). Значит у всякого, кого сегодня
+    /// физически можно снести, `bondForfeited` доказуемо ноль — и публичный
+    /// документ обязан говорить именно это, а не пугать полусотней долларов,
+    /// которой не существует.
+    ///
+    /// ⚠️ Этот тест НЕ сторожит ТЕКСТ документа. Сторожить текст значило бы
+    /// сторожить не работу — тот самый класс «замок ищет имя, а не
+    /// употребление», давший в этом проекте 0 красных из 497 и 0 из 568
+    /// (docs/PROCESS.md). Он сторожит ФАКТ, на который текст опирается:
+    /// испорти факт — покраснеет здесь. Обратную порчу (кто-то вернёт враньё
+    /// в документ) не ловит ничто, и это записано честно, а не закрыто
+    /// видимостью проверки.
+    function test_HandSeatedArbiterHasNoBondToBurn() public {
+        address seat = address(0x6401);
+        ArbiterRegistryFacet(address(diamond)).addArbiter(seat);
+
+        assertEq(
+            ArbiterAccountabilityFacet(address(diamond)).getArbiterBond(seat), 0,
+            unicode"ручная посадка залога не берёт — README.md говорит правду"
+        );
+
+        uint256 vaultBefore = ArbiterRegistryFacet(address(diamond)).getVaultBalance();
+
+        // Шестое поле события — bondForfeited. Ноль здесь и есть то, что
+        // читатель цепи увидит на любом сегодняшнем сносе.
+        vm.expectEmit(true, true, true, true, address(diamond));
+        emit ArbiterAccountabilityFacet.ArbiterRemovedForCause(
+            seat, owner, ArbiterAccountabilityFacet.Cause.Collusion, false, keccak256("chat log"), 0
+        );
+        ArbiterAccountabilityFacet(address(diamond)).removeArbiterForCause(
+            seat, ArbiterAccountabilityFacet.Cause.Collusion, keccak256("chat log"), address(0)
+        );
+
+        assertEq(
+            ArbiterRegistryFacet(address(diamond)).getVaultBalance(), vaultBefore,
+            unicode"сжигать нечего — банк арбитров не вырос ни на цент"
+        );
+    }
 }
