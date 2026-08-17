@@ -45,11 +45,51 @@ can actually be removed» — у всякого, кого можно снест�
 вовсе: гейт про то, кто НАЗНАЧАЕТ залог, а не про то, кто его видит.
 
 ---------------------------------------------------------------------------
+ПСЕВДОНИМ ХРАНИЛИЩА — ОТСЛЕЖИВАЕТСЯ (Ф-1 ревью, 17 августа 2026)
+
+Первая редакция смотрела только на `d.arbiterBond[кто] = …` и была слепа к
+
+    mapping(address => uint256) storage bonds = d.arbiterBond;
+    bonds[кто] = ARBITER_BOND;                  // настоящая запись, банк растёт
+
+Гейт при этом отвечал `exit 0` и «писатель ровно один». Обход не выдуманный:
+идиома `X storage v = d.…` живёт в том же фасете восемь раз подряд
+(`PendingVerdict storage v = d.pendingVerdicts[…]`), и двухшаговый залог
+естественнее всего написать именно так — то есть возле замка лежали восемь
+готовых калиток.
+
+Теперь внутри каждой функции строится множество ЛОКАЛЬНЫХ УКАЗАТЕЛЕЙ на это
+поле, до неподвижной точки:
+
+  • `mapping(...) storage x = d.arbiterBond;`         — x становится псевдонимом
+  • `mapping(...) storage y = x;`                     — и y тоже (цепочка)
+  • `x = d.arbiterBond;` (переприсваивание указателя)  — тоже
+
+и `x[кто] = …` считается записью наравне с `d.arbiterBond[кто] = …`.
+Указатель на СТРУКТУРУ (`Data storage d = …data()`) отдельно отслеживать не
+нужно: `d.arbiterBond` — это тот же MemberAccess, он ловился всегда.
+
+---------------------------------------------------------------------------
+ССЫЛКА, УТЕКШАЯ КУДА-ТО ЕЩЁ — КРАСНОЕ, А НЕ МОЛЧАНИЕ
+
+Голая `d.arbiterBond` (не под индексом и не в связывании псевдонима) означает,
+что поле уехало туда, куда разбор не идёт: аргументом в другую функцию
+(`function f(mapping(address => uint256) storage m)` и `m[кто] = …` внутри),
+возвратом storage-указателя наружу, в кортеж. Гейт такие места ВЫДАЁТ КАК
+НАРУШЕНИЕ, а не пропускает: молчание тут означало бы «покрытие шире, чем на
+самом деле» — ровно тот дефект, ради которого гейт и написан. Сегодня таких
+мест в src/ ноль.
+
+---------------------------------------------------------------------------
 ЧЕГО ГЕЙТ НЕ ЛОВИТ — СКАЗАНО ВСЛУХ
 
   • Запись через ассемблерный `sstore` по вычисленному слоту. В src/ такого
     нет ни разу (ассемблер здесь только в `data()`-адресации неймспейсов и в
     `_msgSender`), но гейт этого не проверяет и обещать не станет.
+  • МЕЖПРОЦЕДУРНЫЙ путь: `arbiterBond`, переданная storage-указателем в другую
+    функцию, разбором НЕ прослеживается. Не молчим — см. абзац выше: такое
+    место гейт красит, называя его «ссылка утекла». То есть непокрытый случай
+    превращён в отказ анализировать, а не в зелёный.
   • Запись из контракта ВНЕ src/ — её физически не бывает: неймспейс
     `hexseal.arbiter.registry.storage` живёт в хранилище даймонда, писать в
     него может только смонтированный фасет, а фасеты все в src/.
@@ -210,17 +250,83 @@ def touches_field(node) -> bool:
     return node.get("nodeType") == "MemberAccess" and node.get("memberName") == FIELD
 
 
-def is_field_slot(node) -> bool:
-    """Левая часть присваивания вида `d.arbiterBond[кто]`.
+def is_field_slot(node, aliases=()) -> bool:
+    """Левая часть присваивания вида `d.arbiterBond[кто]` — или `x[кто]`, где
+    `x` локальный storage-указатель на то же поле.
 
-    Проверяется именно IndexAccess над MemberAccess: присвоение самому
-    отображению в Solidity невозможно, а обращение по ключу — единственная
-    форма записи в него.
+    Проверяется именно IndexAccess: присвоение самому отображению в Solidity
+    невозможно, а обращение по ключу — единственная форма записи в него.
     """
     if not isinstance(node, dict) or node.get("nodeType") != "IndexAccess":
         return False
     base = node.get("baseExpression")
-    return isinstance(base, dict) and touches_field(base)
+    if not isinstance(base, dict):
+        return False
+    if touches_field(base):
+        return True
+    return (
+        base.get("nodeType") == "Identifier"
+        and base.get("referencedDeclaration") in aliases
+    )
+
+
+def is_storage_pointer_decl(node) -> bool:
+    return (
+        isinstance(node, dict)
+        and node.get("nodeType") == "VariableDeclaration"
+        and node.get("storageLocation") == "storage"
+    )
+
+
+def _mentions_field_or_alias(node, aliases) -> bool:
+    """В поддереве есть `…​.arbiterBond` или ссылка на уже известный псевдоним."""
+    for n in iter_nodes(node):
+        if touches_field(n):
+            return True
+        if n.get("nodeType") == "Identifier" and n.get("referencedDeclaration") in aliases:
+            return True
+    return False
+
+
+def collect_aliases(member) -> set:
+    """Локальные storage-указатели на `arbiterBond` внутри одной функции.
+
+    До неподвижной точки, чтобы ловились цепочки (`y = x;` после
+    `x = d.arbiterBond;`). Переприсваивание указателя учитывается наравне с
+    объявлением: `x` в Solidity можно перенаправить внутри той же функции.
+
+    Указатель на СТРУКТУРУ (`Data storage d = …data()`) сюда не попадает и не
+    должен: `d.arbiterBond` — обычный MemberAccess, он ловился всегда.
+    """
+    aliases: set = set()
+    while True:
+        grew = False
+        for node in iter_nodes(member):
+            ntype = node.get("nodeType")
+
+            if ntype == "VariableDeclarationStatement":
+                init = node.get("initialValue")
+                if init is None or not _mentions_field_or_alias(init, aliases):
+                    continue
+                for decl in node.get("declarations") or []:
+                    if is_storage_pointer_decl(decl) and decl.get("id") not in aliases:
+                        aliases.add(decl["id"])
+                        grew = True
+
+            elif ntype == "Assignment" and (node.get("operator") or "=") == "=":
+                lhs = node.get("leftHandSide")
+                if not isinstance(lhs, dict) or lhs.get("nodeType") != "Identifier":
+                    continue
+                ref = lhs.get("referencedDeclaration")
+                if ref is None or ref in aliases:
+                    continue
+                rhs = node.get("rightHandSide")
+                if rhs is not None and _mentions_field_or_alias(rhs, aliases):
+                    aliases.add(ref)
+                    grew = True
+
+        if not grew:
+            return aliases
 
 
 def is_literal_zero(node) -> bool:
@@ -245,27 +351,83 @@ class Write:
         return f"{self.relpath} :: {self.contract}.{self.member}"
 
 
-def classify(node):
+def classify(node, aliases=()):
     """Возвращает ("nonzero"|"zero", описание) или None, если узел не запись."""
     ntype = node.get("nodeType")
 
     if ntype == "Assignment":
         lhs = node.get("leftHandSide")
-        if not is_field_slot(lhs):
+        if not is_field_slot(lhs, aliases):
             return None
+        through = "" if touches_field(lhs.get("baseExpression") or {}) else " через псевдоним"
         op = node.get("operator") or "="
         if op != "=":
-            return "nonzero", f"составной оператор {op}"
+            return "nonzero", f"составной оператор {op}{through}"
         if is_literal_zero(node.get("rightHandSide")):
-            return "zero", "= 0"
-        return "nonzero", "= <не ноль>"
+            return "zero", f"= 0{through}"
+        return "nonzero", f"= <не ноль>{through}"
 
     if ntype == "UnaryOperation" and node.get("operator") == "delete":
-        if is_field_slot(node.get("subExpression")):
-            return "zero", "delete"
+        sub = node.get("subExpression")
+        if is_field_slot(sub, aliases):
+            through = "" if touches_field(sub.get("baseExpression") or {}) else " через псевдоним"
+            return "zero", f"delete{through}"
         return None
 
     return None
+
+
+def find_escapes(member, aliases, relpath, cname, mname, starts):
+    """Места, где `arbiterBond` упомянута НЕ под индексом и НЕ как связывание
+    псевдонима, — то есть ссылка уехала туда, куда разбор не идёт.
+
+    Такое место гейт красит, а не пропускает: аргумент storage-указателем в
+    чужую функцию (`f(d.arbiterBond)` и `m[кто] = …` внутри неё) — настоящий
+    путь записи, и молчать о нём значило бы обещать покрытие шире фактического.
+    """
+    ok_ids = set()
+    for node in iter_nodes(member):
+        ntype = node.get("nodeType")
+
+        # `d.arbiterBond[кто]` — законное обращение по ключу.
+        if ntype == "IndexAccess":
+            base = node.get("baseExpression")
+            if isinstance(base, dict) and touches_field(base):
+                ok_ids.add(id(base))
+
+        # `mapping(...) storage x = d.arbiterBond;` — законное связывание.
+        elif ntype == "VariableDeclarationStatement":
+            init = node.get("initialValue")
+            if (
+                isinstance(init, dict)
+                and touches_field(init)
+                and any(
+                    is_storage_pointer_decl(dcl) and dcl.get("id") in aliases
+                    for dcl in node.get("declarations") or []
+                )
+            ):
+                ok_ids.add(id(init))
+
+        # `x = d.arbiterBond;` — переприсваивание уже признанного указателя.
+        elif ntype == "Assignment" and (node.get("operator") or "=") == "=":
+            lhs, rhs = node.get("leftHandSide"), node.get("rightHandSide")
+            if (
+                isinstance(lhs, dict)
+                and lhs.get("nodeType") == "Identifier"
+                and lhs.get("referencedDeclaration") in aliases
+                and isinstance(rhs, dict)
+                and touches_field(rhs)
+            ):
+                ok_ids.add(id(rhs))
+
+    out = []
+    for node in iter_nodes(member):
+        if touches_field(node) and id(node) not in ok_ids:
+            out.append(
+                Write(relpath, cname, mname, line_of(starts, src_offset(node)),
+                      "escape", "ссылка на поле утекла из-под разбора")
+            )
+    return out
 
 
 def scan(asts: dict[str, dict]):
@@ -289,8 +451,12 @@ def scan(asts: dict[str, dict]):
                 if member.get("nodeType") not in ("FunctionDefinition", "ModifierDefinition"):
                     continue
                 mname = member_name(member)
+                # Псевдонимы считаются ПОФУНКЦИОННО: storage-указатель — это
+                # локальная переменная, и её область видимости кончается вместе
+                # с телом. Общее множество на файл смешало бы разные функции.
+                aliases = collect_aliases(member)
                 for node in iter_nodes(member):
-                    verdict = classify(node)
+                    verdict = classify(node, aliases)
                     if verdict is None:
                         continue
                     kind, text = verdict
@@ -298,12 +464,17 @@ def scan(asts: dict[str, dict]):
                     writes.append(
                         Write(relpath, cname, mname, line_of(starts, src_offset(node)), kind, text)
                     )
+                writes.extend(find_escapes(member, aliases, relpath, cname, mname, starts))
 
         # Та же сверка привязки, что в гейте гейслесса: запись, лежащая вне
         # тела функции (инициализатор state-переменной, свободная функция),
         # молча выпала бы из проверки.
+        #
+        # Считается БЕЗ псевдонимов (их область видимости — тело функции,
+        # которого здесь нет): это нижняя граница, и её достаточно — запись
+        # вне функции по определению не может ходить через локальный указатель.
         total = sum(1 for node in iter_nodes(ast) if classify(node) is not None)
-        if total != attached:
+        if total > attached:
             raise ParseError(
                 f"{relpath}: {total - attached} записей в {FIELD} не удалось привязать\n"
                 f"  к функции или модификатору (всего {total}, привязано {attached}).\n"
@@ -335,6 +506,7 @@ def main(argv) -> int:
 
     nonzero = [w for w in writes if w.kind == "nonzero"]
     zero = [w for w in writes if w.kind == "zero"]
+    escapes = [w for w in writes if w.kind == "escape"]
 
     if "--print" in argv:
         print(f"Упоминаний `{FIELD}` в src/: {mentions}")
@@ -344,6 +516,9 @@ def main(argv) -> int:
         print(f"Нулевых записей (в счёт не идут): {len(zero)}")
         for w in zero:
             print(f"  {w.key}  ({w.relpath.split('/')[-1]}:{w.line}, {w.text})")
+        print(f"Утёкших ссылок на поле: {len(escapes)}")
+        for w in escapes:
+            print(f"  {w.key}  ({w.relpath.split('/')[-1]}:{w.line})")
         return 0
 
     found = {}
@@ -354,16 +529,29 @@ def main(argv) -> int:
     unexpected = sorted(set(found) - expected)
     vanished = sorted(expected - set(found))
 
-    if not unexpected and not vanished:
+    if not unexpected and not vanished and not escapes:
         print(
             f"check-arbiter-bond-writers: ненулевую запись в `{FIELD}` делает "
             f"ровно одна функция — {', '.join(sorted(found))}. "
-            f"Нулевых записей {len(zero)}, они не в счёт."
+            f"Нулевых записей {len(zero)}, они не в счёт; ссылка на поле никуда "
+            f"не утекает."
         )
         return 0
 
     print("check-arbiter-bond-writers: КРАСНЫЙ", file=sys.stderr)
     print(file=sys.stderr)
+
+    for w in escapes:
+        print(
+            f"  ССЫЛКА НА ПОЛЕ УТЕКЛА ИЗ-ПОД РАЗБОРА: {w.key}\n"
+            f"    {w.relpath}:{w.line}\n"
+            f"    `{FIELD}` упомянута не под индексом и не как связывание\n"
+            "    storage-указателя — значит уехала аргументом в чужую функцию,\n"
+            "    возвратом или в кортеж. Куда именно, разбор не идёт, и запись\n"
+            "    там он не увидит. Это не запрет: либо перепишите обращение\n"
+            "    прямым `d.arbiterBond[кто]`, либо научите гейт этому случаю.",
+            file=sys.stderr,
+        )
 
     for key in unexpected:
         for w in found[key]:
