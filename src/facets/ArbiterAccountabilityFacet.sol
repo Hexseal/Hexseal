@@ -490,6 +490,33 @@ contract ArbiterAccountabilityFacet {
             || cause == Cause.Silence;
     }
 
+    /// Потолок — ОДИН на все три двери: обе двери обвинения (proposeRemoval,
+    /// removeArbiterForCause) и дверь защиты (respondToRemoval). Общее правило
+    /// живёт в одном месте, а не копией на каждой стороне.
+    ///
+    /// ⚠️ Здесь стояла копия, и это было замерено, а не заподозрено (круг
+    /// правок 1, 18 августа 2026): до правки respondToRemoval считала длину
+    /// своей строкой, и мутация «считать символы вместо байтов», внесённая в
+    /// _requireReason, дверь ответа НЕ задевала вовсе. То есть у одного
+    /// правила было два независимых дома, и разойтись они могли молча —
+    /// защита получила бы вдвое меньше места, чем обвинение, и заметил бы это
+    /// только тот, кто пишет не по-английски.
+    ///
+    /// Длина возвращается наружу, потому что она нужна вызывающему ещё раз:
+    /// ею гейтится событие (пустых слов в ленте не бывает). Считать её дважды
+    /// значило бы завести ту же копию заново, только на полстроки ниже.
+    function _requireWithinCap(string calldata words) private pure returns (uint256 len) {
+        len = bytes(words).length;
+        if (len > MAX_REASON_BYTES) revert ReasonTooLong(len);
+    }
+
+    /// Обязательность — только у ОБВИНИТЕЛЯ, и потому живёт отдельно от
+    /// потолка. Асимметрия здесь не случайность и не недоделка: у обвинителя
+    /// слова — обязанность (там, где цепь молчит), у обвиняемого — право.
+    /// Заставлять человека оправдываться публично нельзя. Разделив общее и
+    /// разное, мы делаем эту разницу видимой в коде, а не поддерживаемой
+    /// дисциплиной того, кто будет править файл через полгода.
+    ///
     /// Одно правило на обе двери обвинения (proposeRemoval и
     /// removeArbiterForCause). Копии здесь быть не должно: разойдясь, они дали
     /// бы предложение, которое проходит без слов, и снос, который без них не
@@ -499,8 +526,7 @@ contract ArbiterAccountabilityFacet {
     /// приславший 5 килобайт на проверяемом коде, получил бы «ок» вместо
     /// отказа, и калдата такого размера доехала бы до цепи.
     function _requireReason(bool verified, string calldata reason) private pure {
-        uint256 len = bytes(reason).length;
-        if (len > MAX_REASON_BYTES) revert ReasonTooLong(len);
+        uint256 len = _requireWithinCap(reason);
         if (!verified && len == 0) revert ReasonRequired();
     }
 
@@ -828,8 +854,13 @@ contract ArbiterAccountabilityFacet {
     /// (`removalReply != 0`) перестал бы работать.
     function respondToRemoval(bytes32 replyDigest, string calldata reply) external {
         if (replyDigest == bytes32(0)) revert ZeroDigest();
-        uint256 len = bytes(reply).length;
-        if (len > MAX_REASON_BYTES) revert ReasonTooLong(len);
+        // Потолок берётся из общей проверки, а не считается здесь заново:
+        // единица счёта у обвинения и защиты обязана быть одной. Что копия
+        // расходится молча — замерено, см. _requireWithinCap.
+        //
+        // Обязательности здесь нет и быть не должно: _requireReason сюда не
+        // зовут именно поэтому. Пустой ответ законен.
+        uint256 len = _requireWithinCap(reply);
 
         address caller = _msgSender();
         ArbiterRegistryStorage.Data storage d = ArbiterRegistryStorage.data();
