@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { describe, it, expect } from 'vitest';
 import { keccak256, toBytes } from 'viem';
 import { ARBITER_REGISTRY_ABI } from '@/config/contracts';
@@ -25,10 +25,47 @@ import { ARBITER_REGISTRY_ABI } from '@/config/contracts';
  * «фронт ↔ исходник контракта».
  */
 
-const FACET_SRC = readFileSync(
-  new URL('../../../src/facets/ArbiterRegistryFacet.sol', import.meta.url),
-  'utf8',
-);
+/**
+ * ⚠️ ИСХОДНИК — ВСЕ АРБИТРАЖНЫЕ ФАСЕТЫ СРАЗУ, А НЕ ОДИН ФАЙЛ.
+ *
+ * До 17 августа 2026 здесь стоял единственный путь — `ArbiterRegistryFacet.sol`.
+ * Реестр упёрся в потолок EIP-170, и четырнадцать чтений уехали в
+ * `ArbiterAccountabilityFacet.sol` (коммит a88a2200); пять из них — ровно те,
+ * что сверяются ниже. Замок покраснел не потому, что ABI фронта разошёлся с
+ * цепью (он не разошёлся: даймонд отвечает по одному адресу, каким фасетом
+ * смонтирован селектор — снаружи не видно), а потому что был прибит к ФАЙЛУ.
+ *
+ * Правится поэтому замок, а не ABI: сторона правды — арбитражная поверхность
+ * даймонда целиком, и собирается она с диска, а не из литерала. Третий фасет
+ * попадёт под сверку сам, без правки этого файла.
+ *
+ * Про то, что селектор реально смонтирован, отвечают тесты разреза (см. выше) —
+ * здесь по-прежнему только шов «фронт ↔ исходник контракта».
+ */
+const FACETS_DIR = new URL('../../../src/facets/', import.meta.url);
+
+const FACET_FILES = readdirSync(FACETS_DIR)
+  .filter((f) => /^Arbiter.*\.sol$/.test(f))
+  .sort();
+
+/**
+ * Склейка исходников. Склеивать безопасно ровно потому, что дальше каждая
+ * сверка требует РОВНО ОДНО объявление искомого имени: если одна и та же
+ * функция объявится в двух фасетах разом, разбор упадёт, а не выберет первую
+ * попавшуюся. Единственное общее имя на сегодня — приватная `_msgSender`,
+ * которую здесь не ищет никто.
+ */
+const FACET_SRC = FACET_FILES.map((f) => readFileSync(new URL(f, FACETS_DIR), 'utf8')).join('\n');
+
+describe('сверка читает всю арбитражную поверхность, а не один файл', () => {
+  it('арбитражных фасетов найдено больше одного', () => {
+    // Именно так замок ослеп бы обратно: путь сузили до одного файла, всё
+    // зелено, половина поверхности не сторожится ничем. Число 2 — не «столько
+    // бывает», а «меньше двух означает, что читается не вся поверхность».
+    expect(FACET_FILES.length, `найдено: ${FACET_FILES.join(', ') || '(ничего)'}`)
+      .toBeGreaterThanOrEqual(2);
+  });
+});
 
 /**
  * Блок объявления функции: от `function <имя>(` до начала тела (`{`) либо до `;`.
@@ -351,11 +388,15 @@ function relayRouteErrorTable(source: string): Record<string, string> {
   return table;
 }
 
-describe('фронт умеет назвать любую ошибку арбитражного фасета', () => {
+describe('фронт умеет назвать любую ошибку арбитражных фасетов', () => {
   const table = relayRouteErrorTable(RELAY_ROUTE_SRC);
-  const signatures = solidityErrorSignatures(FACET_SRC);
+  // Без дедупликации пять имён, объявленных в обоих фасетах с одинаковой
+  // подписью (NotOwner, NotOwnerOrChief, NotAnArbiter, ArbiterZeroAddress,
+  // ZeroDigest), дали бы по два одноимённых теста — селектор у них один, и
+  // запись в таблице тоже одна.
+  const signatures = [...new Set(solidityErrorSignatures(FACET_SRC))];
 
-  it('в фасете вообще есть объявленные ошибки — иначе сверка тавтологична', () => {
+  it('в фасетах вообще есть объявленные ошибки — иначе сверка тавтологична', () => {
     expect(signatures.length).toBeGreaterThan(40);
   });
 

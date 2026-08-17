@@ -599,6 +599,53 @@ export async function POST(req: NextRequest) {
           '0x616d24a0': 'ClaimTimeUnknown',
           '0xe56aceea': 'NotDisputeParty',
           '0x506f3a1b': 'ZeroDigest',
+          // ── Ветка ответственности арбитров (август 2026) ────────────────
+          // Восемь новых отказов ArbiterRegistryFacet. Каждый отвечает на
+          // вопрос «почему кнопка не сработала»; без записи здесь ответом был
+          // бы «Inner call reverted».
+          //   ChiefBlocWouldDecideAppeal — директор сажает столько своих, что
+          //     они решили бы апелляцию сами.
+          //   TooManyOpenClaims — арбитр уже держит потолок споров.
+          //   ArbiterSuspendedError — арбитр приостановлен, срок в аргументе.
+          //   HasLiveRemovalProposal — живое предложение о сносе уже лежит.
+          //   DaoAddressNotSet — ДАО включают, не назвав преемника.
+          //   SeatingHandedOver — право сажать арбитров передано ДАО.
+          //   NotCurrentDaoAddress — зовёт не тот адрес ДАО, что записан сейчас.
+          //   ReseatingRemovedIsOwnerOnly — вернуть СНЕСЁННОГО может только
+          //     владелец, директору эта дверь закрыта.
+          '0xd02d6f54': 'ChiefBlocWouldDecideAppeal',
+          '0xe7b00352': 'TooManyOpenClaims',
+          '0xbc9ad5e6': 'ArbiterSuspendedError',
+          '0x34a0af52': 'HasLiveRemovalProposal',
+          '0x4488109e': 'DaoAddressNotSet',
+          '0x6a4dd129': 'SeatingHandedOver',
+          '0x6aba596c': 'NotCurrentDaoAddress',
+          '0xcf5bfb95': 'ReseatingRemovedIsOwnerOnly',
+          // ── ArbiterAccountabilityFacet, восемь СВОИХ отказов ────────────
+          // ⚠️ ВТОРОЙ ФАСЕТ, КОТОРОГО ЗАМОК НЕ ВИДЕЛ ВОВСЕ. Половина
+          // арбитражной поверхности уехала туда, а сверка читала только
+          // реестр. Теперь читаются оба исходника (src/facets/Arbiter*.sol).
+          //
+          // Пять остальных ошибок фасета (NotOwner, NotOwnerOrChief,
+          // NotAnArbiter, ArbiterZeroAddress, ZeroDigest) объявлены и в
+          // реестре с той же подписью — селектор тот же, запись уже выше.
+          //   RemovalSuspensionIsRemovalAuthorityOnly — приостановку от сноса
+          //     снимает только держатель права сноса.
+          //   CauseNotProven — повод объявлен проверяемым, цепь не подтверждает.
+          //   EvidenceRequired — непроверяемый повод без отпечатка.
+          //   RemovalHandedOver — право сноса уехало к названному преемнику.
+          //   DisputeRefRequired — «молчание» без ссылки на спор недоказуемо.
+          //   DisputeRefNotApplicable — ссылка на спор приложена не к тому поводу.
+          //   AlreadyAnswered — снятый уже ответил.
+          //   NothingToAnswer — сноса против этого адреса нет.
+          '0xaaffc640': 'RemovalSuspensionIsRemovalAuthorityOnly',
+          '0x6db5710d': 'CauseNotProven',
+          '0xeb8bf73b': 'EvidenceRequired',
+          '0xe25d596d': 'RemovalHandedOver',
+          '0xe7666a2e': 'DisputeRefRequired',
+          '0xa7599ad5': 'DisputeRefNotApplicable',
+          '0xdc1a1b7d': 'AlreadyAnswered',
+          '0x6739e29d': 'NothingToAnswer',
         };
 
         let reason = 'Inner call reverted';

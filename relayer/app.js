@@ -1597,7 +1597,8 @@ const forwarder = new ethers.Contract(FORWARDER_ADDR, FORWARDER_ABI, provider);
 // of one lookup table. Keep the two tables in sync if either changes.
 //
 // Экспортируется ради замка test/forwarderErrorsMatchFacet.test.js: тот сверяет
-// СОСТАВ таблицы с объявлениями ошибок в src/facets/ArbiterRegistryFacet.sol.
+// СОСТАВ таблицы с объявлениями ошибок ВО ВСЕХ арбитражных фасетах
+// (src/facets/Arbiter*.sol — сегодня их два, реестр и ответственность).
 // Сверять по тексту app.js он мог бы и без экспорта — но тогда сторожил бы
 // строчку в файле, а не то, чем пользуется decodeForwarderRevert.
 export const FORWARDER_CUSTOM_ERRORS = {
@@ -1706,6 +1707,61 @@ export const FORWARDER_CUSTOM_ERRORS = {
   '0x616d24a0': 'ClaimTimeUnknown',
   '0xe56aceea': 'NotDisputeParty',
   '0x506f3a1b': 'ZeroDigest',
+  // ── Ветка ответственности арбитров (август 2026) ────────────────────────────
+  // Восемь новых отказов ArbiterRegistryFacet. Все восемь стоят на дверях,
+  // которыми человек пользуется руками, и каждый отвечает на вопрос «почему
+  // кнопка не сработала» — без записи здесь ответом был бы «Inner call
+  // reverted».
+  //   ChiefBlocWouldDecideAppeal — директор сажает столько своих, что они
+  //     решили бы апелляцию сами; посадку отклоняет цепь, а не человек.
+  //   TooManyOpenClaims — арбитр уже держит потолок споров, взять ещё нельзя.
+  //   ArbiterSuspendedError — арбитр приостановлен, срок в аргументе.
+  //   HasLiveRemovalProposal — против человека уже лежит живое предложение
+  //     о сносе, второе не кладётся.
+  //   DaoAddressNotSet — ДАО включают, не назвав преемника.
+  //   SeatingHandedOver — право сажать арбитров передано ДАО, ручная посадка
+  //     закрыта навсегда.
+  //   NotCurrentDaoAddress — зовёт не тот адрес ДАО, который записан сейчас.
+  //   ReseatingRemovedIsOwnerOnly — вернуть СНЕСЁННОГО может только владелец;
+  //     директору эта дверь закрыта.
+  '0xd02d6f54': 'ChiefBlocWouldDecideAppeal',
+  '0xe7b00352': 'TooManyOpenClaims',
+  '0xbc9ad5e6': 'ArbiterSuspendedError',
+  '0x34a0af52': 'HasLiveRemovalProposal',
+  '0x4488109e': 'DaoAddressNotSet',
+  '0x6a4dd129': 'SeatingHandedOver',
+  '0x6aba596c': 'NotCurrentDaoAddress',
+  '0xcf5bfb95': 'ReseatingRemovedIsOwnerOnly',
+  // ── ArbiterAccountabilityFacet, восемь СВОИХ отказов ────────────────────────
+  // ⚠️ ЭТО ВТОРОЙ ФАСЕТ, И ДО СЕГОДНЯ ЕГО НЕ СТОРОЖИЛО НИЧТО. Замок смотрел
+  // только на реестр, а половина арбитражной поверхности уехала в фасет
+  // ответственности — то есть ровно тот класс промаха, ради которого замок
+  // заводился, жил у него под носом. Теперь замок читает ОБА исходника.
+  //
+  // Остальные пять ошибок фасета (NotOwner, NotOwnerOrChief, NotAnArbiter,
+  // ArbiterZeroAddress, ZeroDigest) объявлены и в реестре, подпись та же —
+  // значит и селектор тот же, отдельной записи им не нужно.
+  //   RemovalSuspensionIsRemovalAuthorityOnly — приостановку, наложенную
+  //     сносом, снимает только держатель права сноса; обычному директору тут
+  //     отказано не «по роли», а по весу конкретной приостановки.
+  //   CauseNotProven — повод объявлен проверяемым, но цепь его не подтверждает
+  //     (аргумент — код повода).
+  //   EvidenceRequired — повод из непроверяемых, а отпечатка доказательства нет.
+  //   RemovalHandedOver — право сноса уехало к названному преемнику; владелец
+  //     получает тот же отказ, дороги назад нет.
+  //   DisputeRefRequired — повод «молчание» без ссылки на спор недоказуем.
+  //   DisputeRefNotApplicable — ссылка на спор приложена к поводу, к которому
+  //     она не относится.
+  //   AlreadyAnswered — снятый уже ответил, второй ответ не кладётся.
+  //   NothingToAnswer — отвечать не на что: сноса против этого адреса нет.
+  '0xaaffc640': 'RemovalSuspensionIsRemovalAuthorityOnly',
+  '0x6db5710d': 'CauseNotProven',
+  '0xeb8bf73b': 'EvidenceRequired',
+  '0xe25d596d': 'RemovalHandedOver',
+  '0xe7666a2e': 'DisputeRefRequired',
+  '0xa7599ad5': 'DisputeRefNotApplicable',
+  '0xdc1a1b7d': 'AlreadyAnswered',
+  '0x6739e29d': 'NothingToAnswer',
 };
 
 // Decodes MinimalForwarder.execute()'s `retdata` (the inner call's own revert data)

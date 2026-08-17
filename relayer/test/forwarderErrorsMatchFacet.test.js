@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { ethers } from 'ethers';
 import { FORWARDER_CUSTOM_ERRORS } from '../app.js';
 
@@ -22,10 +22,36 @@ import { FORWARDER_CUSTOM_ERRORS } from '../app.js';
  * ⚠️ ЧЕГО ЭТОТ ЗАМОК НЕ ДОКАЗЫВАЕТ: что `decodeForwarderRevert` таблицей
  * пользуется. Это соседний шов, и он старше этой работы. Здесь сторожится
  * СОСТАВ: добавили ошибку в фасет и не вписали сюда — красный.
+ *
+ * ⚠️ ЧИТАЮТСЯ ВСЕ АРБИТРАЖНЫЕ ФАСЕТЫ, А НЕ ОДИН. До 17 августа 2026 здесь стоял
+ * ровно один путь — `ArbiterRegistryFacet.sol`. Реестр упёрся в потолок EIP-170,
+ * и четырнадцать чтений вместе с половиной арбитражной поверхности уехали в
+ * `ArbiterAccountabilityFacet.sol` (коммит a88a2200). У нового фасета ВОСЕМЬ
+ * своих ошибок, и ни одну из них замок не видел: тот самый класс промаха, ради
+ * которого он заведён, жил у него под носом. Список файлов поэтому берётся с
+ * диска, а не из литерала: третий арбитражный фасет попадёт под сверку сам,
+ * без правки этого файла и без чьей-то памяти.
+ *
+ * Границей выбрано ИМЯ ФАЙЛА (`src/facets/Arbiter*.sol`), а не список
+ * контрактов: имя — то, что видит человек, заводящий новый фасет, и назвать его
+ * `Arbiter…` он не забудет ровно потому, что иначе не найдёт соседей.
+ *
+ * ⚠️ Что этот замок по-прежнему НЕ покрывает: ошибки `Agreement.sol`,
+ * `FactoryFacet.sol` и прочих — в таблице они есть, но их состав не сверяется
+ * ничем. Это соседний, не закрытый шов.
  */
 
-const FACET_SRC = readFileSync(
-  new URL('../../src/facets/ArbiterRegistryFacet.sol', import.meta.url), 'utf8');
+const FACETS_DIR = new URL('../../src/facets/', import.meta.url);
+
+/** Исходники всех арбитражных фасетов, по имени файла. */
+const FACET_FILES = readdirSync(FACETS_DIR)
+  .filter((f) => /^Arbiter.*\.sol$/.test(f))
+  .sort();
+
+const FACET_SOURCES = FACET_FILES.map((f) => ({
+  file: f,
+  src: readFileSync(new URL(f, FACETS_DIR), 'utf8'),
+}));
 
 /** Все `error Имя(типы);` из исходника — канонические подписи, по порядку. */
 function solidityErrorSignatures(source) {
@@ -42,10 +68,36 @@ function solidityErrorSignatures(source) {
 /** Первые четыре байта keccak256 подписи — то же, что кладёт в revert цепь. */
 const selectorOf = (signature) => ethers.id(signature).slice(0, 10).toLowerCase();
 
-const SIGNATURES = solidityErrorSignatures(FACET_SRC);
+/**
+ * Объединение по всем фасетам, БЕЗ дублей. Пять имён (NotOwner, NotOwnerOrChief,
+ * NotAnArbiter, ArbiterZeroAddress, ZeroDigest) объявлены в обоих файлах с
+ * одинаковой подписью — селектор у них один, и запись в таблице тоже одна.
+ * Дубли в списке дали бы два одноимённых теста вместо одного и ничего бы не
+ * добавили.
+ */
+const SIGNATURES = [...new Set(FACET_SOURCES.flatMap(({ src }) => solidityErrorSignatures(src)))];
 
-describe('таблица причин релеера не отстаёт от ошибок арбитражного фасета', () => {
-  it('ошибки в исходнике вообще нашлись — иначе сверка тавтологична', () => {
+describe('таблица причин релеера не отстаёт от ошибок арбитражных фасетов', () => {
+  it('фасетов найдено больше одного — иначе половина поверхности не сторожится', () => {
+    // Именно так замок и ослеп бы обратно: путь сузили до одного файла, тесты
+    // зелёные, ошибки второго фасета доезжают до человека сырым хексом. Число
+    // 2 — не «столько бывает», а «меньше двух означает, что сверка читает не
+    // всю арбитражную поверхность».
+    expect(FACET_FILES.length, `найдено: ${FACET_FILES.join(', ') || '(ничего)'}`)
+      .toBeGreaterThanOrEqual(2);
+  });
+
+  it('каждый найденный фасет вносит хотя бы одну ошибку', () => {
+    // Файл, прочитанный впустую (не тот путь, поехавшая регулярка), иначе
+    // растворяется в объединении: соседний фасет один даёт больше сорока
+    // подписей, и общая проверка ниже остаётся зелёной.
+    for (const { file, src } of FACET_SOURCES) {
+      expect(solidityErrorSignatures(src).length, `${file}: ни одной ошибки не разобрано`)
+        .toBeGreaterThan(0);
+    }
+  });
+
+  it('ошибки в исходниках вообще нашлись — иначе сверка тавтологична', () => {
     // Без этой строки достаточно испортить регулярку разбора, чтобы получить
     // пустой список и зелёный прогон: замок, который ничего не проверяет,
     // выглядит точно так же, как замок, у которого всё хорошо.
@@ -120,7 +172,7 @@ describe('две таблицы одного форвардера не прот�
     }
   });
 
-  it('ошибки арбитражного фасета есть в обеих таблицах, а не в одной', () => {
+  it('ошибки арбитражных фасетов есть в обеих таблицах, а не в одной', () => {
     const missingInRoute = SIGNATURES.filter((s) => ROUTE_TABLE[selectorOf(s)] === undefined);
     const missingInRelayer = SIGNATURES.filter(
       (s) => FORWARDER_CUSTOM_ERRORS[selectorOf(s)] === undefined,
