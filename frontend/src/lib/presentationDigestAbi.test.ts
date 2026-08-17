@@ -210,6 +210,54 @@ describe('ABI записи о молчании и отпечатка не рас
 });
 
 /**
+ * Три входа реестра, по которым с 17 августа 2026 ходит гейслесс-путь
+ * (`submitVerdictGasless` / `finalizeVerdictGasless` /
+ * `withdrawArbiterRewardGasless` в `lib/relay.ts`). Раньше их звали через
+ * `writeContractAsync` с ABI из конфига, и расхождение с контрактом отвергал бы
+ * кошелёк ещё на оценке — теперь калдата собирается ЭТИМ ЖЕ ABI и уходит
+ * релееру, а тот платит газ за то, что подписал человек. Значит цена
+ * разъехавшейся подписи выросла, а сторожил её по-прежнему никто: у соседнего
+ * фасета ответственности есть полный замок на все 31 функцию
+ * (`arbiterAccountabilityAbi.test.ts`), а у реестра сверялись только восемь
+ * входов Выкатки 2 выше.
+ *
+ * Список руками — по той же причине, что и `NEW_FUNCTIONS`: собранный из самого
+ * ABI, он сверял бы забытую запись саму с собой.
+ */
+const GASLESS_ARBITER_WRITES = [
+  'submitVerdict',
+  'finalizeVerdict',
+  'withdrawArbiterReward',
+] as const;
+
+describe('ABI трёх арбитрских действий на гейслесс-пути не расходится с контрактом', () => {
+  for (const fnName of GASLESS_ARBITER_WRITES) {
+    it(`${fnName}: входы — типы и имена — совпадают с исходником`, () => {
+      expect(shape(abiParams(abiEntry(ARBITER_REGISTRY_ABI, fnName).inputs)))
+        .toBe(shape(solInputs(FACET_SRC, fnName)));
+    });
+
+    it(`${fnName}: возвраты совпадают с исходником`, () => {
+      expect(shape(abiParams(abiEntry(ARBITER_REGISTRY_ABI, fnName).outputs)))
+        .toBe(shape(solOutputs(FACET_SRC, fnName)));
+    });
+
+    it(`${fnName}: изменчивость совпадает с исходником`, () => {
+      // Не педантизм: объяви запись `view` — и `encodeFunctionData` соберёт
+      // калдату как ни в чём не бывало, а wagmi позволит «прочитать» её
+      // крючком чтения, получив тишину вместо транзакции.
+      expect(abiEntry(ARBITER_REGISTRY_ABI, fnName).stateMutability)
+        .toBe(solMutability(FACET_SRC, fnName));
+    });
+
+    it(`${fnName}: в исходнике ровно одно объявление`, () => {
+      const count = (FACET_SRC.match(new RegExp(`function\\s+${fnName}\\s*\\(`, 'g')) ?? []).length;
+      expect(count).toBe(1);
+    });
+  }
+});
+
+/**
  * ⚠️ СОБЫТИЯ — ЭТО НЕ ДУБЛЬ ГЕТТЕРОВ, И ЗАМОК ИМ НУЖЕН ОТДЕЛЬНЫЙ.
  *
  * Геттеры отдают `bytes32[]` и число — то есть «сколько и какие». А спор решается
