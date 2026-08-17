@@ -577,7 +577,11 @@ contract ArbiterSuspensionTest is Test, ArbiterTwoFacetBench {
         _storeUint(ARB_BASE, SLOT_LAST_REMOVAL_AT, arbiter, 510);
         // Повод — uint8, в 509/510 он не влезает, поэтому свой маркер из того
         // же ряда, но в диапазоне типа: 211 не совпадает ни с одним настоящим
-        // кодом (1..6) и не равен AUTO_REMOVAL_CODE (255).
+        // поводом (1..6) и не попадает в диапазон автоснятия (252..255 =
+        // AUTO_REMOVAL_BASE + DemotionPath). Константы AUTO_REMOVAL_CODE, на
+        // которую ссылалась прежняя редакция этой строки, больше нет — её
+        // заменила база в уборке 7а, п. 1; само утверждение верным быть не
+        // перестало, врала только ссылка.
         _storeUint(ARB_BASE, SLOT_LAST_REMOVAL_CAUSE, arbiter, 211);
 
         // suspendedUntil — через боевой вызов, а не маркер: значение (t0 + 72h)
