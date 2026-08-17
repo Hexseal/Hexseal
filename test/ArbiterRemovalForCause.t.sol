@@ -936,6 +936,37 @@ contract ArbiterRemovalForCauseTest is Test {
         );
     }
 
+    /// Слова предложения тоже уезжают своим событием — и это единственная
+    /// проверка, которая на них смотрит. Замерено ревью (круг правок 2):
+    /// удалить из `proposeRemoval` весь блок `emit RemovalReasonGiven` — **0
+    /// красных из 872**; подменить стадию 0 на 7 — снова **0**. Гейт сабграфа
+    /// и фронтовый ABI-тест сверяют ОБЪЯВЛЕНИЕ события, а не отправку, гейт
+    /// гейслесса смотрит на отправителя — сторона сноса разыграна, сторона
+    /// ответа разыграна, сторона предложения не была разыграна ничем.
+    ///
+    /// Почему это важнее, чем выглядит: задача 2 строит паузу поверх этого
+    /// обещания. Обвиняемый узнаёт слова обвинения ТОЛЬКО отсюда, а `stage`
+    /// — признак, которым лента отделит предложение от сноса. Пропади событие
+    /// молча, и пауза станет сорока восемью часами молчания.
+    ///
+    /// ⚠️ Стадия сверяется ЛИТЕРАЛОМ 0, а не константой фасета: спросив
+    /// значение у той же цепи, тест смотрелся бы в зеркало и был бы доволен
+    /// любой подменой (тот же дефект, что у test_ReasonExactlyAtTheCapPasses).
+    function test_ProposalWordsRideTheirOwnEventAtStageZero() public {
+        _setChief(chief);
+        string memory why = unicode"забрал три спора одного клиента подряд, ни одного чужого";
+
+        vm.expectEmit(true, true, true, true, address(acc));
+        emit ArbiterAccountabilityFacet.RemovalReasonGiven(arbiter, chief, 0, why);
+
+        vm.prank(chief);
+        acc.proposeRemoval(
+            arbiter, ArbiterAccountabilityFacet.Cause.Collusion, keccak256("evidence"), why
+        );
+
+        assertTrue(acc.hasLiveProposal(arbiter), unicode"предложение обязано лежать в цепи");
+    }
+
     /// У обвиняемого это ПРАВО, а не обязанность: ответ без слов принимается.
     /// Заставлять человека оправдываться публично нельзя.
     function test_ReplyWordsAreOptional() public {
