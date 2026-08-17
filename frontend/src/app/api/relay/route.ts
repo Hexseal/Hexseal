@@ -599,20 +599,26 @@ export async function POST(req: NextRequest) {
           '0x616d24a0': 'ClaimTimeUnknown',
           '0xe56aceea': 'NotDisputeParty',
           '0x506f3a1b': 'ZeroDigest',
-          // ── Ветка ответственности арбитров (август 2026) ────────────────
-          // Восемь новых отказов ArbiterRegistryFacet. Каждый отвечает на
-          // вопрос «почему кнопка не сработала»; без записи здесь ответом был
-          // бы «Inner call reverted».
-          //   ChiefBlocWouldDecideAppeal — директор сажает столько своих, что
-          //     они решили бы апелляцию сами.
-          //   TooManyOpenClaims — арбитр уже держит потолок споров.
-          //   ArbiterSuspendedError — арбитр приостановлен, срок в аргументе.
-          //   HasLiveRemovalProposal — живое предложение о сносе уже лежит.
-          //   DaoAddressNotSet — ДАО включают, не назвав преемника.
-          //   SeatingHandedOver — право сажать арбитров передано ДАО.
-          //   NotCurrentDaoAddress — зовёт не тот адрес ДАО, что записан сейчас.
-          //   ReseatingRemovedIsOwnerOnly — вернуть СНЕСЁННОГО может только
-          //     владелец, директору эта дверь закрыта.
+          // ── The arbiter-accountability branch (August 2026) ─────────────
+          // Eight new refusals from ArbiterRegistryFacet. Each answers "why
+          // did the button do nothing"; without an entry here the answer
+          // would be "Inner call reverted".
+          //   ChiefBlocWouldDecideAppeal — the chief seats so many of his own
+          //     that they would decide an appeal by themselves.
+          //   TooManyOpenClaims — the arbiter already holds his cap of
+          //     disputes.
+          //   ArbiterSuspendedError — the arbiter is suspended, the deadline
+          //     is in the argument.
+          //   HasLiveRemovalProposal — a live removal proposal already lies
+          //     against this person.
+          //   DaoAddressNotSet — governance is being switched on without a
+          //     successor named.
+          //   SeatingHandedOver — the right to seat arbiters has passed to
+          //     the DAO.
+          //   NotCurrentDaoAddress — the caller is not the DAO address that
+          //     is recorded right now.
+          //   ReseatingRemovedIsOwnerOnly — only the owner can bring back a
+          //     REMOVED arbiter; that door is shut to the chief.
           '0xd02d6f54': 'ChiefBlocWouldDecideAppeal',
           '0xe7b00352': 'TooManyOpenClaims',
           '0xbc9ad5e6': 'ArbiterSuspendedError',
@@ -621,23 +627,30 @@ export async function POST(req: NextRequest) {
           '0x6a4dd129': 'SeatingHandedOver',
           '0x6aba596c': 'NotCurrentDaoAddress',
           '0xcf5bfb95': 'ReseatingRemovedIsOwnerOnly',
-          // ── ArbiterAccountabilityFacet, восемь СВОИХ отказов ────────────
-          // ⚠️ ВТОРОЙ ФАСЕТ, КОТОРОГО ЗАМОК НЕ ВИДЕЛ ВОВСЕ. Половина
-          // арбитражной поверхности уехала туда, а сверка читала только
-          // реестр. Теперь читаются оба исходника (src/facets/Arbiter*.sol).
+          // ── ArbiterAccountabilityFacet, eight refusals of its OWN ───────
+          // ⚠️ THE SECOND FACET, WHICH THE LOCK DID NOT SEE AT ALL. Half the
+          // arbiter surface moved there while the check read only the
+          // registry. Both sources are read now (src/facets/Arbiter*.sol).
           //
-          // Пять остальных ошибок фасета (NotOwner, NotOwnerOrChief,
-          // NotAnArbiter, ArbiterZeroAddress, ZeroDigest) объявлены и в
-          // реестре с той же подписью — селектор тот же, запись уже выше.
-          //   RemovalSuspensionIsRemovalAuthorityOnly — приостановку от сноса
-          //     снимает только держатель права сноса.
-          //   CauseNotProven — повод объявлен проверяемым, цепь не подтверждает.
-          //   EvidenceRequired — непроверяемый повод без отпечатка.
-          //   RemovalHandedOver — право сноса уехало к названному преемнику.
-          //   DisputeRefRequired — «молчание» без ссылки на спор недоказуемо.
-          //   DisputeRefNotApplicable — ссылка на спор приложена не к тому поводу.
-          //   AlreadyAnswered — снятый уже ответил.
-          //   NothingToAnswer — сноса против этого адреса нет.
+          // The facet's five remaining errors (NotOwner, NotOwnerOrChief,
+          // NotAnArbiter, ArbiterZeroAddress, ZeroDigest) are declared in the
+          // registry too with the same signature — same selector, and the
+          // entry is already above.
+          //   RemovalSuspensionIsRemovalAuthorityOnly — a suspension imposed
+          //     by a removal is lifted only by whoever holds the removal
+          //     right.
+          //   CauseNotProven — the cause claims to be chain-checkable and the
+          //     chain does not confirm it.
+          //   EvidenceRequired — an unverifiable cause with no evidence
+          //     digest.
+          //   RemovalHandedOver — the removal right has passed to the named
+          //     successor.
+          //   DisputeRefRequired — "silence" without a reference to a dispute
+          //     cannot be proven.
+          //   DisputeRefNotApplicable — a dispute reference attached to a
+          //     cause it does not belong to.
+          //   AlreadyAnswered — the removed arbiter has already answered.
+          //   NothingToAnswer — there is no removal against this address.
           '0xaaffc640': 'RemovalSuspensionIsRemovalAuthorityOnly',
           '0x6db5710d': 'CauseNotProven',
           '0xeb8bf73b': 'EvidenceRequired',
@@ -646,30 +659,32 @@ export async function POST(req: NextRequest) {
           '0xa7599ad5': 'DisputeRefNotApplicable',
           '0xdc1a1b7d': 'AlreadyAnswered',
           '0x6739e29d': 'NothingToAnswer',
-          // ── Причина словами (замысел 17 августа 2026, решение 7) ────────
-          // «Снос с поводом» обещал объяснение, а нёс числовой код. Теперь
-          // обвинение обязано объясняться словами там, где цепь повод не
-          // проверяет сама, а защита вправе ответить словами в ту же запись.
-          //   ReasonRequired — нажали «снести», не написав ни слова. Слова
-          //     обязательны на сговоре, утечке и «ином» — и на ПРЕДЛОЖЕНИИ
-          //     так же, как на сносе: иначе пауза даёт обвиняемому код
-          //     повода, и отвечать он будет на догадку.
-          //     ⚠️ Этой дорогой отказ не приезжает: обе двери обвинения не
-          //     гейслесс (script/gasless-sender.allow), и через форвардер они
-          //     отдают NotOwner/NotOwnerOrChief раньше, чем доходят до слов.
-          //     Запись здесь — ради полноты состава, которую сторожит
-          //     presentationDigestAbi.test.ts: то же основание, что у
-          //     соседних NotOwnerOrChief и SeatingHandedOver.
-          //   ReasonTooLong — написали длиннее потолка, и потолок В БАЙТАХ, а
-          //     не в символах: 512 байт это 512 латинских символов или 256
-          //     кириллических. Вот этот отказ дорогой приезжает — его отдаёт
-          //     respondToRemoval, единственная гейслесс-дверь фасета, то есть
-          //     слова ЗАЩИТЫ. Настоящую длину цепь кладёт аргументом ошибки,
-          //     но обе таблицы разбирают только имя: «на сколько именно
-          //     перебрали» человеку сегодня не показывает никто — соседний
-          //     незакрытый шов, а не обещание. Потолок форма обязана
-          //     спрашивать у цепи (getMaxReasonBytes) и считать БАЙТЫ:
-          //     счётчик «осталось 40 символов» соврёт на эмодзи вчетверо.
+          // ── The accusation gets words (design of 17 Aug 2026, decision 7) ─
+          // "Removal for cause" promised an explanation and carried a numeric
+          // code. The accusation must now explain itself in words wherever the
+          // chain does not check the cause on its own, and the defence may
+          // answer in words into the same record.
+          //   ReasonRequired — pressed "remove" without writing a word. Words
+          //     are mandatory on collusion, leak and "other" — and on the
+          //     PROPOSAL as much as on the removal: otherwise the pause hands
+          //     the accused a cause code, and he answers a guess.
+          //     ⚠️ This refusal never arrives by this road: neither accusation
+          //     door is gasless (script/gasless-sender.allow), and through the
+          //     forwarder they answer NotOwner/NotOwnerOrChief long before
+          //     reaching the words. It is listed for completeness of the
+          //     table, which presentationDigestAbi.test.ts guards — the same
+          //     footing as the neighbouring NotOwnerOrChief and
+          //     SeatingHandedOver.
+          //   ReasonTooLong — over the cap, and the cap is in BYTES, not
+          //     characters: 512 bytes is 512 Latin letters or 256 Cyrillic
+          //     ones. This one does arrive by this road — it comes from
+          //     respondToRemoval, the facet's only gasless door, i.e. the
+          //     words of the DEFENCE. The chain puts the real length in the
+          //     error's argument, but both tables decode the name only: "by
+          //     how much exactly" is shown to nobody today — a neighbouring
+          //     open seam, not a promise. The form must ask the chain for the
+          //     cap (getMaxReasonBytes) and count BYTES: a "40 characters
+          //     left" counter lies fourfold on the first emoji.
           '0xbc7fd331': 'ReasonRequired',
           '0x4763e825': 'ReasonTooLong',
         };

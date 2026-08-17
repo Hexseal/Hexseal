@@ -1596,11 +1596,11 @@ const forwarder = new ethers.Contract(FORWARDER_ADDR, FORWARDER_ABI, provider);
 // mean standing up a small internal package neither app currently has for the sake
 // of one lookup table. Keep the two tables in sync if either changes.
 //
-// Экспортируется ради замка test/forwarderErrorsMatchFacet.test.js: тот сверяет
-// СОСТАВ таблицы с объявлениями ошибок ВО ВСЕХ арбитражных фасетах
-// (src/facets/Arbiter*.sol — сегодня их два, реестр и ответственность).
-// Сверять по тексту app.js он мог бы и без экспорта — но тогда сторожил бы
-// строчку в файле, а не то, чем пользуется decodeForwarderRevert.
+// Exported for the lock in test/forwarderErrorsMatchFacet.test.js: it checks the
+// COMPOSITION of this table against the error declarations of ALL arbiter facets
+// (src/facets/Arbiter*.sol — two of them today, the registry and accountability).
+// It could read app.js as text and skip the export — but then it would guard a
+// line in a file rather than the thing decodeForwarderRevert actually uses.
 export const FORWARDER_CUSTOM_ERRORS = {
   '0xf12ce677': 'ActivationWindowPassed',
   '0x646cf558': 'AlreadyClaimed',
@@ -1707,23 +1707,27 @@ export const FORWARDER_CUSTOM_ERRORS = {
   '0x616d24a0': 'ClaimTimeUnknown',
   '0xe56aceea': 'NotDisputeParty',
   '0x506f3a1b': 'ZeroDigest',
-  // ── Ветка ответственности арбитров (август 2026) ────────────────────────────
-  // Восемь новых отказов ArbiterRegistryFacet. Все восемь стоят на дверях,
-  // которыми человек пользуется руками, и каждый отвечает на вопрос «почему
-  // кнопка не сработала» — без записи здесь ответом был бы «Inner call
-  // reverted».
-  //   ChiefBlocWouldDecideAppeal — директор сажает столько своих, что они
-  //     решили бы апелляцию сами; посадку отклоняет цепь, а не человек.
-  //   TooManyOpenClaims — арбитр уже держит потолок споров, взять ещё нельзя.
-  //   ArbiterSuspendedError — арбитр приостановлен, срок в аргументе.
-  //   HasLiveRemovalProposal — против человека уже лежит живое предложение
-  //     о сносе, второе не кладётся.
-  //   DaoAddressNotSet — ДАО включают, не назвав преемника.
-  //   SeatingHandedOver — право сажать арбитров передано ДАО, ручная посадка
-  //     закрыта навсегда.
-  //   NotCurrentDaoAddress — зовёт не тот адрес ДАО, который записан сейчас.
-  //   ReseatingRemovedIsOwnerOnly — вернуть СНЕСЁННОГО может только владелец;
-  //     директору эта дверь закрыта.
+  // ── The arbiter-accountability branch (August 2026) ─────────────────────────
+  // Eight new refusals from ArbiterRegistryFacet. All eight stand on doors a
+  // person opens by hand, and each answers "why did the button do nothing" —
+  // without an entry here the answer would be "Inner call reverted".
+  //   ChiefBlocWouldDecideAppeal — the chief seats so many of his own that
+  //     they would decide an appeal by themselves; the chain refuses the
+  //     seating, not a person.
+  //   TooManyOpenClaims — the arbiter already holds his cap of disputes and
+  //     cannot take another.
+  //   ArbiterSuspendedError — the arbiter is suspended, the deadline is in the
+  //     argument.
+  //   HasLiveRemovalProposal — a live removal proposal already lies against
+  //     this person; a second one is not written.
+  //   DaoAddressNotSet — governance is being switched on without a successor
+  //     named.
+  //   SeatingHandedOver — the right to seat arbiters has passed to the DAO,
+  //     and manual seating is shut for good.
+  //   NotCurrentDaoAddress — the caller is not the DAO address recorded right
+  //     now.
+  //   ReseatingRemovedIsOwnerOnly — only the owner can bring back a REMOVED
+  //     arbiter; that door is shut to the chief.
   '0xd02d6f54': 'ChiefBlocWouldDecideAppeal',
   '0xe7b00352': 'TooManyOpenClaims',
   '0xbc9ad5e6': 'ArbiterSuspendedError',
@@ -1732,28 +1736,32 @@ export const FORWARDER_CUSTOM_ERRORS = {
   '0x6a4dd129': 'SeatingHandedOver',
   '0x6aba596c': 'NotCurrentDaoAddress',
   '0xcf5bfb95': 'ReseatingRemovedIsOwnerOnly',
-  // ── ArbiterAccountabilityFacet, восемь СВОИХ отказов ────────────────────────
-  // ⚠️ ЭТО ВТОРОЙ ФАСЕТ, И ДО СЕГОДНЯ ЕГО НЕ СТОРОЖИЛО НИЧТО. Замок смотрел
-  // только на реестр, а половина арбитражной поверхности уехала в фасет
-  // ответственности — то есть ровно тот класс промаха, ради которого замок
-  // заводился, жил у него под носом. Теперь замок читает ОБА исходника.
+  // ── ArbiterAccountabilityFacet, eight refusals of its OWN ───────────────────
+  // ⚠️ THIS IS THE SECOND FACET, AND UNTIL TODAY NOTHING GUARDED IT. The lock
+  // looked at the registry only, while half the arbiter surface had moved into
+  // the accountability facet — that is, the very class of miss the lock was
+  // built for was living right under its nose. The lock reads BOTH sources now.
   //
-  // Остальные пять ошибок фасета (NotOwner, NotOwnerOrChief, NotAnArbiter,
-  // ArbiterZeroAddress, ZeroDigest) объявлены и в реестре, подпись та же —
-  // значит и селектор тот же, отдельной записи им не нужно.
-  //   RemovalSuspensionIsRemovalAuthorityOnly — приостановку, наложенную
-  //     сносом, снимает только держатель права сноса; обычному директору тут
-  //     отказано не «по роли», а по весу конкретной приостановки.
-  //   CauseNotProven — повод объявлен проверяемым, но цепь его не подтверждает
-  //     (аргумент — код повода).
-  //   EvidenceRequired — повод из непроверяемых, а отпечатка доказательства нет.
-  //   RemovalHandedOver — право сноса уехало к названному преемнику; владелец
-  //     получает тот же отказ, дороги назад нет.
-  //   DisputeRefRequired — повод «молчание» без ссылки на спор недоказуем.
-  //   DisputeRefNotApplicable — ссылка на спор приложена к поводу, к которому
-  //     она не относится.
-  //   AlreadyAnswered — снятый уже ответил, второй ответ не кладётся.
-  //   NothingToAnswer — отвечать не на что: сноса против этого адреса нет.
+  // The facet's five remaining errors (NotOwner, NotOwnerOrChief, NotAnArbiter,
+  // ArbiterZeroAddress, ZeroDigest) are declared in the registry too with the
+  // same signature — hence the same selector, and no separate entry is needed.
+  //   RemovalSuspensionIsRemovalAuthorityOnly — a suspension imposed by a
+  //     removal is lifted only by whoever holds the removal right; the plain
+  //     chief is refused here not "by role" but by the weight of that
+  //     particular suspension.
+  //   CauseNotProven — the cause claims to be chain-checkable, but the chain
+  //     does not confirm it (the argument is the cause code).
+  //   EvidenceRequired — an unverifiable cause with no evidence digest.
+  //   RemovalHandedOver — the removal right has passed to the named successor;
+  //     the owner gets the same refusal, and there is no way back.
+  //   DisputeRefRequired — the "silence" cause cannot be proven without a
+  //     reference to a dispute.
+  //   DisputeRefNotApplicable — a dispute reference attached to a cause it does
+  //     not belong to.
+  //   AlreadyAnswered — the removed arbiter has already answered; a second
+  //     answer is not written.
+  //   NothingToAnswer — there is nothing to answer: no removal against this
+  //     address.
   '0xaaffc640': 'RemovalSuspensionIsRemovalAuthorityOnly',
   '0x6db5710d': 'CauseNotProven',
   '0xeb8bf73b': 'EvidenceRequired',
@@ -1762,24 +1770,26 @@ export const FORWARDER_CUSTOM_ERRORS = {
   '0xa7599ad5': 'DisputeRefNotApplicable',
   '0xdc1a1b7d': 'AlreadyAnswered',
   '0x6739e29d': 'NothingToAnswer',
-  // ── Причина словами (замысел 17 августа 2026, решение 7) ────────────────────
-  //   ReasonRequired — обвинитель нажал «снести за сговор», не написав ни
-  //     слова. «Inner call reverted» не сказало бы ему, что не хватает ИМЕННО
-  //     объяснения, — а объяснение обязательно ровно там, где цепь молчит:
-  //     на сговоре, утечке и «ином», и на ПРЕДЛОЖЕНИИ так же, как на сносе.
-  //     ⚠️ Этой дорогой отказ не приезжает: обе двери обвинения не гейслесс
-  //     (см. script/gasless-sender.allow), и через форвардер они отдают
-  //     NotOwner/NotOwnerOrChief раньше, чем доходят до слов. Запись здесь —
-  //     ради полноты состава, которую сторожит forwarderErrorsMatchFacet:
-  //     то же основание, что у соседних NotOwnerOrChief и SeatingHandedOver.
-  //   ReasonTooLong(uint256) — перебор потолка, и потолок В БАЙТАХ, не в
-  //     символах. Вот этот отказ дорогой приезжает: его отдаёт
-  //     respondToRemoval, единственная гейслесс-дверь фасета, то есть слова
-  //     ЗАЩИТЫ. Настоящую длину цепь кладёт аргументом, но обе таблицы
-  //     разбирают только имя — «на сколько именно перебрали» человеку сегодня
-  //     не показывает никто, и это соседний незакрытый шов, а не обещание.
-  //     Форма обязана спрашивать потолок у цепи (getMaxReasonBytes) и считать
-  //     БАЙТЫ: счётчик «осталось 40 символов» соврёт на эмодзи вчетверо.
+  // ── The accusation gets words (design of 17 August 2026, decision 7) ────────
+  //   ReasonRequired — the accuser pressed "remove for collusion" without
+  //     writing a single word. "Inner call reverted" would not tell him that
+  //     what is missing is the EXPLANATION — and an explanation is mandatory
+  //     exactly where the chain stays silent: collusion, leak and "other", and
+  //     on the PROPOSAL as much as on the removal.
+  //     ⚠️ This refusal never arrives by this road: neither accusation door is
+  //     gasless (see script/gasless-sender.allow), and through the forwarder
+  //     they answer NotOwner/NotOwnerOrChief long before reaching the words.
+  //     It is listed for completeness of the table, which
+  //     forwarderErrorsMatchFacet guards — the same footing as the
+  //     neighbouring NotOwnerOrChief and SeatingHandedOver.
+  //   ReasonTooLong(uint256) — over the cap, and the cap is in BYTES, not
+  //     characters. This one does arrive by this road: it comes from
+  //     respondToRemoval, the facet's only gasless door, i.e. the words of the
+  //     DEFENCE. The chain puts the real length in the argument, but both
+  //     tables decode the name only — "by how much exactly" is shown to nobody
+  //     today. That is a neighbouring open seam, not a promise. The form must
+  //     ask the chain for the cap (getMaxReasonBytes) and count BYTES: a
+  //     "40 characters left" counter lies fourfold on the first emoji.
   '0xbc7fd331': 'ReasonRequired',
   '0x4763e825': 'ReasonTooLong',
 };
