@@ -50,7 +50,7 @@ import "../src/JobReceiptFacet.sol";
 ///   - `buildInitCuts`/`buildRemainingCuts` wire a correct selector set to the
 ///     wrong `FacetCut.facetAddress`
 ///   - the actual `DiamondProxy` this script would produce does not end up with
-///     exactly 12 facets, exactly 200 routed selectors, and consistent
+///     exactly 12 facets, exactly 201 routed selectors, and consistent
 ///     `facetAddress(sel)` <-> `facets()` routing in both directions
 ///     (177 -> 179, 15 Aug 2026: arbiter-accountability task 1 added
 ///     getSeatedBy/getSeatedCountBy to ArbiterRegistryFacet; 179 -> 180,
@@ -129,7 +129,19 @@ import "../src/JobReceiptFacet.sol";
 ///     selectors is mounted on the diamond and only the selector VALUE inside
 ///     the Add group changed, see script/UpgradeArbiterAccountability.s.sol.
 ///     No new storage fields: the words live in events
-///     (RemovalReasonGiven/RemovalReplyGiven), read by the feed and the card)
+///     (RemovalReasonGiven/RemovalReplyGiven), read by the feed and the card;
+///     200 -> 201, 17 Aug 2026, task 2 of the same plan: 48 HOURS NOW STAND
+///     BETWEEN THE ACCUSATION AND THE REMOVAL. The proposal existed but was
+///     optional and changed nothing — removal went through in one transaction
+///     and the person learned of it afterwards, sentence first and word after.
+///     It is now the only way in: the execution window is [48 hours, 14 days)
+///     from the proposal, and the cause at execution must match the one
+///     proposed. ArbiterAccountabilityFacet gained `getRemovalDelay` (+1, 32 ->
+///     33) — the pause itself is a rule rather than a selector, but the form
+///     must ask the chain for the number instead of keeping a copy that drifts.
+///     Four new errors (NoLiveProposal, RemovalTooEarly, ProposalStale,
+///     CauseDiffersFromProposal) add no selectors here and no storage fields:
+///     the proposal record `removalProposals` has been in storage since task 7)
 contract DeployFullSelectorsTest is Test {
     DeployFull internal deploy;
 
@@ -419,7 +431,7 @@ contract DeployFullSelectorsTest is Test {
                 );
             }
         }
-        assertEq(totalRouted, 200, "diamond should route exactly 200 selectors total");
+        assertEq(totalRouted, 201, "diamond should route exactly 201 selectors total");
 
         // Reverse direction: facetAddresses() must report exactly the same set
         // of addresses facets() reported them under.

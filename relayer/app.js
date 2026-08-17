@@ -1792,6 +1792,33 @@ export const FORWARDER_CUSTOM_ERRORS = {
   //     "40 characters left" counter lies fourfold on the first emoji.
   '0xbc7fd331': 'ReasonRequired',
   '0x4763e825': 'ReasonTooLong',
+  // ── 48 hours between the accusation and the removal (design of 17 August
+  //    2026, decisions 1-4) ─────────────────────────────────────────────────
+  // The proposal existed but was optional and changed nothing: removal went
+  // through in one transaction and the person learned of it after the fact. It
+  // is now the only way in — the execution window is [48 hours, 14 days) from
+  // the proposal, and the cause at execution must match the proposed one.
+  //   NoLiveProposal — nothing to execute: no proposal stands against this
+  //     address at all, or it was withdrawn. A separate refusal from
+  //     ProposalStale on purpose: there the accusation existed and expired.
+  //   RemovalTooEarly(uint256) — the clock is still running. The argument is
+  //     THE MOMENT from which removal is allowed, so the form can say "19 hours
+  //     to go" rather than "try later". Same open seam as ReasonTooLong above:
+  //     both tables decode the name only, so the moment reaches nobody today.
+  //   ProposalStale(uint256) — the proposal outlived its 14 days; executing it
+  //     would mean an old accusation firing without a fresh warning.
+  //   CauseDiffersFromProposal(uint8,uint8) — warned about one thing, removed
+  //     for another. Changing the cause costs a withdrawal, a new proposal and
+  //     another 48 hours; that is the price of an accusation, not a bug.
+  //     ⚠️ Like ReasonRequired above, none of these four arrives by this road:
+  //     removeArbiterForCause is not gasless (see script/gasless-sender.allow)
+  //     and answers NotOwner through the forwarder long before reaching them.
+  //     They are listed for completeness of the table, which
+  //     forwarderErrorsMatchFacet guards.
+  '0xa6891f1e': 'NoLiveProposal',
+  '0x05b9bc6b': 'RemovalTooEarly',
+  '0x84db9930': 'ProposalStale',
+  '0x033d5425': 'CauseDiffersFromProposal',
 };
 
 // Decodes MinimalForwarder.execute()'s `retdata` (the inner call's own revert data)

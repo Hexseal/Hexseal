@@ -687,6 +687,34 @@ export async function POST(req: NextRequest) {
           //     left" counter lies fourfold on the first emoji.
           '0xbc7fd331': 'ReasonRequired',
           '0x4763e825': 'ReasonTooLong',
+          // ── 48 hours between the accusation and the removal (design of
+          //    17 Aug 2026, decisions 1-4) ────────────────────────────────────
+          // The proposal used to be optional and changed nothing: removal went
+          // through in one transaction and the person learned of it afterwards.
+          // It is now the only way in, the execution window is [48 hours,
+          // 14 days) from the proposal, and the cause at execution must match
+          // the proposed one.
+          //   NoLiveProposal — nothing to execute: no proposal stands against
+          //     this address, or it was withdrawn. Distinct from ProposalStale
+          //     on purpose — there the accusation existed and expired.
+          //   RemovalTooEarly(uint256) — the clock is still running. The
+          //     argument is THE MOMENT from which it is allowed, so the form
+          //     can say "19 hours to go" instead of "try later". Same open seam
+          //     as ReasonTooLong: both tables decode the name only, so the
+          //     moment reaches nobody today.
+          //   ProposalStale(uint256) — the proposal outlived its 14 days.
+          //   CauseDiffersFromProposal(uint8,uint8) — warned about one thing,
+          //     removed for another. Want a different cause: withdraw, propose
+          //     again, wait another 48 hours.
+          //     ⚠️ Like ReasonRequired above, these four never arrive by this
+          //     road — removeArbiterForCause is not gasless and answers
+          //     NotOwner through the forwarder long before reaching them. They
+          //     are listed for completeness of the table, which
+          //     presentationDigestAbi.test.ts guards.
+          '0xa6891f1e': 'NoLiveProposal',
+          '0x05b9bc6b': 'RemovalTooEarly',
+          '0x84db9930': 'ProposalStale',
+          '0x033d5425': 'CauseDiffersFromProposal',
         };
 
         let reason = 'Inner call reverted';

@@ -238,7 +238,7 @@ contract ArbiterAccountabilityUpgradeTest is Test, ArbiterChainCensus {
         regSigs[1] = "getMaxClaimsPerArbiter()";
         regSigs[2] = "getMaxArbiterMistakes()";
 
-        string[] memory accSigs = new string[](21);
+        string[] memory accSigs = new string[](22);
         accSigs[0]  = "suspendArbiter(address)";
         accSigs[1]  = "liftSuspension(address)";
         accSigs[2]  = "isSuspended(address)";
@@ -265,6 +265,11 @@ contract ArbiterAccountabilityUpgradeTest is Test, ArbiterChainCensus {
         // БАЙТАХ. Три подписи выше переписаны той же работой — обвинение и
         // защита получили строку, и подпись в цепи от этого сменилась.
         accSigs[20] = "getMaxReasonBytes()";
+        // The 48-hour pause (design of 17 August 2026, decision 2): the reading
+        // of REMOVAL_DELAY. The signature is written out by hand here on
+        // purpose — deriving it from the facet type would compare the script
+        // with itself.
+        accSigs[21] = "getRemovalDelay()";
 
         bytes4[] memory declaredReg = upgrade.addRegistrySelectors();
         assertEq(declaredReg.length, regSigs.length, unicode"Add-реестр: число селекторов разошлось с числом подписей");
@@ -419,7 +424,7 @@ contract ArbiterAccountabilityUpgradeTest is Test, ArbiterChainCensus {
 
         assertTrue(cuts[3].action == IDiamondCut.FacetCutAction.Add, unicode"cuts[3] должен быть Add");
         assertEq(cuts[3].facetAddress, acc, unicode"Add-ответственность: адрес обязан быть новым фасетом");
-        assertEq(cuts[3].functionSelectors.length, 21, unicode"Add-ответственность: ожидались ровно 21 селектор");
+        assertEq(cuts[3].functionSelectors.length, 22, unicode"Add-ответственность: ожидались ровно 22 селектора");
 
         // Remove — последним и с нулевым адресом: DiamondCutLib.removeFunctions
         // требует ровно этого ("Diamond: remove needs zero address"), а

@@ -135,6 +135,7 @@ contract ArbiterSuspensionTest is Test, ArbiterTwoFacetBench {
 
     /// Директор не открывает окно, выставленное сносом.
     function test_ChiefCannotLiftRemovalSuspension() public {
+        _proposeAndWait(arbiter, ArbiterAccountabilityFacet.Cause.Collusion, keccak256(unicode"переписка"));
         acc.removeArbiterForCause(
             arbiter,
             ArbiterAccountabilityFacet.Cause.Collusion,
@@ -154,6 +155,7 @@ contract ArbiterSuspensionTest is Test, ArbiterTwoFacetBench {
     /// Владелец — открывает. Он отменяет СВОЁ ЖЕ решение, и это ровно та же
     /// развилка, что уже решена в addArbiter (liftSuspension = true).
     function test_OwnerLiftsRemovalSuspension() public {
+        _proposeAndWait(arbiter, ArbiterAccountabilityFacet.Cause.Collusion, keccak256(unicode"переписка"));
         acc.removeArbiterForCause(
             arbiter,
             ArbiterAccountabilityFacet.Cause.Collusion,
@@ -425,6 +427,20 @@ contract ArbiterSuspensionTest is Test, ArbiterTwoFacetBench {
 
     function _makeArbiter(ArbiterAccountabilityFacet f, address who) internal {
         vm.store(address(f), keccak256(abi.encode(who, uint256(ARB_BASE))), bytes32(uint256(1)));
+    }
+
+    /// Since 17 August 2026 a removal only runs through a proposal that has sat
+    /// for REMOVAL_DELAY, and the cause at execution must match the one
+    /// proposed. Words are passed because the causes used on this stand are the
+    /// ones the chain does not check, and those demand them.
+    ///
+    /// ⚠️ vm.getBlockTimestamp(), not block.timestamp: under via_ir solc treats
+    /// TIMESTAMP as constant within a call (docs/OPEN-ITEMS.md, item 57).
+    function _proposeAndWait(address who, ArbiterAccountabilityFacet.Cause cause, bytes32 digest)
+        internal
+    {
+        acc.proposeRemoval(who, cause, digest, "the accusation, stated once, on the proposal");
+        vm.warp(vm.getBlockTimestamp() + acc.getRemovalDelay());
     }
 
     /// chiefArbiter — шестое поле Data (индекс 5), обычная переменная, не мэппинг.

@@ -783,7 +783,7 @@ contract UpgradeArbiterAccountability is Script {
     /// означает функцию, которой в даймонде нет, то есть мёртвую кнопку во
     /// фронте.
     function addAccountabilitySelectors() public pure returns (bytes4[] memory sels) {
-        sels = new bytes4[](21);
+        sels = new bytes4[](22);
 
         // Задача 4: приостановка — быстрая, обратимая, протухает сама
         sels[0]  = ArbiterAccountabilityFacet.suspendArbiter.selector;
@@ -824,6 +824,12 @@ contract UpgradeArbiterAccountability is Script {
         // Причина словами (замысел 17 августа 2026, решение 7): потолок в
         // БАЙТАХ, спрашивается у цепи, а не хранится копией во фронте.
         sels[20] = ArbiterAccountabilityFacet.getMaxReasonBytes.selector;
+
+        // The 48-hour pause (design of 17 August 2026, decision 2): removal
+        // runs only through a proposal that has sat. The reading is mounted so
+        // the form asks the chain for the number instead of keeping a copy that
+        // drifts and shows the button as live an hour before it works.
+        sels[21] = ArbiterAccountabilityFacet.getRemovalDelay.selector;
     }
 
     /// Ровно один: голая removeArbiter(address). Просто убрать её из исходника

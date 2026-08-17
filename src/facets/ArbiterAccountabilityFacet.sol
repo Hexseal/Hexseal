@@ -114,6 +114,28 @@ contract ArbiterAccountabilityFacet {
     /// транзакции вместо подсказки.
     uint256 private constant MAX_REASON_BYTES = 512;
 
+    /// The pause between a proposal and the removal it authorises (design of
+    /// 17 August 2026, decision 2). The clock runs FROM THE PROPOSAL and the
+    /// accused answering does not move it.
+    ///
+    /// The number is proportionate to its neighbours rather than picked out of
+    /// thin air: suspension lasts 72 hours, the verdict finalisation window 24.
+    /// One day for the person to notice at all, one day to answer. Under a day
+    /// is missable by anyone who did not log in; over a week and the arbiter
+    /// hangs while his disputes stand still.
+    ///
+    /// ⚠️ Rejected alternative (design, decision 3): "silence buys a fast
+    /// removal, an answer buys the full pause". It creates a perverse
+    /// incentive — the silent get removed sooner, so answering pays as a way of
+    /// stalling rather than because there is something to say. It also lets the
+    /// button be pressed while the person sleeps.
+    ///
+    /// ⚠️ There is no fast path to removal and none may be added: "he is doing
+    /// damage right now" is covered by suspendArbiter — instant, reversible,
+    /// expiring by itself. Two levers of different speed, and that separation
+    /// is half the design.
+    uint256 private constant REMOVAL_DELAY = 48 hours;
+
     /// Этап, на котором сказаны слова. Уезжает indexed-топиком, чтобы лента
     /// могла спросить «покажи все обвинения» отдельно от «покажи все сносы»,
     /// не разбирая тело события.
@@ -171,6 +193,22 @@ contract ArbiterAccountabilityFacet {
     /// Длина в БАЙТАХ, не в символах. Значение возвращается в ошибке, чтобы
     /// форма могла показать, насколько именно перебрали.
     error ReasonTooLong(uint256 given);
+
+    // ── The 48-hour pause (design of 17 August 2026, decisions 1-2) ──
+    /// There is nothing to execute: no proposal stands against this address at
+    /// all, or it was withdrawn. A separate error from ProposalStale — there
+    /// the accusation existed and expired, here it never existed.
+    error NoLiveProposal();
+    /// The clock is still running. Carries THE MOMENT from which removal is
+    /// allowed, so the form can say "19 hours to go" instead of "try later".
+    error RemovalTooEarly(uint256 notBefore);
+    /// The proposal outlived PROPOSAL_TTL. Executing it would mean an
+    /// accusation half a year old firing without a fresh warning.
+    error ProposalStale(uint256 proposedAt);
+    /// Warned about one thing, removed for another. The pause exists so the
+    /// person can answer THAT PARTICULAR accusation; swapping the code
+    /// devalues both the pause and the answer.
+    error CauseDiffersFromProposal(uint8 proposed, uint8 given);
 
     // Примечание: addArbiter/setChiefArbiter в ArbiterRegistryFacet тем же
     // решением владельца («никаких ручных», человек выходит, остаётся только
@@ -725,6 +763,42 @@ contract ArbiterAccountabilityFacet {
 
         if (!d.isArbiter[arbiter]) revert NotAnArbiter();
 
+        // ⚠️ REMOVAL ONLY RUNS THROUGH A PROPOSAL THAT HAS SAT (design of
+        // 17 August 2026, decisions 1-2). Before this change the proposal
+        // existed but was OPTIONAL and changed nothing: removal was a single
+        // button, and the person learned of it after the fact — sentence
+        // first, word after.
+        //
+        // Execution window: [proposedAt + REMOVAL_DELAY, proposedAt +
+        // PROPOSAL_TTL). The lower bound is inclusive, the upper exclusive,
+        // exactly as in hasLiveProposal — diverge from it and the button would
+        // go dark before the feed stops showing the accusation as live.
+        //
+        // Read HERE rather than through hasLiveProposal(): that one answers
+        // "does an accusation stand", while three different refusals with
+        // three different hints are needed here — "no accusation", "too
+        // early", "expired". One boolean answering three questions would leave
+        // the form guessing.
+        ArbiterRegistryStorage.RemovalProposal storage p = d.removalProposals[arbiter];
+        uint256 proposedAt = p.proposedAt;
+        if (proposedAt == 0) revert NoLiveProposal();
+        if (block.timestamp < proposedAt + REMOVAL_DELAY) {
+            revert RemovalTooEarly(proposedAt + REMOVAL_DELAY);
+        }
+        if (block.timestamp >= proposedAt + PROPOSAL_TTL) revert ProposalStale(proposedAt);
+
+        // EXACTLY the cause code is compared — the thing the person was warned
+        // about. Not the whole application: the digest, the dispute reference
+        // and the words are supplied afresh, by the accuser's own arguments,
+        // and the older rule "a proposal is a signal in the feed, not an
+        // argument of the removal function" is not repealed by this. It would
+        // be repealed if removal READ anything out of the proposal and put it
+        // into the record; it still reads nothing — it merely refuses to
+        // execute an accusation that was never served.
+        if (p.cause != uint8(cause)) {
+            revert CauseDiffersFromProposal(p.cause, uint8(cause));
+        }
+
         bool verified = _isChainVerifiable(cause);
         if (verified) {
             _requireProven(d, arbiter, cause, disputeRef);
@@ -807,12 +881,20 @@ contract ArbiterAccountabilityFacet {
         emit ArbiterRemovedForCause(arbiter, msg.sender, cause, verified, evidenceDigest, forfeited);
 
         // Minor 4, круг правок 1: отдельное событие с полями СТЁРТОГО
-        // предложения — «предложили за X, снесли за Y» видно в одной
-        // транзакции (оба события лежат в одном логе), без сшивания с
-        // RemovalProposed по адресу арбитра через историю. Молчит, если
-        // предложения не было вовсе (proposedAt == 0) — снос без
-        // предшествующего сигнала директора не обязан ничего сообщать
-        // про предложение, которого не было.
+        // предложения — видно в одной транзакции (оба события лежат в одном
+        // логе), без сшивания с RemovalProposed по адресу арбитра через
+        // историю.
+        //
+        // ⚠️ THE CONDITION BELOW CANNOT BE FALSE ANY MORE, and saying so beats
+        // letting the next reader take it for a guard (17 August 2026). The
+        // gate at the top of this function already refused `proposedAt == 0`
+        // with NoLiveProposal, and nothing between there and here clears the
+        // record — so every removal that reaches this line consumed a real
+        // proposal. Kept rather than deleted because deleting it changes no
+        // behaviour and no test could tell the two versions apart; the honest
+        // note is the part that has value. The scene it used to serve — a
+        // removal with no preceding proposal — is gone with the test that
+        // played it (see test/ArbiterRemovalForCause.t.sol).
         if (consumedProposal.proposedAt != 0) {
             emit RemovalProposalConsumed(
                 arbiter,
@@ -893,12 +975,19 @@ contract ArbiterAccountabilityFacet {
     // глупо — отсюда разделение: он кладёт предложение в цепь СВОИМ адресом,
     // владелец соглашается СВОИМ, вызывая обычный removeArbiterForCause.
     //
-    // ⚠️ Связь предложения с исполнением — ТОЛЬКО очистка. removeArbiterForCause
-    // не читает removalProposals ни для чего: код повода, отпечаток и ссылку
-    // на спор владелец обязан передать заново, своими аргументами.
-    // Предложение — сигнал в ленте, а не аргумент функции сноса; принять его
-    // на веру и исполнить одной кнопкой было бы обратной стороной того же
-    // риска, ради которого право сноса не отдано директору вовсе.
+    // ⚠️ The link between proposal and execution is CLEANUP plus ONE
+    // COMPARISON (design of 17 August 2026). removeArbiterForCause still READS
+    // nothing out of removalProposals into the record: the cause code, the
+    // digest, the dispute reference and the words are all supplied afresh, by
+    // the accuser's own arguments. Taking the proposal on trust and executing
+    // it with one button would be the mirror image of the very risk for which
+    // the right of removal is withheld from the chief altogether.
+    //
+    // But since 17 August the proposal is a MANDATORY INPUT: without one there
+    // is no removal, and the pause runs from it. Hence the single comparison —
+    // the cause code at execution must match the one proposed. Otherwise the
+    // warning would be about one thing and the execution about another, and
+    // "a word before the sentence" would be a word off the point.
     //
     // Сама очистка (круг правок 1, Important 1, 15 августа 2026) живёт в
     // ArbiterRegistryStorage.clearSeat — ОДНОЙ точке на все ТРИ двери выхода
@@ -925,6 +1014,12 @@ contract ArbiterAccountabilityFacet {
     /// стоит пауза, во время которой обвиняемый вправе ответить. Если слова
     /// появляются только в момент сноса, пауза даёт человеку числовой код
     /// повода и ничего больше — отвечать он будет на догадку.
+    ///
+    /// ⚠️ Since 17 August 2026 this is the ONLY way in to a removal. The
+    /// proposal is no longer "a signal one may skip": without it
+    /// removeArbiterForCause reverts NoLiveProposal, and executing it is
+    /// possible no earlier than REMOVAL_DELAY and no later than PROPOSAL_TTL
+    /// from this very second.
     function proposeRemoval(
         address arbiter,
         Cause   cause,
@@ -1043,6 +1138,13 @@ contract ArbiterAccountabilityFacet {
 
     function getProposalTTL() external pure returns (uint256) {
         return PROPOSAL_TTL;
+    }
+
+    /// The pause between a proposal and the removal. Ask the chain rather than
+    /// counting at home: a copy of this number in the frontend would drift in
+    /// silence and show the button as live an hour before it starts working.
+    function getRemovalDelay() external pure returns (uint256) {
+        return REMOVAL_DELAY;
     }
 
     /// Потолок слов в БАЙТАХ. Форма обязана спрашивать его у цепи, а не

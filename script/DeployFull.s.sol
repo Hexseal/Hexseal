@@ -601,7 +601,7 @@ contract DeployFull is Script {
     // (86.4%), запаса не хватало. Делит тот же ArbiterRegistryStorage
     // namespace — переноса данных нет.
     function arbiterAccountabilityFacetSelectors() public pure returns (bytes4[] memory sels) {
-        sels = new bytes4[](32);
+        sels = new bytes4[](33);
         sels[0] = ArbiterAccountabilityFacet.suspendArbiter.selector;
         sels[1] = ArbiterAccountabilityFacet.liftSuspension.selector;
         sels[2] = ArbiterAccountabilityFacet.isSuspended.selector;
@@ -704,6 +704,16 @@ contract DeployFull is Script {
         // ЗНАЧЕНИЕ селектора внутри Add-группы
         // script/UpgradeArbiterAccountability.s.sol.
         sels[31] = ArbiterAccountabilityFacet.getMaxReasonBytes.selector;
+
+        // ── The 48-hour pause (design of 17 August 2026, decision 2) ──
+        // Removal stopped being a single button: it now runs only through a
+        // proposal that has sat for REMOVAL_DELAY and is still inside
+        // PROPOSAL_TTL, and the cause at execution must match the one proposed.
+        // The pause itself is a rule, not a selector; what is mounted here is
+        // the READING of it, so the form can say "19 hours to go" and show the
+        // button as live at the same second the chain does. A copy of the
+        // number in the frontend would drift in silence.
+        sels[32] = ArbiterAccountabilityFacet.getRemovalDelay.selector;
     }
 
     // DealMetadataFacet — 1 селектор

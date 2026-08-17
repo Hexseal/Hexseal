@@ -107,6 +107,12 @@ contract ArbiterRemovalForCauseTest is Test {
     /// uint256, следующий за ним cleanStreak снова мэппинг).
     uint256 constant SLOT_UNIQUE_ACTIVE_USERS = 8;
 
+    /// Words the stand puts on a proposal whose cause the chain does not check
+    /// (those causes require both a digest and words). Short and constant on
+    /// purpose: what these scenes test is the pause, not the words.
+    string constant PROPOSAL_WORDS = "the accusation, stated once, on the proposal";
+
+
     function setUp() public {
         acc = new ArbiterAccountabilityFacet();
         owner   = address(this);
@@ -120,6 +126,7 @@ contract ArbiterRemovalForCauseTest is Test {
 
     function test_OverturnedVerdictsRequiresTheStreak() public {
         _setStreak(arbiter, 1);   // порог теперь 2 (C-1) — единицы не хватает
+        _proposeAndWait(arbiter, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0), "");
         vm.expectRevert(
             abi.encodeWithSelector(ArbiterAccountabilityFacet.CauseNotProven.selector, uint8(0))
         );
@@ -129,6 +136,7 @@ contract ArbiterRemovalForCauseTest is Test {
     function test_OverturnedVerdictsPassesAtThreshold() public {
         _setStreak(arbiter, 2);   // MISTAKE_THRESHOLD = MAX_ARBITER_MISTAKES(3) − 1
 
+        _proposeAndWait(arbiter, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0), "");
         vm.expectEmit(true, true, true, true, address(acc));
         emit ArbiterAccountabilityFacet.ArbiterRemovedForCause(
             arbiter, owner, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, true, bytes32(0), 0
@@ -141,6 +149,7 @@ contract ArbiterRemovalForCauseTest is Test {
     // ---------- ЗАВЕРЯЕМЫЕ, НО НЕ ПРОВЕРЯЕМЫЕ ----------
 
     function test_CollusionWithoutEvidenceIsRefused() public {
+        _proposeAndWait(arbiter, ArbiterAccountabilityFacet.Cause.Collusion, keccak256("the proposal's own evidence"), PROPOSAL_WORDS);
         vm.expectRevert(ArbiterAccountabilityFacet.EvidenceRequired.selector);
         acc.removeArbiterForCause(arbiter, ArbiterAccountabilityFacet.Cause.Collusion, bytes32(0), address(0), unicode"трижды забирал споры одного контрагента и трижды решал в его пользу");
     }
@@ -148,6 +157,7 @@ contract ArbiterRemovalForCauseTest is Test {
     function test_CollusionWithEvidenceIsMarkedUnverified() public {
         bytes32 digest = keccak256(unicode"переписка со стороной спора");
 
+        _proposeAndWait(arbiter, ArbiterAccountabilityFacet.Cause.Collusion, keccak256("the proposal's own evidence"), PROPOSAL_WORDS);
         vm.expectEmit(true, true, true, true, address(acc));
         emit ArbiterAccountabilityFacet.ArbiterRemovedForCause(
             arbiter, owner, ArbiterAccountabilityFacet.Cause.Collusion, false, digest, 0
@@ -160,6 +170,7 @@ contract ArbiterRemovalForCauseTest is Test {
     /// _requireProven (на пути Collusion/Leak/Other), не была покрыта ничем —
     /// снять её раньше давало 0 красных.
     function test_UnverifiableCauseRejectsDisputeRef() public {
+        _proposeAndWait(arbiter, ArbiterAccountabilityFacet.Cause.Collusion, keccak256("the proposal's own evidence"), PROPOSAL_WORDS);
         vm.expectRevert(ArbiterAccountabilityFacet.DisputeRefNotApplicable.selector);
         acc.removeArbiterForCause(
             arbiter, ArbiterAccountabilityFacet.Cause.Collusion, keccak256("evidence"), address(0xD1),
@@ -171,12 +182,14 @@ contract ArbiterRemovalForCauseTest is Test {
     /// его нечем. Слить его со счётчиком серии нельзя: тогда цепь заверяла бы
     /// не то, что написано в записи.
     function test_SilenceRequiresDisputeRef() public {
+        _proposeAndWait(arbiter, ArbiterAccountabilityFacet.Cause.Silence, bytes32(0), "");
         vm.expectRevert(ArbiterAccountabilityFacet.DisputeRefRequired.selector);
         acc.removeArbiterForCause(arbiter, ArbiterAccountabilityFacet.Cause.Silence, bytes32(0), address(0), "");
     }
 
     function test_SilenceRequiresTheRecord() public {
         address deal = address(0xD1);
+        _proposeAndWait(arbiter, ArbiterAccountabilityFacet.Cause.Silence, bytes32(0), "");
         vm.expectRevert(
             abi.encodeWithSelector(ArbiterAccountabilityFacet.CauseNotProven.selector, uint8(2))
         );
@@ -186,6 +199,7 @@ contract ArbiterRemovalForCauseTest is Test {
     function test_SilencePassesWhenRecorded() public {
         address deal = address(0xD1);
         _setNoResponse(deal, arbiter, 1_700_000_000);
+        _proposeAndWait(arbiter, ArbiterAccountabilityFacet.Cause.Silence, bytes32(0), "");
         acc.removeArbiterForCause(arbiter, ArbiterAccountabilityFacet.Cause.Silence, bytes32(0), deal, "");
         assertFalse(_isArbiterRaw(arbiter), unicode"снят по записанному молчанию");
     }
@@ -194,6 +208,7 @@ contract ArbiterRemovalForCauseTest is Test {
     /// решит, что снос связан с той сделкой.
     function test_DisputeRefIsRefusedWhereItDoesNotApply() public {
         _setStreak(arbiter, 2);
+        _proposeAndWait(arbiter, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0), "");
         vm.expectRevert(ArbiterAccountabilityFacet.DisputeRefNotApplicable.selector);
         acc.removeArbiterForCause(
             arbiter, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0), address(0xD1),
@@ -205,6 +220,7 @@ contract ArbiterRemovalForCauseTest is Test {
     /// различает. Тест это фиксирует, чтобы никто не считал, будто различает.
     function test_TimeoutsUsesTheSameCounter() public {
         _setStreak(arbiter, 2);
+        _proposeAndWait(arbiter, ArbiterAccountabilityFacet.Cause.Timeouts, bytes32(0), "");
         acc.removeArbiterForCause(arbiter, ArbiterAccountabilityFacet.Cause.Timeouts, bytes32(0), address(0), "");
         assertFalse(_isArbiterRaw(arbiter));
     }
@@ -299,6 +315,7 @@ contract ArbiterRemovalForCauseTest is Test {
         _setDaoAddress(dao);
         _activateDAO();
 
+        _proposeAndWait(arbiter, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0), "");
         vm.expectEmit(true, true, true, true, address(acc));
         emit ArbiterAccountabilityFacet.ArbiterRemovedForCause(
             arbiter, dao, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, true, bytes32(0), 0
@@ -324,6 +341,7 @@ contract ArbiterRemovalForCauseTest is Test {
         assertEq(_getArbiterBond(arbiter), bond, unicode"сетап: бонд выставлен");
         assertEq(_getVaultBalance(), 0, unicode"сетап: банк пуст");
 
+        _proposeAndWait(arbiter, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0), "");
         vm.expectEmit(true, true, true, true, address(acc));
         emit ArbiterAccountabilityFacet.ArbiterRemovedForCause(
             arbiter, owner, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, true, bytes32(0), bond
@@ -349,6 +367,7 @@ contract ArbiterRemovalForCauseTest is Test {
         _setSeatedCountBy(director, 1);
         assertEq(_getSeatedCountBy(director), 1, unicode"сетап: посадка директора учтена");
 
+        _proposeAndWait(arbiter, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0), "");
         acc.removeArbiterForCause(arbiter, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0), address(0), "");
 
         assertEq(_getSeatedCountBy(director), 0, unicode"снос по поводу обязан освобождать место посадившего");
@@ -371,12 +390,14 @@ contract ArbiterRemovalForCauseTest is Test {
         address untouched = address(0xA9);
         vm.store(address(acc), keccak256(abi.encode(untouched, uint256(ARB_BASE))), bytes32(uint256(1)));
 
+        _proposeAndWait(untouched, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0), "");
         vm.expectRevert(
             abi.encodeWithSelector(ArbiterAccountabilityFacet.CauseNotProven.selector, uint8(0))
         );
         acc.removeArbiterForCause(untouched, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0), address(0), "");
 
         _setStreak(arbiter, acc.getMistakeThreshold());
+        _proposeAndWait(arbiter, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0), "");
         acc.removeArbiterForCause(arbiter, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0), address(0), "");
         assertFalse(_isArbiterRaw(arbiter), unicode"снятый больше не арбитр");
     }
@@ -387,6 +408,7 @@ contract ArbiterRemovalForCauseTest is Test {
         address deal = address(0xD1);
         address untouchedDeal = address(0xD2);
 
+        _proposeAndWait(arbiter, ArbiterAccountabilityFacet.Cause.Silence, bytes32(0), "");
         vm.expectRevert(
             abi.encodeWithSelector(ArbiterAccountabilityFacet.CauseNotProven.selector, uint8(2))
         );
@@ -450,6 +472,7 @@ contract ArbiterRemovalForCauseTest is Test {
         _setUniqueActiveUsers(acc.getDaoThresholdMirror());
         // daoAddress НЕ назначаем — это и есть разбираемое окно
 
+        _proposeAndWait(arbiter, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0), "");
         acc.removeArbiterForCause(
             arbiter, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0), address(0),
             ""
@@ -626,14 +649,22 @@ contract ArbiterRemovalForCauseTest is Test {
 
     /// Успешный снос очищает предложение — иначе оно пережило бы уже снятого
     /// арбитра и висело бы против него бессмысленным обвинением.
+    ///
+    /// ⚠️ Both doors now carry the SAME cause (design of 17 August 2026,
+    /// decision 4). This scene used to propose `Leak` and execute
+    /// `OverturnedVerdicts`; that pair is refused outright now, and the scene
+    /// where the codes diverge is test_RemovalUnderADifferentCauseIsRefused.
     function test_RemovalClearsTheProposal() public {
         _setChief(chief);
         vm.prank(chief);
         acc.proposeRemoval(arbiter, ArbiterAccountabilityFacet.Cause.Leak, keccak256("x"), unicode"выложил переписку по спору третьей стороне");
         assertTrue(acc.hasLiveProposal(arbiter), unicode"сетап: предложение живо");
 
-        _setStreak(arbiter, 2);
-        acc.removeArbiterForCause(arbiter, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0), address(0), "");
+        vm.warp(vm.getBlockTimestamp() + acc.getRemovalDelay());
+        acc.removeArbiterForCause(
+            arbiter, ArbiterAccountabilityFacet.Cause.Leak, keccak256("dump"), address(0),
+            unicode"выложил переписку по спору третьей стороне"
+        );
 
         assertFalse(acc.hasLiveProposal(arbiter), unicode"снос обязан стереть предложение");
     }
@@ -682,40 +713,43 @@ contract ArbiterRemovalForCauseTest is Test {
     }
 
     /// Minor 4: снос эмитит RemovalProposalConsumed с полями СТЁРТОЙ записи —
-    /// «предложили за Leak/директором — снесли за OverturnedVerdicts/владельцем»
-    /// видно в одной транзакции, оба события лежат в одном логе.
+    /// они видны в одной транзакции, оба события лежат в одном логе.
+    ///
+    /// ⚠️ THE SCENE CHANGED ON 17 AUGUST 2026. It used to propose `Leak` and
+    /// remove for `OverturnedVerdicts`, so the log showed "proposed for X,
+    /// removed for Y". That pair is now refused outright
+    /// (CauseDiffersFromProposal): a pause is worth nothing if the warning
+    /// names one thing and the execution another. What the event still shows in
+    /// one transaction, and what this test still checks, is the rest of the
+    /// divergence — the CHIEF proposed, the OWNER executed, and the digest in
+    /// the consumed record is the proposer's, not the one the owner passed.
     function test_RemovalConsumesTheProposal() public {
         _setChief(chief);
-        bytes32 digest = keccak256(unicode"докладная");
+        bytes32 proposedDigest = keccak256(unicode"докладная");
         vm.prank(chief);
-        acc.proposeRemoval(arbiter, ArbiterAccountabilityFacet.Cause.Leak, digest, unicode"выложил переписку по спору третьей стороне");
+        acc.proposeRemoval(arbiter, ArbiterAccountabilityFacet.Cause.Leak, proposedDigest, unicode"выложил переписку по спору третьей стороне");
         (, , uint256 proposedAt, , ) = acc.getRemovalProposal(arbiter);
 
-        _setStreak(arbiter, 2);
+        vm.warp(vm.getBlockTimestamp() + acc.getRemovalDelay());
 
         vm.expectEmit(true, true, true, true, address(acc));
         emit ArbiterAccountabilityFacet.RemovalProposalConsumed(
-            arbiter, ArbiterAccountabilityFacet.Cause.Leak, chief, digest, proposedAt
+            arbiter, ArbiterAccountabilityFacet.Cause.Leak, chief, proposedDigest, proposedAt
         );
         acc.removeArbiterForCause(
-            arbiter, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0), address(0),
-            ""
+            arbiter, ArbiterAccountabilityFacet.Cause.Leak, keccak256("what the owner actually found"),
+            address(0), unicode"выложил переписку по спору третьей стороне"
         );
     }
 
-    /// Отрицательная половина Minor 4: снос без предшествующего предложения
-    /// не обязан ничего сообщать про предложение, которого не было — ровно
-    /// один лог (ArbiterRemovedForCause), Consumed молчит.
-    function test_RemovalWithoutProposalEmitsOnlyTheRemovalEvent() public {
-        _setStreak(arbiter, 2);
-        vm.recordLogs();
-        acc.removeArbiterForCause(
-            arbiter, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0), address(0),
-            ""
-        );
-        Vm.Log[] memory logs = vm.getRecordedLogs();
-        assertEq(logs.length, 1, unicode"без предложения — только ArbiterRemovedForCause, Consumed молчит");
-    }
+    // ⚠️ test_RemovalWithoutProposalEmitsOnlyTheRemovalEvent DELETED HERE
+    // (17 August 2026). It played "a removal with no preceding proposal", and
+    // that scene no longer exists: removeArbiterForCause reverts NoLiveProposal
+    // before it can emit anything. Kept, it would have become a test standing
+    // guard over a state the contract cannot reach — exactly the dead lock this
+    // project keeps finding. The negative half of Minor 4 it used to guard is
+    // gone with the scene, not silently dropped: see the note on the `if
+    // (consumedProposal.proposedAt != 0)` branch in the facet.
 
     /// Улучшение: пятое поле `live` в getRemovalProposal согласовано с
     /// hasLiveProposal на протухшей записи, не только на свежей (свежую уже
@@ -753,6 +787,7 @@ contract ArbiterRemovalForCauseTest is Test {
 
     function test_RemovedArbiterAnswers() public {
         _setStreak(arbiter, 2);
+        _proposeAndWait(arbiter, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0), "");
         acc.removeArbiterForCause(arbiter, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0), address(0), "");
 
         bytes32 reply = keccak256(unicode"вот переписка целиком, судите сами");
@@ -768,6 +803,7 @@ contract ArbiterRemovalForCauseTest is Test {
 
     function test_AnswerIsOnceOnly() public {
         _setStreak(arbiter, 2);
+        _proposeAndWait(arbiter, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0), "");
         acc.removeArbiterForCause(arbiter, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0), address(0), "");
 
         vm.startPrank(arbiter);
@@ -779,6 +815,7 @@ contract ArbiterRemovalForCauseTest is Test {
 
     function test_ZeroReplyIsRefused() public {
         _setStreak(arbiter, 2);
+        _proposeAndWait(arbiter, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0), "");
         acc.removeArbiterForCause(arbiter, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0), address(0), "");
         vm.prank(arbiter);
         vm.expectRevert(ArbiterAccountabilityFacet.ZeroDigest.selector);
@@ -833,6 +870,7 @@ contract ArbiterRemovalForCauseTest is Test {
     /// событии), а не повторным чтением того же перечисления.
     function test_ChainVerifiableBorderSitsBetweenSilenceAndCollusion() public {
         _setStreak(arbiter, 2);
+        _proposeAndWait(arbiter, ArbiterAccountabilityFacet.Cause.Timeouts, bytes32(0), "");
         vm.expectEmit(true, true, true, true, address(acc));
         emit ArbiterAccountabilityFacet.ArbiterRemovedForCause(
             arbiter, owner, ArbiterAccountabilityFacet.Cause.Timeouts, true, bytes32(0), 0
@@ -841,6 +879,7 @@ contract ArbiterRemovalForCauseTest is Test {
 
         address second = address(0xA2);
         vm.store(address(acc), keccak256(abi.encode(second, uint256(ARB_BASE))), bytes32(uint256(1)));
+        _proposeAndWait(second, ArbiterAccountabilityFacet.Cause.Collusion, keccak256("the proposal's own evidence"), PROPOSAL_WORDS);
         vm.expectEmit(true, true, true, true, address(acc));
         emit ArbiterAccountabilityFacet.ArbiterRemovedForCause(
             second, owner, ArbiterAccountabilityFacet.Cause.Collusion, false, keccak256("e"), 0
@@ -862,6 +901,7 @@ contract ArbiterRemovalForCauseTest is Test {
     /// Заверяемый код без слов не проходит. До правки проходил: хватало
     /// ненулевого отпечатка, под которым может лежать что угодно.
     function test_UnverifiableCauseRequiresWords() public {
+        _proposeAndWait(arbiter, ArbiterAccountabilityFacet.Cause.Collusion, keccak256("evidence"), PROPOSAL_WORDS);
         vm.expectRevert(ArbiterAccountabilityFacet.ReasonRequired.selector);
         acc.removeArbiterForCause(
             arbiter,
@@ -877,6 +917,7 @@ contract ArbiterRemovalForCauseTest is Test {
     /// заводить поле, которое заполняют точкой.
     function test_VerifiableCauseNeedsNoWords() public {
         _setStreak(arbiter, 2);
+        _proposeAndWait(arbiter, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0), "");
         acc.removeArbiterForCause(
             arbiter,
             ArbiterAccountabilityFacet.Cause.OverturnedVerdicts,
@@ -892,6 +933,7 @@ contract ArbiterRemovalForCauseTest is Test {
     function test_WordsRideTheirOwnEvent() public {
         string memory why = unicode"трижды забирал споры одного контрагента и трижды решал в его пользу";
 
+        _proposeAndWait(arbiter, ArbiterAccountabilityFacet.Cause.Leak, keccak256("dump"), PROPOSAL_WORDS);
         vm.expectEmit(true, true, true, true, address(acc));
         emit ArbiterAccountabilityFacet.RemovalReasonGiven(arbiter, owner, 1, why);
 
@@ -905,6 +947,7 @@ contract ArbiterRemovalForCauseTest is Test {
         bytes memory tooLong = new bytes(513);
         for (uint256 i = 0; i < 513; i++) tooLong[i] = "x";
 
+        _proposeAndWait(arbiter, ArbiterAccountabilityFacet.Cause.Other, keccak256("e"), PROPOSAL_WORDS);
         vm.expectRevert(
             abi.encodeWithSelector(ArbiterAccountabilityFacet.ReasonTooLong.selector, uint256(513))
         );
@@ -919,6 +962,7 @@ contract ArbiterRemovalForCauseTest is Test {
         bytes memory atCap = new bytes(acc.getMaxReasonBytes());
         for (uint256 i = 0; i < atCap.length; i++) atCap[i] = "x";
 
+        _proposeAndWait(arbiter, ArbiterAccountabilityFacet.Cause.Other, keccak256("e"), PROPOSAL_WORDS);
         acc.removeArbiterForCause(
             arbiter, ArbiterAccountabilityFacet.Cause.Other, keccak256("e"), address(0), string(atCap)
         );
@@ -971,6 +1015,7 @@ contract ArbiterRemovalForCauseTest is Test {
     /// Заставлять человека оправдываться публично нельзя.
     function test_ReplyWordsAreOptional() public {
         _setStreak(arbiter, 2);
+        _proposeAndWait(arbiter, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0), "");
         acc.removeArbiterForCause(
             arbiter, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0), address(0), ""
         );
@@ -988,6 +1033,7 @@ contract ArbiterRemovalForCauseTest is Test {
     /// Но если слова есть — они публичны, своим событием.
     function test_ReplyWordsRideTheirOwnEvent() public {
         _setStreak(arbiter, 2);
+        _proposeAndWait(arbiter, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0), "");
         acc.removeArbiterForCause(
             arbiter, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0), address(0), ""
         );
@@ -1006,6 +1052,7 @@ contract ArbiterRemovalForCauseTest is Test {
     /// работа про симметрию.
     function test_ReplyOverTheCapIsRefused() public {
         _setStreak(arbiter, 2);
+        _proposeAndWait(arbiter, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0), "");
         acc.removeArbiterForCause(
             arbiter, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0), address(0), ""
         );
@@ -1024,6 +1071,7 @@ contract ArbiterRemovalForCauseTest is Test {
     /// пустая строка в ленте стирала бы разницу между «объяснил» и «промолчал».
     function test_NoWordsMeansNoWordsEvent() public {
         _setStreak(arbiter, 2);
+        _proposeAndWait(arbiter, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0), "");
         vm.recordLogs();
         acc.removeArbiterForCause(
             arbiter, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0), address(0), ""
@@ -1078,6 +1126,7 @@ contract ArbiterRemovalForCauseTest is Test {
         string memory tooLong = _cyrillic(257);
         assertEq(bytes(tooLong).length, 514, unicode"стенд собран неверно: не 514 байт");
 
+        _proposeAndWait(arbiter, ArbiterAccountabilityFacet.Cause.Other, keccak256("e"), PROPOSAL_WORDS);
         vm.expectRevert(
             abi.encodeWithSelector(ArbiterAccountabilityFacet.ReasonTooLong.selector, uint256(514))
         );
@@ -1093,6 +1142,7 @@ contract ArbiterRemovalForCauseTest is Test {
         string memory atCap = _cyrillic(256);
         assertEq(bytes(atCap).length, 512, unicode"стенд собран неверно: не 512 байт");
 
+        _proposeAndWait(arbiter, ArbiterAccountabilityFacet.Cause.Other, keccak256("e"), PROPOSAL_WORDS);
         acc.removeArbiterForCause(
             arbiter, ArbiterAccountabilityFacet.Cause.Other, keccak256("e"), address(0), atCap
         );
@@ -1104,6 +1154,7 @@ contract ArbiterRemovalForCauseTest is Test {
     /// только тот, кто пишет не по-английски.
     function test_TheReplyCapCountsBytesToo() public {
         _setStreak(arbiter, 2);
+        _proposeAndWait(arbiter, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0), "");
         acc.removeArbiterForCause(
             arbiter, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0), address(0), ""
         );
@@ -1207,9 +1258,15 @@ contract ArbiterRemovalForCauseTest is Test {
     // ============================================================
 
     function test_RemovalForCauseSuspendsTheRemoved() public {
-        uint256 t0 = vm.getBlockTimestamp();
         _setStreak(arbiter, 2);
         assertEq(acc.getSuspendedUntil(arbiter), 0, unicode"сетап: приостановки не было");
+
+        // ⚠️ t0 is read AFTER the pause, not before it. Since 17 August 2026 a
+        // removal is two transactions two days apart, and the suspension window
+        // is counted from the second one; reading t0 at the top of the body
+        // would put the expectation 48 hours in the past.
+        _proposeAndWait(arbiter, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0), "");
+        uint256 t0 = vm.getBlockTimestamp();
 
         acc.removeArbiterForCause(arbiter, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0), address(0), "");
 
@@ -1225,11 +1282,178 @@ contract ArbiterRemovalForCauseTest is Test {
     /// сноса — новое оружие, а не защита.
     function test_RemovalSuspensionExpiresByItself() public {
         _setStreak(arbiter, 2);
+        _proposeAndWait(arbiter, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0), "");
         acc.removeArbiterForCause(arbiter, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0), address(0), "");
 
         vm.warp(vm.getBlockTimestamp() + acc.getSuspensionWindow());
         assertFalse(acc.isSuspended(arbiter), unicode"на границе окна отпустило");
     }
+
+    // ============================================================
+    //  THE 48-HOUR PAUSE (design of 17 August 2026, decisions 1-4)
+    //
+    //  Removal stopped being a single button. It is now two transactions two
+    //  days apart, and between them the person has time to see the accusation
+    //  and answer it on chain.
+    //
+    //  There is no fast path, deliberately: "stop right now" is covered by
+    //  suspension — instant, reversible, expiring by itself.
+    // ============================================================
+
+    /// Without a proposal there is no removal at all. Before this change it
+    /// went through in one transaction and the person learned of it afterwards.
+    function test_RemovalWithoutProposalIsRefused() public {
+        _setStreak(arbiter, 2);
+        vm.expectRevert(ArbiterAccountabilityFacet.NoLiveProposal.selector);
+        acc.removeArbiterForCause(
+            arbiter, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0), address(0), ""
+        );
+    }
+
+    /// The proposal is there but the clock is still running. The error carries
+    /// THE MOMENT from which it is allowed: the form can say "19 hours to go"
+    /// instead of "try later".
+    function test_RemovalBeforeTheDelayIsRefused() public {
+        _setStreak(arbiter, 2);
+        acc.proposeRemoval(arbiter, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0), "");
+        uint256 proposedAt = vm.getBlockTimestamp();
+
+        vm.warp(proposedAt + acc.getRemovalDelay() - 1);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                ArbiterAccountabilityFacet.RemovalTooEarly.selector,
+                proposedAt + acc.getRemovalDelay()
+            )
+        );
+        acc.removeArbiterForCause(
+            arbiter, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0), address(0), ""
+        );
+    }
+
+    /// One second later it goes through — the same scene, the same setup, the
+    /// boundary crossed. The pair is the point: a stand that only played "a lot
+    /// of time has passed" could not tell 48 hours from 47, or from any
+    /// positive number at all.
+    function test_RemovalAtTheExactBoundaryPasses() public {
+        _setStreak(arbiter, 2);
+        acc.proposeRemoval(arbiter, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0), "");
+        vm.warp(vm.getBlockTimestamp() + acc.getRemovalDelay());
+
+        acc.removeArbiterForCause(
+            arbiter, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0), address(0), ""
+        );
+        assertFalse(_isArbiterRaw(arbiter), "48 hours are up, the removal is allowed");
+    }
+
+    /// A stale proposal is not executed. Otherwise an accusation half a year
+    /// old would fire without a fresh warning.
+    function test_RemovalOnStaleProposalIsRefused() public {
+        _setStreak(arbiter, 2);
+        acc.proposeRemoval(arbiter, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0), "");
+        uint256 proposedAt = vm.getBlockTimestamp();
+
+        vm.warp(proposedAt + acc.getProposalTTL());
+        vm.expectRevert(
+            abi.encodeWithSelector(ArbiterAccountabilityFacet.ProposalStale.selector, proposedAt)
+        );
+        acc.removeArbiterForCause(
+            arbiter, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0), address(0), ""
+        );
+    }
+
+    /// The last second of the proposal's life still works. The same strictness
+    /// as hasLiveProposal: they must not diverge, or the button goes dark a day
+    /// before the feed stops showing the accusation as live.
+    function test_RemovalOnTheLastSecondOfTheProposalPasses() public {
+        _setStreak(arbiter, 2);
+        acc.proposeRemoval(arbiter, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0), "");
+        vm.warp(vm.getBlockTimestamp() + acc.getProposalTTL() - 1);
+
+        assertTrue(acc.hasLiveProposal(arbiter), "stand: the proposal is still live");
+        acc.removeArbiterForCause(
+            arbiter, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0), address(0), ""
+        );
+        assertFalse(_isArbiterRaw(arbiter), "a live proposal executes down to its last second");
+    }
+
+    /// Warned about one thing, removed for another. Refused: the pause is given
+    /// so the person answers THAT PARTICULAR accusation.
+    function test_RemovalUnderADifferentCauseIsRefused() public {
+        _setStreak(arbiter, 2);
+        _proposeAndWait(arbiter, ArbiterAccountabilityFacet.Cause.Timeouts, bytes32(0), "");
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                ArbiterAccountabilityFacet.CauseDiffersFromProposal.selector,
+                uint8(ArbiterAccountabilityFacet.Cause.Timeouts),
+                uint8(ArbiterAccountabilityFacet.Cause.OverturnedVerdicts)
+            )
+        );
+        acc.removeArbiterForCause(
+            arbiter, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0), address(0), ""
+        );
+    }
+
+    /// The digest and the dispute reference are still the accuser's OWN, not
+    /// taken from the proposal. Exactly one field is compared — the cause code,
+    /// the thing the person was warned about — and not the whole application.
+    function test_EvidenceIsPassedAfreshNotTakenFromTheProposal() public {
+        _proposeAndWait(
+            arbiter, ArbiterAccountabilityFacet.Cause.Leak, keccak256("first guess"), PROPOSAL_WORDS
+        );
+
+        bytes32 realEvidence = keccak256("what the owner actually found");
+        vm.expectEmit(true, true, true, true, address(acc));
+        emit ArbiterAccountabilityFacet.ArbiterRemovedForCause(
+            arbiter, owner, ArbiterAccountabilityFacet.Cause.Leak, false, realEvidence, 0
+        );
+        acc.removeArbiterForCause(
+            arbiter, ArbiterAccountabilityFacet.Cause.Leak, realEvidence, address(0), PROPOSAL_WORDS
+        );
+    }
+
+    /// A withdrawal kills the clock along with the proposal: the hours do not
+    /// "keep running", they are gone. Checked down the live road, not by
+    /// reading a field.
+    function test_WithdrawalKillsTheClock() public {
+        _setStreak(arbiter, 2);
+        acc.proposeRemoval(arbiter, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0), "");
+        acc.withdrawProposal(arbiter);
+        vm.warp(vm.getBlockTimestamp() + acc.getRemovalDelay());
+
+        vm.expectRevert(ArbiterAccountabilityFacet.NoLiveProposal.selector);
+        acc.removeArbiterForCause(
+            arbiter, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0), address(0), ""
+        );
+    }
+
+    /// The execution window is not empty. This looks like a tautology and is
+    /// not one: let these two numbers cross in a future edit and removal would
+    /// become impossible AT ALL, under any schedule, while no scenario test
+    /// would show it — they would all fail one by one, each with its own
+    /// plausible-looking error.
+    function test_RemovalWindowIsNotEmpty() public view {
+        assertLt(
+            acc.getRemovalDelay(),
+            acc.getProposalTTL(),
+            "the pause must be shorter than the proposal's own lifetime"
+        );
+    }
+
+    /// The number of the pause is pinned. Proportionality to its neighbours is
+    /// not decoration: 48 hours sit between the finalisation window (24) and
+    /// suspension (72), and a silent shift would break the reasoning without
+    /// breaking a single scenario.
+    ///
+    /// ⚠️ The expectation is a LITERAL, not acc.getRemovalDelay() read twice:
+    /// asking the same chain for the number would make the stand look into a
+    /// mirror and be happy with any substitution. The boundary tests above ask
+    /// the chain on purpose — they guard the boundary, this one guards the
+    /// value.
+    function test_RemovalDelayIsFortyEightHours() public view {
+        assertEq(acc.getRemovalDelay(), 48 hours, "the pause is 48 hours");
+    }
+
 
     bytes32 constant FWD_TYPEHASH = keccak256(
         "ForwardRequest(address from,address to,uint256 value,uint256 gas,uint256 nonce,bytes data)"
@@ -1279,6 +1503,7 @@ contract ArbiterRemovalForCauseTest is Test {
         _setForwarder(address(acc), address(fwd));
 
         _setStreak(arb, 2);
+        _proposeAndWait(arb, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0), "");
         acc.removeArbiterForCause(arb, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0), address(0), "");
 
         MinimalForwarder.ForwardRequest memory req = MinimalForwarder.ForwardRequest({
@@ -1306,6 +1531,25 @@ contract ArbiterRemovalForCauseTest is Test {
 
     function _isArbiterRaw(address who) internal view returns (bool) {
         return vm.load(address(acc), keccak256(abi.encode(who, uint256(ARB_BASE)))) != bytes32(0);
+    }
+
+    /// Removal only runs through a proposal that has sat. The helper lays one
+    /// down and winds time exactly to the far side of the pause.
+    ///
+    /// ⚠️ vm.getBlockTimestamp(), not block.timestamp: under via_ir solc treats
+    /// TIMESTAMP as constant within a call, and a second warp in the same body
+    /// would jump to the same second as the first (docs/OPEN-ITEMS.md, item 57).
+    ///
+    /// ⚠️ The cause given here must be the cause given to the removal — since
+    /// 17 August 2026 the two are compared (CauseDiffersFromProposal).
+    function _proposeAndWait(
+        address who,
+        ArbiterAccountabilityFacet.Cause cause,
+        bytes32 digest,
+        string memory reason
+    ) internal {
+        acc.proposeRemoval(who, cause, digest, reason);
+        vm.warp(vm.getBlockTimestamp() + acc.getRemovalDelay());
     }
 
     function _setStreak(address who, uint256 n) internal {
