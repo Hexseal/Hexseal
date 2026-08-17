@@ -315,7 +315,10 @@ contract ArbiterRemovalForCauseTest is Test {
         _setDaoAddress(dao);
         _activateDAO();
 
-        _proposeAndWait(arbiter, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0), "");
+        // The successor proposes for himself: past handover the owner cannot
+        // (review round 2, 17 August 2026), and the whole point of a handover
+        // is that he needs nobody.
+        _proposeAndWaitAs(dao, arbiter, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0), "");
         vm.expectEmit(true, true, true, true, address(acc));
         emit ArbiterAccountabilityFacet.ArbiterRemovedForCause(
             arbiter, dao, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, true, bytes32(0), 0
@@ -592,6 +595,55 @@ contract ArbiterRemovalForCauseTest is Test {
     }
 
     // ────────────────────────────────────────────────────────────
+    //  THE ACCUSATION DOOR TRAVELS WITH THE RIGHT TO ACT ON IT
+    //  (review round 2 of the pause, 17 August 2026)
+    //
+    //  proposeRemoval stood under onlyOwnerOrChief alone, and the named
+    //  successor fits through neither half of that. Harmless while the proposal
+    //  was optional — he removed with one button and needed nobody. The pause
+    //  made the proposal MANDATORY, and so cancelled the very handover this
+    //  branch was built to deliver: the right had moved, but the successor
+    //  could not use it until the FORMER owner laid a proposal for him. A veto
+    //  by inaction, invisible in the feed, held by the one person the handover
+    //  exists to take out of the loop.
+    // ────────────────────────────────────────────────────────────
+
+    /// The designated lock. After handover the successor lays his own
+    /// accusation and needs nobody — checked by the record, not by "it did not
+    /// revert": the proposal must stand, and stand under HIS address.
+    function test_SuccessorProposesAfterHandover() public {
+        address dao = address(0xDA0);
+        _setDaoAddress(dao);
+        _activateDAO();
+
+        vm.prank(dao);
+        acc.proposeRemoval(
+            arbiter, ArbiterAccountabilityFacet.Cause.Leak, keccak256("x"),
+            unicode"выложил переписку по спору третьей стороне"
+        );
+
+        assertTrue(acc.hasLiveProposal(arbiter), "the successor's accusation is on chain");
+        (, , , address by, ) = acc.getRemovalProposal(arbiter);
+        assertEq(by, dao, "and it stands under his own address, not the former owner's");
+    }
+
+    /// The other side of the same rule: the handover is whole or it is theatre.
+    /// A proposal the former owner could still lay would be executable by the
+    /// successor, so leaving him the door would leave him in the loop by the
+    /// back way.
+    function test_OwnerCannotProposeAfterHandover() public {
+        _setDaoAddress(address(0xDA0));
+        _activateDAO();
+
+        vm.expectRevert(ArbiterAccountabilityFacet.RemovalHandedOver.selector);
+        acc.proposeRemoval(
+            arbiter, ArbiterAccountabilityFacet.Cause.Leak, keccak256("x"),
+            unicode"выложил переписку по спору третьей стороне"
+        );
+        assertFalse(acc.hasLiveProposal(arbiter), "and nothing was written");
+    }
+
+    // ────────────────────────────────────────────────────────────
     //  WITHDRAWING SOMEONE ELSE'S PROPOSAL (review round 1 of the pause,
     //  17 August 2026)
     //
@@ -668,6 +720,11 @@ contract ArbiterRemovalForCauseTest is Test {
         assertFalse(acc.hasLiveProposal(arbiter), "whoever removes today also clears");
     }
 
+    /// ⚠️ COUNTER-HALF of the handover rule since review round 2 (17 August
+    /// 2026): a stranger is still refused before handover, and refused BY ROLE
+    /// (NotOwnerOrChief). A gate narrowed to "the removal authority only" would
+    /// pass test_SuccessorProposesAfterHandover and silently take the door from
+    /// the chief; this and test_ChiefProposes are what redden then.
     function test_StrangerCannotPropose() public {
         vm.prank(address(0x5A));
         vm.expectRevert(ArbiterAccountabilityFacet.NotOwnerOrChief.selector);
@@ -1630,6 +1687,22 @@ contract ArbiterRemovalForCauseTest is Test {
         bytes32 digest,
         string memory reason
     ) internal {
+        acc.proposeRemoval(who, cause, digest, reason);
+        vm.warp(vm.getBlockTimestamp() + acc.getRemovalDelay());
+    }
+
+    /// Same, laid down by a named caller. Needed after handover: since review
+    /// round 2 (17 August 2026) the accusation door travels with the right to
+    /// act on it, so past handover the OWNER cannot propose and the successor
+    /// must do it himself — which is the point of a handover.
+    function _proposeAndWaitAs(
+        address caller,
+        address who,
+        ArbiterAccountabilityFacet.Cause cause,
+        bytes32 digest,
+        string memory reason
+    ) internal {
+        vm.prank(caller);
         acc.proposeRemoval(who, cause, digest, reason);
         vm.warp(vm.getBlockTimestamp() + acc.getRemovalDelay());
     }

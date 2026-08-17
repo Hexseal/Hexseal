@@ -1048,6 +1048,33 @@ contract ArbiterAccountabilityFacet {
     /// removeArbiterForCause reverts NoLiveProposal, and executing it is
     /// possible no earlier than REMOVAL_DELAY and no later than PROPOSAL_TTL
     /// from this very second.
+    ///
+    /// ⚠️ AND THAT IS WHY THIS DOOR MOVED WITH THE OTHER ONE (review round 2,
+    /// 17 August 2026). It used to stand under onlyOwnerOrChief alone, and the
+    /// named successor does not fit through that: he is neither the owner nor
+    /// the chief. Harmless while the proposal was optional — the successor
+    /// removed with one button and needed nobody. The pause made the proposal
+    /// MANDATORY, and the handover we spent this whole branch building was
+    /// cancelled by our own pause: the right had moved, but the successor could
+    /// not use it until the FORMER owner laid a proposal for him. A veto by
+    /// inaction, invisible in the feed, held by the one person the handover
+    /// exists to remove from the loop.
+    ///
+    /// Rule, the same one the withdrawal door got: whoever may REMOVE may
+    /// PROPOSE — plus the chief, for as long as the role of chief exists.
+    ///   • before handover: the owner and the chief, exactly as before;
+    ///   • after handover: the successor only. The chief needs no separate
+    ///     exclusion — live governance abolishes the role inside
+    ///     _requireOwnerOrChief — and the owner is pushed out here for the same
+    ///     reason removeArbiterForCause pushes him out: the handover is whole
+    ///     or it is theatre. A proposal he could still lay would be executable
+    ///     by the successor, so keeping it would keep him in the loop by the
+    ///     back door.
+    ///
+    /// Taken from _removalAuthority, not written in its own words: a second
+    /// expression meaning "the same thing" is the seam this branch has already
+    /// dug out three times (M-3, В-2, and the measurement that justified
+    /// test_AfterHandoverTheSuccessorWithdrawsAnyProposal).
     function proposeRemoval(
         address arbiter,
         Cause   cause,
@@ -1055,10 +1082,21 @@ contract ArbiterAccountabilityFacet {
         string calldata reason
     )
         external
-        onlyOwnerOrChief
     {
         if (arbiter == address(0)) revert ArbiterZeroAddress();
         ArbiterRegistryStorage.Data storage d = ArbiterRegistryStorage.data();
+
+        (address authority, bool handedOver) = _removalAuthority(d);
+        if (handedOver) {
+            // Same refusal as the sibling door gives in the same state, and
+            // for the same reason — the accusation channel travelled with the
+            // right to act on it. A stranger gets it here too, exactly as he
+            // does from removeArbiterForCause after handover.
+            if (msg.sender != authority) revert RemovalHandedOver();
+        } else {
+            _requireOwnerOrChief(d);
+        }
+
         if (!d.isArbiter[arbiter]) revert NotAnArbiter();
 
         bool verified = _isChainVerifiable(cause);

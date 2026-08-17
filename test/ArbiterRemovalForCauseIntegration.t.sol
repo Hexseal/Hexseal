@@ -224,6 +224,21 @@ contract ArbiterRemovalForCauseIntegrationTest is Test {
         vm.warp(vm.getBlockTimestamp() + ArbiterAccountabilityFacet(address(diamond)).getRemovalDelay());
     }
 
+    /// Same, laid down by a named caller. Needed past handover: since review
+    /// round 2 (17 August 2026) the accusation door travels with the right to
+    /// act on it, so the OWNER cannot propose once a successor is named — the
+    /// successor lays his own, which is what a handover is for.
+    function _proposeAndWaitAs(
+        address caller,
+        address who,
+        ArbiterAccountabilityFacet.Cause cause,
+        bytes32 digest
+    ) internal {
+        vm.prank(caller);
+        ArbiterAccountabilityFacet(address(diamond)).proposeRemoval(who, cause, digest, PROPOSAL_WORDS);
+        vm.warp(vm.getBlockTimestamp() + ArbiterAccountabilityFacet(address(diamond)).getRemovalDelay());
+    }
+
 
     // ── C-1: достижимость боевым путём ──
 
@@ -305,7 +320,9 @@ contract ArbiterRemovalForCauseIntegrationTest is Test {
         _disputeAndOverturn(address(0x303), address(0x304));
         assertTrue(ArbiterRegistryFacet(address(diamond)).isRegisteredArbiter(arbiter));
 
-        _proposeAndWait(arbiter, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0));
+        // The successor lays his own accusation: past handover the owner
+        // cannot (review round 2, 17 August 2026).
+        _proposeAndWaitAs(dao, arbiter, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0));
         vm.prank(dao);
         ArbiterAccountabilityFacet(address(diamond)).removeArbiterForCause(
             arbiter, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0), address(0),
@@ -708,11 +725,16 @@ contract ArbiterRemovalForCauseIntegrationTest is Test {
 
     /// Общий сетап обеих проверок: ДАО включена заработанным путём, преемник
     /// назван, он же и сносит. Владельцу сноса на этой сцене уже нет.
+    ///
+    /// ⚠️ And no proposal from him either, since review round 2 (17 August
+    /// 2026): the accusation door moved with the right to act on it, so the
+    /// successor lays his own record here — the owner's last action on this
+    /// stand is naming him.
     function _handOverRemovalAndRemove(address dao) internal {
         _setUniqueActiveUsers(ArbiterRegistryFacet(address(diamond)).getDaoThreshold());
         ArbiterRegistryFacet(address(diamond)).setDAOAddress(dao);
 
-        _proposeAndWait(arbiter, ArbiterAccountabilityFacet.Cause.Collusion, keccak256(unicode"переписка"));
+        _proposeAndWaitAs(dao, arbiter, ArbiterAccountabilityFacet.Cause.Collusion, keccak256(unicode"переписка"));
         vm.prank(dao);
         ArbiterAccountabilityFacet(address(diamond)).removeArbiterForCause(
             arbiter, ArbiterAccountabilityFacet.Cause.Collusion, keccak256(unicode"переписка"), address(0),
@@ -721,6 +743,65 @@ contract ArbiterRemovalForCauseIntegrationTest is Test {
         assertTrue(
             ArbiterAccountabilityFacet(address(diamond)).isSuspended(arbiter),
             unicode"сетап: преемник снёс, окно выставлено"
+        );
+    }
+
+    // ── Review round 2 of the pause (17 August 2026): the handover end to end ──
+
+    /// THE WHOLE ROAD, WALKED BY THE SUCCESSOR ALONE. Not the pieces — the
+    /// property. After the owner names him, every remaining action is the
+    /// successor's: he proposes, he waits out the 48 hours, he removes. The
+    /// former owner does nothing, and this test proves he does not have to.
+    ///
+    /// This is exactly what the pause broke and what review round 2 repaired.
+    /// Before the fix the successor could not lay a proposal at all
+    /// (onlyOwnerOrChief admits neither the owner-that-was nor him), and since
+    /// the pause made a proposal mandatory, the handover was cancelled by our
+    /// own work: the right had moved, and using it still required a transaction
+    /// from the man it had moved away from.
+    ///
+    /// Lives here, not on the light stand, because the property spans three
+    /// facets and one storage: setDAOAddress and isRegisteredArbiter are the
+    /// registry's, proposeRemoval and removeArbiterForCause the accountability
+    /// facet's, and the DAO threshold is read out of the reputation namespace.
+    function test_SuccessorRunsTheWholeRemovalAloneAfterHandover() public {
+        address dao = address(0xDA0);
+
+        // The owner's LAST act on this stand: earning governance is not his
+        // doing at all (the threshold is reached by strangers), and naming the
+        // successor IS the handover rather than a step of the removal.
+        _setUniqueActiveUsers(ArbiterRegistryFacet(address(diamond)).getDaoThreshold());
+        ArbiterRegistryFacet(address(diamond)).setDAOAddress(dao);
+
+        // And from here he is shut out — checked, not assumed. Without this the
+        // test would still pass if the owner had kept the accusation door, and
+        // "the successor can" would say nothing about "the owner need not".
+        vm.expectRevert(ArbiterAccountabilityFacet.RemovalHandedOver.selector);
+        ArbiterAccountabilityFacet(address(diamond)).proposeRemoval(
+            arbiter, ArbiterAccountabilityFacet.Cause.Collusion, keccak256("evidence"), PROPOSAL_WORDS
+        );
+
+        // Everything below is the successor's own hand, and nothing else runs.
+        vm.prank(dao);
+        ArbiterAccountabilityFacet(address(diamond)).proposeRemoval(
+            arbiter, ArbiterAccountabilityFacet.Cause.Collusion, keccak256("evidence"), PROPOSAL_WORDS
+        );
+        vm.warp(
+            vm.getBlockTimestamp() + ArbiterAccountabilityFacet(address(diamond)).getRemovalDelay()
+        );
+        vm.prank(dao);
+        ArbiterAccountabilityFacet(address(diamond)).removeArbiterForCause(
+            arbiter, ArbiterAccountabilityFacet.Cause.Collusion, keccak256("evidence"), address(0),
+            PROPOSAL_WORDS
+        );
+
+        assertFalse(
+            ArbiterRegistryFacet(address(diamond)).isRegisteredArbiter(arbiter),
+            unicode"преемник прошёл весь путь сам — предложил, выждал, снёс"
+        );
+        assertFalse(
+            ArbiterAccountabilityFacet(address(diamond)).hasLiveProposal(arbiter),
+            unicode"и его собственное предложение исполнилось, а не повисло"
         );
     }
 
