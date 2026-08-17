@@ -33,6 +33,9 @@
 //   MATCHSTICK_PLATFORM=…     override the platform guess (binary-linux-22, …)
 //   MATCHSTICK_CACHE_DIR=…    where to keep the downloaded binary
 //
+// None of them skips the digest check below — a binary handed over in
+// MATCHSTICK_BINARY is checked exactly like a downloaded one.
+//
 // The binary is cached under node_modules/.cache/ by default, which is already
 // ignored by git and thrown away by `rm -rf node_modules` like any other build
 // tool. `npm ci` wipes node_modules too, so a CI job that wants to keep the
@@ -40,6 +43,7 @@
 // caches — the whole directory is content-addressed by version and platform.
 
 const { execFileSync, spawnSync } = require('node:child_process')
+const crypto = require('node:crypto')
 const fs = require('node:fs')
 const path = require('node:path')
 
@@ -67,6 +71,125 @@ function wantedVersion() {
   const m = /(\d+\.\d+\.\d+)/.exec(spec)
   if (!m) die(['matchstick: cannot read a version out of matchstick-as spec "' + spec + '".'])
   return m[1]
+}
+
+// ---------------------------------------------------------------------------
+// Pinned digests, keyed by the version above and the release asset name.
+//
+// READ THIS BEFORE TRUSTING IT. This is trust on first use, not verification.
+// LimeChain publishes no checksums for matchstick: release 0.6.0 carries the
+// three binaries and nothing else — no SHA256SUMS file, no signature, nothing
+// to compare against. So there is no upstream statement here. What is written
+// below is the digest of the file *we* were served, computed by hand on
+// 17 August 2026 on the workstation, and pinned as-is.
+//
+// What that buys: if the release asset is ever swapped — by the author, by
+// someone who takes the account, by anything between us and GitHub — the next
+// run on any machine stops instead of executing the new file, and a CI job
+// that has thrown its cache away stops too.
+//
+// What it does not buy: any evidence that what we were served on the first day
+// is what the author built. If the file was already substituted before we ever
+// downloaded it, this table pins the substitution and every run goes green.
+//
+// So a passing run does NOT mean "the binary is verified". It means "the binary
+// is byte-for-byte the one we got on 17 August 2026". Nothing more.
+//
+// There is deliberately no skip switch. A mismatch is a refusal, including for
+// a binary handed over in MATCHSTICK_BINARY. If a different binary is genuinely
+// wanted, the digest below has to be edited — a visible line in a diff that a
+// reviewer can question — rather than an env var nobody sees.
+// ---------------------------------------------------------------------------
+const PINNED_SHA256 = {
+  '0.6.0': {
+    'binary-linux-22': 'e11131536716f2a6daaa242beb7c3f89784017ba2a73128fcf80027296e80c85',
+    // binary-macos-12 and binary-macos-12-m1 are deliberately absent. We have
+    // never downloaded them, so any number written here would be copied from
+    // somewhere rather than measured, and a digest nobody computed is worse
+    // than no digest: it looks like a check. A mac therefore gets a refusal
+    // that says why and says how to end it (download once, compute, pin,
+    // commit) instead of a check that is really a guess.
+  },
+}
+
+function pinnedDigest(version, platform) {
+  const forVersion = PINNED_SHA256[version]
+  if (!forVersion) {
+    die([
+      'matchstick: no pinned digest for version ' + version + '.',
+      '',
+      'package.json asks for matchstick-as ' + version + ', and this launcher only runs a',
+      'binary whose sha256 was written down for that exact version. Bumping the library',
+      'means pinning the new binary too:',
+      '',
+      '  curl -sSL --fail -o /tmp/' + platform +
+        ' https://github.com/LimeChain/matchstick/releases/download/' + version + '/' + platform,
+      '  sha256sum /tmp/' + platform,
+      '',
+      "then add the number to PINNED_SHA256 in this file, under '" + version + "'.",
+    ])
+  }
+  const digest = forVersion[platform]
+  if (!digest) {
+    die([
+      'matchstick: no pinned digest for ' + platform + ' at version ' + version + '.',
+      '',
+      'Only ' + Object.keys(forVersion).join(', ') + ' has a digest recorded, because that is',
+      'the only release asset this project has ever downloaded. The macOS builds have',
+      'never been fetched here, so there is no measured number for them — and writing an',
+      'unmeasured one would turn this check into theatre.',
+      '',
+      'To run on this platform, pin it once, deliberately:',
+      '  curl -sSL --fail -o /tmp/' + platform +
+        ' https://github.com/LimeChain/matchstick/releases/download/' + version + '/' + platform,
+      '  sha256sum /tmp/' + platform,
+      "then add the number to PINNED_SHA256 in this file under '" + version + "' and commit it,",
+      'so everyone else is checking against the same file you were served.',
+    ])
+  }
+  return digest
+}
+
+function sha256File(file) {
+  const h = crypto.createHash('sha256')
+  const fd = fs.openSync(file, 'r')
+  try {
+    const buf = Buffer.allocUnsafe(1 << 20)
+    for (;;) {
+      const n = fs.readSync(fd, buf, 0, buf.length, null)
+      if (n <= 0) break
+      h.update(buf.subarray(0, n))
+    }
+  } finally {
+    fs.closeSync(fd)
+  }
+  return h.digest('hex')
+}
+
+// Refuses unless `file` hashes to `expected`. `onMismatch` gets to clean up
+// (delete a half-downloaded file) before the message is printed; a file already
+// in place is left alone on purpose — deleting it would destroy the evidence
+// and let the very next run re-download and go green as if nothing happened.
+function requireDigest(file, expected, whatItIs, extraLines, onMismatch) {
+  const actual = sha256File(file)
+  if (actual === expected) return
+  if (onMismatch) onMismatch()
+  die(
+    [
+      'matchstick: REFUSING TO RUN — ' + whatItIs + ' does not match the pinned digest.',
+      '',
+      '  file:     ' + file,
+      '  expected: ' + expected,
+      '  actual:   ' + actual,
+      '',
+    ]
+      .concat(extraLines)
+      .concat([
+        '',
+        'This launcher runs no binary it cannot recognise, and has no flag to make it.',
+        'If the change is intended, edit PINNED_SHA256 in ' + path.relative(SUBGRAPH_DIR, __filename) + ' and commit it.',
+      ]),
+  )
 }
 
 function osRelease() {
@@ -122,15 +245,34 @@ function platformName() {
 }
 
 function ensureBinary(version, platform) {
+  // Whatever the source — env var, cache, fresh download — the file is hashed
+  // before it is run. The check is cheap next to the test run itself (measured
+  // at 17-18 ms over the 27 MB binary, warm) and it is the only thing standing
+  // between a swapped release asset and code execution on this machine.
+  const expected = pinnedDigest(version, platform)
+
   if (process.env.MATCHSTICK_BINARY) {
     const p = process.env.MATCHSTICK_BINARY
     if (!fs.existsSync(p)) die(['matchstick: MATCHSTICK_BINARY=' + p + ' does not exist.'])
+    requireDigest(p, expected, 'the binary given in MATCHSTICK_BINARY', [
+      'A binary supplied by hand is held to the same digest as a downloaded one: the',
+      'point of the pin is that every machine runs the same file. This one is a',
+      'different file — a different version, a different platform build, or tampered.',
+    ])
     return p
   }
   const root = process.env.MATCHSTICK_CACHE_DIR || path.join(SUBGRAPH_DIR, 'node_modules', '.cache', 'matchstick')
   const dir = path.join(root, version)
   const bin = path.join(dir, platform)
-  if (fs.existsSync(bin)) return bin
+  if (fs.existsSync(bin)) {
+    requireDigest(bin, expected, 'the cached binary', [
+      'It was accepted when it was downloaded, so something changed it since — disk',
+      'corruption, an editor, or another process. It is left in place rather than',
+      'deleted, so it can be looked at; removing it makes the next run download afresh:',
+      '  rm ' + bin,
+    ])
+    return bin
+  }
 
   const url = 'https://github.com/LimeChain/matchstick/releases/download/' + version + '/' + platform
   process.stderr.write('matchstick: downloading ' + url + '\n')
@@ -152,6 +294,23 @@ function ensureBinary(version, platform) {
       'point at it:  MATCHSTICK_BINARY=/path/to/' + platform + ' npm test',
     ])
   }
+  // Hash before chmod: an unrecognised download never becomes executable, not
+  // even for the moment between the two syscalls.
+  requireDigest(
+    tmp,
+    expected,
+    'the freshly downloaded binary',
+    [
+      '  from:     ' + url,
+      '',
+      'The download has been deleted, and it was never made executable. Either the',
+      'release asset was replaced upstream, or something rewrote it in transit.',
+      'Nothing was run.',
+    ],
+    () => {
+      try { fs.unlinkSync(tmp) } catch (_) {}
+    },
+  )
   fs.chmodSync(tmp, 0o755)
   fs.renameSync(tmp, bin)
   return bin
