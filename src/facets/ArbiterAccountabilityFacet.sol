@@ -209,6 +209,19 @@ contract ArbiterAccountabilityFacet {
     /// person can answer THAT PARTICULAR accusation; swapping the code
     /// devalues both the pause and the answer.
     error CauseDiffersFromProposal(uint8 proposed, uint8 given);
+    /// The caller is allowed on this door in general, but THIS proposal is not
+    /// his. A separate error from NotOwnerOrChief on purpose: there the role is
+    /// wrong, here the role is right and the record belongs to someone else.
+    ///
+    /// ⚠️ Introduced by review round 1 of the pause (17 August 2026), and the
+    /// pause is what made it necessary. Until then a withdrawal cancelled a
+    /// SIGNAL — it took nothing away, because removal did not depend on the
+    /// proposal at all. Now the proposal is a MANDATORY INPUT, so withdrawing
+    /// someone else's is the power to stop a removal. The chief was
+    /// deliberately denied the power to REMOVE; handing him the power to
+    /// PREVENT a removal — and to do it again every time, proposal after
+    /// proposal — is no lighter.
+    error NotYourProposal();
 
     // Примечание: addArbiter/setChiefArbiter в ArbiterRegistryFacet тем же
     // решением владельца («никаких ручных», человек выходит, остаётся только
@@ -895,6 +908,21 @@ contract ArbiterAccountabilityFacet {
         // note is the part that has value. The scene it used to serve — a
         // removal with no preceding proposal — is gone with the test that
         // played it (see test/ArbiterRemovalForCause.t.sol).
+        //
+        // WHAT WOULD MAKE IT REACHABLE AGAIN — so the next reader neither
+        // deletes it as litter nor has to guess. Exactly three things, and any
+        // one of them is enough:
+        //   • the `proposedAt == 0` refusal at the top weakens — a "fast path"
+        //     for some cause, an exemption for the successor, anything that
+        //     lets a removal run without a standing proposal;
+        //   • something between that refusal and the snapshot below starts
+        //     clearing `d.removalProposals[arbiter]` — today nothing does, and
+        //     the snapshot is deliberately taken BEFORE clearSeat for that
+        //     reason;
+        //   • the snapshot moves ABOVE the gate, at which point it can again
+        //     be read on a record the gate was going to reject.
+        // If any of those happens, this branch goes back to carrying weight
+        // and needs a test of its own; until then it carries none.
         if (consumedProposal.proposedAt != 0) {
             emit RemovalProposalConsumed(
                 arbiter,
@@ -1049,17 +1077,63 @@ contract ArbiterAccountabilityFacet {
         }
     }
 
-    /// Отозвать предложение раньше срока — своё или чужое: владелец и
-    /// директор оба ходят под onlyOwnerOrChief, и любой из двух вправе снять
-    /// запись (та же пара, что вправе её положить).
-    function withdrawProposal(address arbiter) external onlyOwnerOrChief {
+    /// Withdraw a proposal before it expires — YOUR OWN. The holder of the
+    /// removal right may withdraw anyone's.
+    ///
+    /// ⚠️ THIS USED TO BE "ANYONE'S, BY EITHER OF THE TWO" (review round 1 of
+    /// the 48-hour pause, 17 August 2026). Both the owner and the chief walked
+    /// under onlyOwnerOrChief and either could clear any record — harmless
+    /// while a proposal was only a SIGNAL that took nothing away.
+    ///
+    /// The pause ended that. A removal now runs ONLY through a proposal that
+    /// has sat, so clearing someone else's record is the power to STOP a
+    /// removal — and to do it again every time, for as long as the accuser
+    /// keeps trying. The chief was deliberately denied the power to remove;
+    /// giving him the power to prevent one is no lighter, and it lands on the
+    /// exact principle the owner set out: gate what is WEIGHTY, not
+    /// everything.
+    ///
+    /// There is no case where the chief needs to withdraw the owner's
+    /// proposal. Someone else's record expires on its own after PROPOSAL_TTL,
+    /// and the chief cannot execute it in any event — it just lies there,
+    /// harming nobody.
+    ///
+    /// ⚠️ "The elder" is _removalAuthority, not the owner literally — the same
+    /// predicate as the right to remove, not a second condition written in its
+    /// own words (the seam this branch already caught twice: see M-3 and the
+    /// docstring of _removalAuthority). Before handover that is the owner;
+    /// after it, the named successor. So the successor gains a door that
+    /// onlyOwnerOrChief kept shut to him entirely — the same fix as В-2 made
+    /// for liftSuspension, and for the same reason: a door nobody opens is
+    /// worse than a door at the owner's.
+    ///
+    /// The modifier is gone from the signature for that reason and that reason
+    /// only; the role check itself did not weaken. Callers who are not the
+    /// authority still go through _requireOwnerOrChief — the very body of the
+    /// old modifier, now called explicitly — so a stranger still gets
+    /// NotOwnerOrChief, and the chief still loses this door entirely once
+    /// governance is active (I-2).
+    function withdrawProposal(address arbiter) external {
         ArbiterRegistryStorage.Data storage d = ArbiterRegistryStorage.data();
+        ArbiterRegistryStorage.RemovalProposal storage p = d.removalProposals[arbiter];
+
+        (address authority, ) = _removalAuthority(d);
+        if (msg.sender != authority) {
+            _requireOwnerOrChief(d);
+            // An empty record needs no separate branch: `by` is the zero
+            // address there, and no caller can be the zero address. So a
+            // non-authority calling against nobody's record is refused by this
+            // very line, while the authority still passes above it and no-ops
+            // in silence — which is what Minor 3 below is about.
+            if (msg.sender != p.by) revert NotYourProposal();
+        }
+
         // Minor 3, круг правок 1: событие только если запись реально была —
         // иначе вызов против человека, на которого никто ничего не клал,
         // оставлял бы в ленте RemovalProposalWithdrawn, читающийся как «против
         // него что-то было и это отозвали». Лента и есть весь смысл этой
         // работы, врать ей нельзя даже пустым отзывом.
-        bool existed = d.removalProposals[arbiter].proposedAt != 0;
+        bool existed = p.proposedAt != 0;
         delete d.removalProposals[arbiter];
         if (existed) {
             emit RemovalProposalWithdrawn(arbiter, msg.sender);

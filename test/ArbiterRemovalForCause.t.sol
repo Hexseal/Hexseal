@@ -577,6 +577,11 @@ contract ArbiterRemovalForCauseTest is Test {
         assertTrue(acc.hasLiveProposal(arbiter), unicode"за секунду до конца ещё живо");
     }
 
+    /// ⚠️ COUNTER-HALF of test_ChiefCannotWithdrawTheOwnersProposal since
+    /// 17 August 2026 (review round 1 of the pause). The new rule is "your own
+    /// only", not "nothing": a lock forbidding the chief every withdrawal would
+    /// pass the forbidding measurement and kill the role in silence. This test
+    /// is what reddens if that happens.
     function test_ChiefWithdrawsHisOwnProposal() public {
         _setChief(chief);
         vm.startPrank(chief);
@@ -584,6 +589,83 @@ contract ArbiterRemovalForCauseTest is Test {
         acc.withdrawProposal(arbiter);
         vm.stopPrank();
         assertFalse(acc.hasLiveProposal(arbiter), unicode"передумал — отозвал");
+    }
+
+    // ────────────────────────────────────────────────────────────
+    //  WITHDRAWING SOMEONE ELSE'S PROPOSAL (review round 1 of the pause,
+    //  17 August 2026)
+    //
+    //  The pause turned withdrawal into a weapon it never was. While a proposal
+    //  was only a signal, clearing another person's record took nothing away.
+    //  Now the removal runs ONLY through a proposal that has sat — so clearing
+    //  the record is the power to STOP a removal, again and again, for as long
+    //  as the accuser keeps trying.
+    //
+    //  Rule: your own only. Plus whoever holds the removal right may clear
+    //  anyone's — before handover the owner, after it the named successor, by
+    //  the SAME predicate as the removal itself.
+    // ────────────────────────────────────────────────────────────
+
+    /// The designated lock. Refusal is checked by BEHAVIOUR as well as by the
+    /// label: the proposal must still be standing afterwards, or "he was
+    /// refused" would say nothing about whether the record survived.
+    function test_ChiefCannotWithdrawTheOwnersProposal() public {
+        _setChief(chief);
+        acc.proposeRemoval(
+            arbiter, ArbiterAccountabilityFacet.Cause.Leak, keccak256("x"),
+            unicode"выложил переписку по спору третьей стороне"
+        );
+
+        vm.prank(chief);
+        vm.expectRevert(ArbiterAccountabilityFacet.NotYourProposal.selector);
+        acc.withdrawProposal(arbiter);
+
+        assertTrue(acc.hasLiveProposal(arbiter), "the accusation is still standing");
+        (, , , address by, ) = acc.getRemovalProposal(arbiter);
+        assertEq(by, owner, "and it is still the owner's");
+    }
+
+    /// The right to clear anyone's travels WITH the right to remove, by the
+    /// same predicate. After handover the owner keeps only his own — he gave
+    /// the removal away whole, and the veto over it goes with it.
+    function test_AfterHandoverTheOwnerCannotWithdrawTheChiefsProposal() public {
+        _setChief(chief);
+        vm.prank(chief);
+        acc.proposeRemoval(
+            arbiter, ArbiterAccountabilityFacet.Cause.Leak, keccak256("x"),
+            unicode"выложил переписку по спору третьей стороне"
+        );
+
+        _setDaoAddress(address(0xDA0));
+        _activateDAO();
+
+        vm.expectRevert(ArbiterAccountabilityFacet.NotYourProposal.selector);
+        acc.withdrawProposal(arbiter);
+        assertTrue(acc.hasLiveProposal(arbiter), "the chief's record survived the former owner");
+    }
+
+    /// And the door has an opener on the far side — otherwise "the owner may no
+    /// longer" would mean "nobody may", which is the exact trap В-2 dug out of
+    /// liftSuspension. onlyOwnerOrChief would not have let the successor in at
+    /// all.
+    function test_AfterHandoverTheSuccessorWithdrawsAnyProposal() public {
+        address dao = address(0xDA0);
+        _setChief(chief);
+        vm.prank(chief);
+        acc.proposeRemoval(
+            arbiter, ArbiterAccountabilityFacet.Cause.Leak, keccak256("x"),
+            unicode"выложил переписку по спору третьей стороне"
+        );
+
+        _setDaoAddress(dao);
+        _activateDAO();
+
+        vm.expectEmit(true, true, false, true, address(acc));
+        emit ArbiterAccountabilityFacet.RemovalProposalWithdrawn(arbiter, dao);
+        vm.prank(dao);
+        acc.withdrawProposal(arbiter);
+
+        assertFalse(acc.hasLiveProposal(arbiter), "whoever removes today also clears");
     }
 
     function test_StrangerCannotPropose() public {

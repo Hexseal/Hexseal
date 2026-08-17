@@ -715,6 +715,13 @@ export async function POST(req: NextRequest) {
           '0x05b9bc6b': 'RemovalTooEarly',
           '0x84db9930': 'ProposalStale',
           '0x033d5425': 'CauseDiffersFromProposal',
+          //   NotYourProposal — allowed on the withdrawal door in general, but
+          //     this record belongs to someone else. Separate from
+          //     NotOwnerOrChief: there the role is wrong, here it is right.
+          //     Clearing another person's proposal used to take nothing away;
+          //     now that the proposal is the only way in to a removal, it is
+          //     the power to stop one.
+          '0x4fbe5f11': 'NotYourProposal',
         };
 
         let reason = 'Inner call reverted';

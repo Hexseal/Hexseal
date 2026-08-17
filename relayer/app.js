@@ -1819,6 +1819,14 @@ export const FORWARDER_CUSTOM_ERRORS = {
   '0x05b9bc6b': 'RemovalTooEarly',
   '0x84db9930': 'ProposalStale',
   '0x033d5425': 'CauseDiffersFromProposal',
+  //   NotYourProposal — the caller is allowed on the withdrawal door in
+  //     general, but this record belongs to someone else. Separate from
+  //     NotOwnerOrChief on purpose: there the role is wrong, here the role is
+  //     right. Withdrawal used to clear anyone's record and that was harmless
+  //     while a proposal took nothing away; once the proposal became the only
+  //     way in to a removal, clearing someone else's became the power to STOP
+  //     one — which the chief was deliberately never given.
+  '0x4fbe5f11': 'NotYourProposal',
 };
 
 // Decodes MinimalForwarder.execute()'s `retdata` (the inner call's own revert data)
