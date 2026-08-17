@@ -228,7 +228,7 @@ contract PresentationRecordUpgradeTest is Test, ArbiterTwoFacetBench, ArbiterCha
     /// test_RewindOfTheCensusMatchesTheChainSnapshot ниже. У одного числа стало
     /// два независимых источника вместо одного.
     function _oldFacetSelectors() internal view returns (bytes4[] memory out) {
-        out = _chainCensusAfter10Aug();
+        out = _chainCensusAfter10Aug(upgrade.scriptPath());
         require(out.length == 56, unicode"раскладка до разреза 15 августа обязана быть 56 селекторов");
     }
 
@@ -241,7 +241,7 @@ contract PresentationRecordUpgradeTest is Test, ArbiterTwoFacetBench, ArbiterCha
     /// транзакцией; а порча снимка краснеет против отмотки.
     function test_RewindOfTheCensusMatchesTheChainSnapshot() public view {
         _assertSameSelectorSet(
-            _chainCensusAfter10Aug(),
+            _chainCensusAfter10Aug(upgrade.scriptPath()),
             _rewindCut(
                 _censusFromFile(CENSUS_PATH, CENSUS_FACET, 64, "script/UpgradeArbiterAccountability.s.sol"),
                 upgrade.addSelectors(),
@@ -336,6 +336,59 @@ contract PresentationRecordUpgradeTest is Test, ArbiterTwoFacetBench, ArbiterCha
         assertFalse(
             _censusContains(_abiSelectors("ArbiterRegistryFacet"), naked),
             unicode"голая removeArbiter воскресла в боевом фасете — задача 6 её удалила"
+        );
+    }
+
+    /// ЗАМОК НА ЗАМОРОЖЕННОСТЬ СЛЕПКА (круг правок 1, Ф-4).
+    ///
+    /// `test/legacy/LegacyPreSplitArbiterFacet.sol` — дословная копия
+    /// `src/facets/ArbiterRegistryFacet.sol` с коммита `b110fae1` (=main), из
+    /// которого собран фасет, стоящий на Base Sepolia с 15 августа. Верность
+    /// копии доказана диффом один раз, руками. Дальше её держала только просьба
+    /// в шапке файла: правка ТЕЛА двойника (не селекторов) давала НОЛЬ красных,
+    /// пока 64 селектора на месте. Слепок, который можно молча испортить, —
+    /// не слепок.
+    ///
+    /// Пиннится хеш ИСХОДНИКА, а не байткода: байткод поехал бы от смены версии
+    /// solc или `optimizer_runs`, то есть краснел бы на правках, к двойнику
+    /// отношения не имеющих. Замораживаем текст — он и заморожен.
+    ///
+    /// Хеш берётся не нами, а КОМПИЛЯТОРОМ: solc кладёт keccak256 каждого
+    /// исходника в `metadata.sources[…]` артефакта. Своя реализация чтения и
+    /// хеширования была бы вторым источником того же числа — тем самым
+    /// зеркалом, которое этот план ловит четвёртым правилом.
+    ///
+    /// ⚠️ ЭТОТ ЗАМОК СТОРОЖИТ НЕИЗМЕННОСТЬ, А НЕ ВЕРНОСТЬ. Он говорит «файл тот
+    /// же, что был», и ничего не говорит о том, что он совпадает с `b110fae1`, —
+    /// это доказано отдельно и перепроверяется одной командой, без форджа:
+    ///
+    ///   git show b110fae1:src/facets/ArbiterRegistryFacet.sol \
+    ///     | sed -e 's#"../RegistryFacet.sol"#"../../src/RegistryFacet.sol"#' \
+    ///           -e 's/\bArbiterRegistryStorage\b/LegacyArbiterRegistryStorage/g' \
+    ///           -e 's/\bIUSDCFull\b/ILegacyUSDCFull/g' \
+    ///           -e 's/\bIAgreementStatus\b/ILegacyAgreementStatus/g' \
+    ///           -e 's/^contract ArbiterRegistryFacet {$/contract LegacyPreSplitArbiterFacet {/' \
+    ///     | diff - <(sed -n '/Ниже — исходный заголовок/,$p' \
+    ///                    test/legacy/LegacyPreSplitArbiterFacet.sol | tail -n +3)
+    ///
+    /// Что исчезнет из поведения, если снять: тело слепка снова можно будет
+    /// править молча, и стенды двух исполненных разрезов начнут воспроизводить
+    /// не ту раскладку, которая лежала в цепи, — оставаясь зелёными.
+    ///
+    /// Если правка слепка ОСОЗНАННАЯ (например, заводится второй слепок и этот
+    /// переименован) — обновите литерал ниже вместе с ней. Ровно это и требуется:
+    /// не запрет, а осознанность.
+    function test_LegacyTwinSourceIsFrozen() public view {
+        string memory json = vm.readFile("out/LegacyPreSplitArbiterFacet.sol/LegacyPreSplitArbiterFacet.json");
+        bytes32 actual = vm.parseJsonBytes32(
+            json,
+            ".metadata.sources.['test/legacy/LegacyPreSplitArbiterFacet.sol'].keccak256"
+        );
+        assertEq(
+            actual,
+            bytes32(0x25c2c7fb28c64d4511ee63868223dc77708261b17d771a60d98e80bdbb2c80a0),
+            unicode"слепок выкаченного фасета изменился — он обязан быть неизменным; "
+            unicode"если правка осознанная, обновите литерал и перечитайте шапку файла"
         );
     }
 

@@ -48,6 +48,22 @@ import {IDiamondCut, IDiamondLoupe} from "../../src/DiamondProxy.sol";
  * доказательство на реальных данных, а не на факте, что cut прошёл.
  */
 contract UpgradeArbiterChatKey is Script {
+    /// Собственное имя скрипта — им снимок цепи, снятый ДЛЯ ЭТОГО разреза,
+    /// сверяется с тем, кого он валидирует (уборка 7а, круг правок 1, Ф-5).
+    /// Литерала в стенде здесь быть не должно: стенд следующего разреза
+    /// копируется с этого, и литерал переехал бы вместе с копипастой молча.
+    /// Значение, взятое у самого проверяемого скрипта, не переносится.
+    ///
+    /// ⚠️ Разрез ИСПОЛНЕН, и это добавление ничего в нём не меняет: `pure`
+    /// getter, никакого состояния, ни одной строки `run()`. Запись о том, что
+    /// произошло, осталась записью.
+    ///
+    /// Строка обязана совпадать с полем `forScript` в
+    /// test/fixtures/chain-2026-08-10-arbiter-selectors.json.
+    function scriptPath() public pure returns (string memory) {
+        return "script/archive/UpgradeArbiterChatKey.s.sol";
+    }
+
     function run() external {
         address diamond = vm.envAddress("DIAMOND_ADDRESS");
         uint256 pk = vm.envUint("PRIVATE_KEY");

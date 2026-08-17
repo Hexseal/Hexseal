@@ -255,7 +255,7 @@ contract ArbiterChatKeyUpgradeTest is Test, ArbiterTwoFacetBench, ArbiterChainCe
     /// Отмотка не выброшена — она сверяется со снимком в
     /// test_TwoStepRewindMatchesTheChainSnapshot ниже.
     function _preCutLayout() internal view returns (bytes4[] memory out) {
-        out = _chainCensusBefore10Aug();
+        out = _chainCensusBefore10Aug(upgrade.scriptPath());
         require(out.length == 54, unicode"раскладка до разреза 10 августа обязана быть 54 селектора");
     }
 
@@ -274,15 +274,19 @@ contract ArbiterChatKeyUpgradeTest is Test, ArbiterTwoFacetBench, ArbiterChainCe
             _presentationCutAddSelectors(),
             new bytes4[](0)
         );
+        // Снимок ЧУЖОГО разреза — литералом осознанно, разбор в докстринге
+        // `_censusFromFile` (круг правок 1, Ф-5): развернуть чужой скрипт ради
+        // его имени значит добавить `new` и вернуть гонку nonce, а защиты это
+        // не прибавляет — тип копируется копипастой так же, как строка.
         _assertSameSelectorSet(
-            _chainCensusAfter10Aug(),
+            _chainCensusAfter10Aug("script/UpgradePresentationRecord.s.sol"),
             afterThisCut,
             unicode"снимок цепи 14 августа",
             unicode"отмотка переписи на один шаг"
         );
 
         _assertSameSelectorSet(
-            _chainCensusBefore10Aug(),
+            _chainCensusBefore10Aug(upgrade.scriptPath()),
             _rewindCut(afterThisCut, upgrade.addSelectors(), upgrade.removeSelectors()),
             unicode"снимок цепи 10 августа",
             unicode"отмотка переписи на два шага"

@@ -97,6 +97,21 @@ abstract contract ArbiterChainCensus is CommonBase {
         // ⚠️ ГЛАВНАЯ ПРОВЕРКА ЭТОГО ЗАГРУЗЧИКА. Настоящая ловушка не «перепись
         // устарела» (это заметно), а «старую перепись взяли для НОВОГО скрипта
         // разреза» — и вот это проходит молча, а стоит целого разреза.
+        //
+        // ⚠️ ГДЕ ЛИТЕРАЛ ЗАПРЕЩЁН, А ГДЕ ОН РАВНОЦЕНЕН (круг правок 1, Ф-5).
+        // Замок работает потому, что значение берётся у скрипта, КОТОРЫЙ СТЕНД
+        // И ПРОВЕРЯЕТ: автор следующего разреза копирует стенд целиком, но его
+        // скрипт — новый и называет себя иначе, и перепись краснеет.
+        // Отсюда правило: снимок, РОДНОЙ этому стенду, обязан приходить
+        // как `upgrade.scriptPath()`.
+        // На снимок ЧУЖОГО разреза (его грузят перекрёстные сверки отмотки)
+        // правило не распространяется, и вот почему: чужой скрипт стенд не
+        // проверяет, а чтобы спросить его имя, пришлось бы его РАЗВЕРНУТЬ —
+        // лишний `new`, то есть ровно та гонка nonce, которую стенды пиннят
+        // сверкой адреса даймонда (28 красных при сдвиге). И защиты это не
+        // добавило бы ни капли: `new UpgradePresentationRecord().scriptPath()`
+        // переезжает копипастой так же молча, как строка в кавычках, — тип
+        // чужого скрипта копируется вместе со всем остальным.
         require(
             keccak256(bytes(vm.parseJsonString(json, ".forScript"))) == keccak256(bytes(forScript)),
             unicode"перепись снята для ДРУГОГО скрипта разреза — она не описывает то, что вы проверяете"
@@ -128,22 +143,32 @@ abstract contract ArbiterChainCensus is CommonBase {
 
     /// Раскладка ДО разреза «ключ чата арбитра» (10 августа 2026). Наблюдение,
     /// не отмотка.
-    function _chainCensusBefore10Aug() internal view returns (bytes4[] memory) {
+    ///
+    /// `forScript` берётся ПАРАМЕТРОМ, а не литералом (круг правок 1, Ф-5):
+    /// стенд, для которого этот снимок родной, обязан подставить сюда
+    /// `upgrade.scriptPath()` — значение у САМОГО проверяемого скрипта.
+    /// Разбор границы «своё против чужого» — в докстринге `_censusFromFile`.
+    function _chainCensusBefore10Aug(string memory forScript)
+        internal view returns (bytes4[] memory)
+    {
         return _censusFromFile(
             CENSUS_PATH_BEFORE_10_AUG,
             CENSUS_FACET_BEFORE_10_AUG,
             54,
-            "script/archive/UpgradeArbiterChatKey.s.sol"
+            forScript
         );
     }
 
     /// Раскладка МЕЖДУ разрезами 10 и 15 августа 2026. Наблюдение, не отмотка.
-    function _chainCensusAfter10Aug() internal view returns (bytes4[] memory) {
+    /// `forScript` — тем же правилом, что у соседа выше.
+    function _chainCensusAfter10Aug(string memory forScript)
+        internal view returns (bytes4[] memory)
+    {
         return _censusFromFile(
             CENSUS_PATH_AFTER_10_AUG,
             CENSUS_FACET_AFTER_10_AUG,
             56,
-            "script/UpgradePresentationRecord.s.sol"
+            forScript
         );
     }
 
