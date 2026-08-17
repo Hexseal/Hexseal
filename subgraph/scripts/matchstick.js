@@ -56,21 +56,55 @@ function die(lines) {
 
 // The binary and the AssemblyScript library have to be the same version — they
 // are two halves of one tool and the library's assertions call into the
-// binary's host functions. Taking the number from devDependencies means a
-// version bump in package.json moves both, and neither can be forgotten.
-function wantedVersion() {
-  const pkg = JSON.parse(fs.readFileSync(path.join(SUBGRAPH_DIR, 'package.json'), 'utf8'))
-  const spec = (pkg.devDependencies || {})['matchstick-as']
-  if (!spec) {
+// binary's host functions.
+//
+// The number comes from the library that is actually installed, not from the
+// range written in package.json. The range is a request; node_modules is the
+// answer, and they are allowed to differ: "^0.6.0" is satisfied by 0.6.1, so
+// reading the request would have this launcher fetch and check the 0.6.0 binary
+// while the tests compile against a 0.6.1 library — two halves of different
+// tools, and nothing anywhere would say so out loud. Reading what is installed
+// makes that impossible by construction: the pair moves together or the run
+// stops at an unpinned version.
+//
+// Not being installed is a refusal, not a fallback to the range. A guess about
+// which library is present is exactly the thing this function exists to stop.
+function installedVersion() {
+  let pkgPath
+  try {
+    pkgPath = require.resolve('matchstick-as/package.json', { paths: [SUBGRAPH_DIR] })
+  } catch (e) {
+    // Two different problems with two different fixes: nobody asked for the
+    // library, or somebody asked and it was never installed.
+    let declared
+    try {
+      const own = JSON.parse(fs.readFileSync(path.join(SUBGRAPH_DIR, 'package.json'), 'utf8'))
+      declared = (own.devDependencies || {})['matchstick-as'] || (own.dependencies || {})['matchstick-as']
+    } catch (_) {}
+    if (!declared) {
+      die([
+        'matchstick: package.json has no dependency on matchstick-as.',
+        'The test library and the test binary are versioned together; without the library',
+        'there is nothing for the binary to run, and no version to look a binary up by.',
+      ])
+    }
     die([
-      'matchstick: package.json has no devDependency on matchstick-as.',
-      'The test library and the test binary are versioned together; without the library',
-      'there is nothing for the binary to run.',
+      'matchstick: matchstick-as is declared (' + declared + ') but not installed.',
+      '',
+      'This launcher takes the binary version from the library that is actually in',
+      'node_modules, because the range in package.json is a request and not an answer.',
+      'With nothing installed there is nothing to read, and guessing from the range is',
+      'the mistake this check exists to prevent.',
+      '',
+      '  cd ' + SUBGRAPH_DIR + ' && npm ci',
     ])
   }
-  const m = /(\d+\.\d+\.\d+)/.exec(spec)
-  if (!m) die(['matchstick: cannot read a version out of matchstick-as spec "' + spec + '".'])
-  return m[1]
+  const version = JSON.parse(fs.readFileSync(pkgPath, 'utf8')).version
+  if (!version) die(['matchstick: ' + pkgPath + ' has no version field.'])
+  // Whatever this string turns out to be, it is looked up in PINNED_SHA256
+  // before it is ever put in a download URL — an unexpected version stops at
+  // the pin, it does not become a request to GitHub.
+  return version
 }
 
 // ---------------------------------------------------------------------------
@@ -118,9 +152,10 @@ function pinnedDigest(version, platform) {
     die([
       'matchstick: no pinned digest for version ' + version + '.',
       '',
-      'package.json asks for matchstick-as ' + version + ', and this launcher only runs a',
-      'binary whose sha256 was written down for that exact version. Bumping the library',
-      'means pinning the new binary too:',
+      'The matchstick-as installed in node_modules is ' + version + ', and this launcher only',
+      'runs a binary whose sha256 was written down for that exact version. Moving the',
+      'library — a bump, or a range that resolved somewhere new — means pinning the',
+      'matching binary too:',
       '',
       '  curl -sSL --fail -o /tmp/' + platform +
         ' https://github.com/LimeChain/matchstick/releases/download/' + version + '/' + platform,
@@ -317,7 +352,7 @@ function ensureBinary(version, platform) {
 }
 
 function main() {
-  const version = wantedVersion()
+  const version = installedVersion()
   const platform = platformName()
   const bin = ensureBinary(version, platform)
   const res = spawnSync(bin, process.argv.slice(2), { cwd: SUBGRAPH_DIR, stdio: 'inherit' })
