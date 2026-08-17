@@ -98,34 +98,43 @@ can actually be removed» — у всякого, кого можно снест�
 голым полем.
 
 ---------------------------------------------------------------------------
-КУДА ЭТО ПРАВИЛО НЕЛЬЗЯ КОПИРОВАТЬ — ЗАМЕРЕНО, А НЕ ПРИКИНУТО
+ГРАНИЦА ПРИМЕНИМОСТИ — ЗАМЕРЕНО ПОИМЁННО, А НЕ ПРИКИНУТО
 
-Замер 17 августа 2026: правило «голая ссылка = красное» прогнано по КАЖДОМУ
-полю-состоянию в src/, поимённо.
+Правило прогонялось по КАЖДОМУ полю состояния в src/, по имени. Итог после
+круга правок 1 (17 августа 2026):
 
-  • **Поля-отображения: 77 штук, 0 красных мест.** К мэппингу обращаются только
-    по ключу, голой ссылки на него в рабочем коде не встречается вовсе. То есть
-    работе гейт не мешает — это не удача `arbiterBond`, а свойство идиомы.
+  • **Поля-отображения: 77 штук, 0 красных мест.** Годится. К мэппингу
+    обращаются только по ключу, голой ссылки на него в рабочем коде не
+    встречается вовсе — и это свойство идиомы, а не удача `arbiterBond`.
 
-  • **Поля-массивы: 5 штук, 35 красных мест.** `.push`, `.length`, `.pop` — это
-    как раз `MemberAccess` по голой ссылке, а не `IndexAccess`. Скопировать
-    гейт на `arbiterList` НЕЛЬЗЯ: он покраснеет на исправном коде в первый же
-    прогон, и его отключат. Массиву нужна другая разметка законных обращений.
+  • **Поля-массивы: 5 имён, 35 красных мест** (`allAgreements` 8,
+    `arbiterList` 10, `facetAddresses` 6, `functionSelectors` 11). НЕ годится:
+    `.push`, `.length`, `.pop` — это `MemberAccess` по голой ссылке, а не
+    `IndexAccess`. Скопировать гейт на `arbiterList` нельзя — он покраснеет на
+    исправном коде в первый же прогон, и его отключат. Массиву нужна своя
+    разметка законных обращений.
 
-  • **⚠️ И третье, менее очевидное: мэппинг НА СТРУКТУРУ.** Ветка псевдонимов
-    (выше) считает псевдонимом всякий локальный storage-указатель, чей
-    инициализатор упоминает поле, — а `PendingVerdict storage v =
-    d.pendingVerdicts[спор];` это ровно он. После чего КАЖДОЕ чтение `v.поле`
-    — голый псевдоним, то есть красное. Замер по тому же прогону: с веткой
-    псевдонимов те же 77 мэппингов дают уже **201** красное место, и все 201
-    сидят на мэппингах со структурой в значении (`pendingVerdicts` 72, `jobs`
-    29, `requests` 31, `services` 31, …).
+⚠️ **ЧЕГО НЕ НАДО ПОНЯТЬ НЕВЕРНО: дело НЕ в типе значения.**
 
-    `arbiterBond` от этого защищён не проверкой, а ТИПОМ: значение `uint256`,
-    а локальным storage-указателем на `uint256`-элемент в Solidity быть
-    нечему. Значит гейт годен для мэппингов с ЗНАЧЕНИЕМ-ЗНАЧИМЫМ ТИПОМ и не
-    годен для мэппингов на структуру — до тех пор, пока `collect_aliases` не
-    научится отличать указатель на САМО ПОЛЕ от указателя на его ЭЛЕМЕНТ.
+Прежняя редакция этого абзаца писала, что мэппинги со структурой в значении
+дают **201** красное место, а `arbiterBond` спасает ТИП значения (`uint256`, а
+storage-указателем на `uint256`-элемент быть нечему). Первая половина была
+измерена верно, вывод — неверен, и это опровергнуто двумя сценами:
+
+    uint256 bond;  bond = d.arbiterBond[кто];        // значение простое —
+                                                     // и всё же 2 красных
+    T storage v = d.pendingVerdicts[…d.arbiterBond[кто]…];   // и ещё одно
+
+Те 201 были **дефектом разбора, а не свойством структур**: `collect_aliases`
+записывала в псевдонимы всякую локальную, чей инициализатор упоминал поле
+где-нибудь в поддереве, и не спрашивала про storage-локацию. После починки
+обеих веток тот же прогон по тем же 77 мэппингам даёт **0** — включая
+`pendingVerdicts`, `jobs`, `requests`, `services`, где раньше сидели все 201.
+
+Значит правило звучит так: **гейт применим к полю-мэппингу — с любым типом
+значения — И ровно до тех пор, пока разбор различает storage-локацию и требует,
+чтобы связывание шло ОТ САМОГО ПОЛЯ.** Оба условия несущие; тип значения не
+защищает ни от чего.
 
 ---------------------------------------------------------------------------
 ЧЕГО ГЕЙТ НЕ ЛОВИТ — СКАЗАНО ВСЛУХ
@@ -340,14 +349,38 @@ def is_storage_pointer_decl(node) -> bool:
     )
 
 
-def _mentions_field_or_alias(node, aliases) -> bool:
-    """В поддереве есть `…​.arbiterBond` или ссылка на уже известный псевдоним."""
-    for n in iter_nodes(node):
-        if touches_field(n):
-            return True
-        if n.get("nodeType") == "Identifier" and n.get("referencedDeclaration") in aliases:
-            return True
-    return False
+def is_field_or_alias_expr(node, aliases=()) -> bool:
+    """Выражение САМО ЕСТЬ поле (`d.arbiterBond`) либо САМО ЕСТЬ уже известный
+    псевдоним.
+
+    ⚠️ Именно «есть», а НЕ «упомянуто где-то в поддереве» (круг правок 1,
+    17 августа 2026). Прежняя редакция спрашивала про всё поддерево, и связывание
+
+        PendingVerdict storage v = d.pendingVerdicts[ … d.arbiterBond[кто] … ];
+
+    делало псевдонимом `v` — указатель на ЧУЖУЮ структуру, чей индекс всего лишь
+    прочитал залог. После чего каждое чтение `v.поле` объявлялось утечкой.
+    Псевдонимом поля можно стать только от самого поля или от другого его
+    псевдонима — ни от чего иного.
+
+    Связывание через что-то более сложное (тернарник, вызов) сюда НЕ попадает
+    намеренно: такое `d.arbiterBond` не будет признано законным в find_escapes и
+    выйдет наружу КРАСНЫМ. То есть сужение делает непонятый случай громким, а не
+    молчаливым.
+    """
+    if not isinstance(node, dict):
+        return False
+    return touches_field(node) or is_alias_id(node, aliases)
+
+
+def storage_pointer_ids(member) -> set:
+    """Объявления внутри функции, которые ЯВЛЯЮТСЯ storage-указателями, — включая
+    параметры. Только они вообще могут быть псевдонимом поля."""
+    return {
+        node["id"]
+        for node in iter_nodes(member)
+        if is_storage_pointer_decl(node) and node.get("id") is not None
+    }
 
 
 def collect_aliases(member) -> set:
@@ -359,7 +392,19 @@ def collect_aliases(member) -> set:
 
     Указатель на СТРУКТУРУ (`Data storage d = …data()`) сюда не попадает и не
     должен: `d.arbiterBond` — обычный MemberAccess, он ловился всегда.
+
+    ⚠️ ОБЕ ВЕТКИ СПРАШИВАЮТ ПРО STORAGE-ЛОКАЦИЮ (круг правок 1, 17 августа 2026).
+    Ветка объявления делала это с самого начала, ветка присваивания — НЕТ, и
+    оттого в псевдонимы попадала обычная локальная переменная:
+
+        uint256 bond;
+        bond = d.arbiterBond[кто];   // обыкновенное чтение, записи нет вовсе
+        if (bond > 0) { … }          // ← и вот это объявлялось утечкой, дважды
+
+    Ложное красное на исправном коде для гейта, который запускают руками, хуже
+    ложного зелёного: зелёное мы хотя бы ищем, а отключённый гейт не ищет никто.
     """
+    pointers = storage_pointer_ids(member)
     aliases: set = set()
     while True:
         grew = False
@@ -367,8 +412,7 @@ def collect_aliases(member) -> set:
             ntype = node.get("nodeType")
 
             if ntype == "VariableDeclarationStatement":
-                init = node.get("initialValue")
-                if init is None or not _mentions_field_or_alias(init, aliases):
+                if not is_field_or_alias_expr(node.get("initialValue"), aliases):
                     continue
                 for decl in node.get("declarations") or []:
                     if is_storage_pointer_decl(decl) and decl.get("id") not in aliases:
@@ -380,10 +424,9 @@ def collect_aliases(member) -> set:
                 if not isinstance(lhs, dict) or lhs.get("nodeType") != "Identifier":
                     continue
                 ref = lhs.get("referencedDeclaration")
-                if ref is None or ref in aliases:
+                if ref is None or ref in aliases or ref not in pointers:
                     continue
-                rhs = node.get("rightHandSide")
-                if rhs is not None and _mentions_field_or_alias(rhs, aliases):
+                if is_field_or_alias_expr(node.get("rightHandSide"), aliases):
                     aliases.add(ref)
                     grew = True
 
@@ -504,15 +547,14 @@ def find_escapes(member, aliases, relpath, cname, mname, starts):
                 ok_ids.add(id(base))
 
         # `mapping(...) storage x = d.arbiterBond;` (или `= y;`) — законное связывание.
+        # Предикат ТОТ ЖЕ, что у collect_aliases, и намеренно один на оба места:
+        # разойдись они — одна половина признавала бы связывание, которого другая
+        # не видит, и разница вылезла бы ложным красным.
         elif ntype == "VariableDeclarationStatement":
             init = node.get("initialValue")
-            if (
-                isinstance(init, dict)
-                and (touches_field(init) or is_alias_id(init, aliases))
-                and any(
-                    is_storage_pointer_decl(dcl) and dcl.get("id") in aliases
-                    for dcl in node.get("declarations") or []
-                )
+            if is_field_or_alias_expr(init, aliases) and any(
+                is_storage_pointer_decl(dcl) and dcl.get("id") in aliases
+                for dcl in node.get("declarations") or []
             ):
                 ok_ids.add(id(init))
 
@@ -521,7 +563,7 @@ def find_escapes(member, aliases, relpath, cname, mname, starts):
             lhs, rhs = node.get("leftHandSide"), node.get("rightHandSide")
             if is_alias_id(lhs, aliases):
                 ok_ids.add(id(lhs))  # цель присваивания — не утечка
-                if isinstance(rhs, dict) and (touches_field(rhs) or is_alias_id(rhs, aliases)):
+                if is_field_or_alias_expr(rhs, aliases):
                     ok_ids.add(id(rhs))
 
     out = []
