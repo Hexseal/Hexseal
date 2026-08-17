@@ -1582,7 +1582,14 @@ function ManagePanel({ isOwner }: { isOwner: boolean }) {
     try {
       const hash = await writeContractAsync({
         address: CONTRACTS.diamond as Address, abi: ARBITER_REGISTRY_ABI as Abi,
-        functionName: "addArbiter", args: [newArbiter as Address], gas: BigInt(120_000),
+        // ⚠️ Жёсткого `gas:` здесь больше нет — разбор целиком в близнеце этой
+        // кнопки, app/admin/page.tsx (handleAddArbiter). Коротко: явный лимит
+        // отменяет оценку кошелька, и тогда (1) новые двери августа
+        // (SeatingHandedOver, ReseatingRemovedIsOwnerOnly,
+        // ChiefBlocWouldDecideAppeal) ревертят уже в цепи, за деньги и молча,
+        // а (2) прежний потолок 120 000 стал вдобавок мал: замер 17 августа
+        // 2026 — 134 389 газа на самом вызове плюс 21 000 внутренних.
+        functionName: "addArbiter", args: [newArbiter as Address],
       });
       assertMined(await publicClient.waitForTransactionReceipt({ hash }));
       toast.success(t("arbiter.added_success"));
@@ -1598,7 +1605,13 @@ function ManagePanel({ isOwner }: { isOwner: boolean }) {
     try {
       const hash = await writeContractAsync({
         address: CONTRACTS.diamond as Address, abi: ARBITER_REGISTRY_ABI as Abi,
-        functionName: "removeArbiter", args: [addr as Address], gas: BigInt(120_000),
+        // ⚠️ Кнопка умирающая: голая removeArbiter(address) уходит из даймонда
+        // единственным Remove разреза UpgradeArbiterAccountability. Разбор — в
+        // близнеце, app/admin/page.tsx (handleRemove). Жёсткий газ снят, чтобы
+        // после разреза оценка провалилась ДО подписи, а не транзакция в цепи
+        // после неё: иначе отказ забирает деньги и не объясняет ничего. Сама
+        // кнопка не трогается — чем её заменить, решает владелец.
+        functionName: "removeArbiter", args: [addr as Address],
       });
       assertMined(await publicClient.waitForTransactionReceipt({ hash }));
       toast.success(t("arbiter.removed_success"));
