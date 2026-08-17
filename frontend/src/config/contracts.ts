@@ -2098,6 +2098,409 @@ export const ARBITER_REGISTRY_ABI = [
   },
 ] as const;
 
+/**
+ * ArbiterAccountabilityFacet — второй арбитражный фасет даймонда.
+ *
+ * ⚠️ ЗАЧЕМ ОТДЕЛЬНАЯ ЗАПИСЬ, ЕСЛИ АДРЕС ТОТ ЖЕ. Адрес действительно один —
+ * `CONTRACTS.diamond`, и какой фасет отвечает за селектор, снаружи не видно.
+ * Дело не в маршрутизации, а в РАСШИФРОВКЕ ОТКАЗА: прямая транзакция (не
+ * гейслесс) разбирает revert по ABI, которое ей дали, а не по таблице причин
+ * релеера. Ошибки, объявленной в этом ABI, viem не найдёт — и человек увидит
+ * сырой хекс ровно там, где ему надо объяснить, почему кнопка не сработала.
+ * До 17 августа 2026 фронт не знал об этом фасете вовсе.
+ *
+ * ⚠️ ПОЧЕМУ СТАРЫЕ `removeArbiter` И `ArbiterRemoved` ОСТАЛИСЬ В
+ * ARBITER_REGISTRY_ABI ВЫШЕ. Голая `removeArbiter(address)` удалена из
+ * исходника, но в живом даймонде она смонтирована и работает до разреза
+ * `script/UpgradeArbiterAccountability.s.sol`. Убрать её из ABI сейчас — сломать
+ * работающие сегодня кнопки. Уберётся вместе с ними, когда владелец решит, чем
+ * их заменить.
+ *
+ * ⚠️ ПЕРЕСЕЧЕНИЕ С ARBITER_REGISTRY_ABI — НАМЕРЕННОЕ. Восемь чтений
+ * (`getArbiterReward`, `getArbiterDeals`, `getArbiterChatKeys`,
+ * `getDisputeClaimedAt`, `getNoResponseAt`, `getPresentationDigests`,
+ * `getPresentationDigestsPage`, `getPresentationDigestCount`) уехали сюда
+ * коммитом a88a2200, но записи в ARBITER_REGISTRY_ABI не убраны: по ним ходит
+ * живой код, а даймонд отвечает по обеим записям одинаково. Расходиться этим
+ * двум спискам не даёт замок `lib/arbiterAccountabilityAbi.test.ts` — оба
+ * сверяются с исходником, а не друг с другом.
+ *
+ * Состав — 31 функция и 7 событий, сверяется с
+ * `src/facets/ArbiterAccountabilityFacet.sol` тем же замком: типы, ИМЕНА
+ * аргументов и возвратов, изменчивость и флаги `indexed`.
+ *
+ * `Cause` — enum контракта, в ABI это `uint8`:
+ *   0 OverturnedVerdicts · 1 Timeouts · 2 Silence — проверяются цепью,
+ *   3 Collusion · 4 Leak · 5 Other — только заверяются отпечатком.
+ */
+export const ARBITER_ACCOUNTABILITY_ABI = [
+  // ── Приостановка ─────────────────────────────────────────────────────────
+  {
+    inputs: [{ internalType: 'address', name: 'arbiter', type: 'address' }],
+    name: 'suspendArbiter',
+    outputs: [],
+    stateMutability: 'nonpayable',
+    type: 'function',
+  },
+  {
+    inputs: [{ internalType: 'address', name: 'arbiter', type: 'address' }],
+    name: 'liftSuspension',
+    outputs: [],
+    stateMutability: 'nonpayable',
+    type: 'function',
+  },
+  {
+    inputs: [{ internalType: 'address', name: 'arbiter', type: 'address' }],
+    name: 'isSuspended',
+    outputs: [{ internalType: 'bool', name: '', type: 'bool' }],
+    stateMutability: 'view',
+    type: 'function',
+  },
+  {
+    inputs: [{ internalType: 'address', name: 'arbiter', type: 'address' }],
+    name: 'getSuspendedUntil',
+    outputs: [{ internalType: 'uint256', name: '', type: 'uint256' }],
+    stateMutability: 'view',
+    type: 'function',
+  },
+  {
+    inputs: [],
+    name: 'getSuspensionWindow',
+    // `pure`, не `view`: число — константа контракта. Изменчивость сверяется
+    // замком, потому что от неё зависит, соберётся ли крючок чтения (wagmi
+    // useReadContract принимает только pure/view).
+    outputs: [{ internalType: 'uint256', name: '', type: 'uint256' }],
+    stateMutability: 'pure',
+    type: 'function',
+  },
+  // ── Снос по поводу ───────────────────────────────────────────────────────
+  {
+    inputs: [
+      { internalType: 'address', name: 'arbiter', type: 'address' },
+      { internalType: 'enum ArbiterAccountabilityFacet.Cause', name: 'cause', type: 'uint8' },
+      { internalType: 'bytes32', name: 'evidenceDigest', type: 'bytes32' },
+      { internalType: 'address', name: 'disputeRef', type: 'address' },
+    ],
+    name: 'removeArbiterForCause',
+    outputs: [],
+    stateMutability: 'nonpayable',
+    type: 'function',
+  },
+  {
+    inputs: [],
+    name: 'getMistakeThreshold',
+    outputs: [{ internalType: 'uint256', name: '', type: 'uint256' }],
+    stateMutability: 'pure',
+    type: 'function',
+  },
+  {
+    inputs: [],
+    name: 'getMaxArbiterMistakesMirror',
+    outputs: [{ internalType: 'uint256', name: '', type: 'uint256' }],
+    stateMutability: 'pure',
+    type: 'function',
+  },
+  {
+    inputs: [],
+    name: 'getDaoThresholdMirror',
+    outputs: [{ internalType: 'uint256', name: '', type: 'uint256' }],
+    stateMutability: 'pure',
+    type: 'function',
+  },
+  // ── Предложение директора ────────────────────────────────────────────────
+  {
+    inputs: [
+      { internalType: 'address', name: 'arbiter', type: 'address' },
+      { internalType: 'enum ArbiterAccountabilityFacet.Cause', name: 'cause', type: 'uint8' },
+      { internalType: 'bytes32', name: 'evidenceDigest', type: 'bytes32' },
+    ],
+    name: 'proposeRemoval',
+    outputs: [],
+    stateMutability: 'nonpayable',
+    type: 'function',
+  },
+  {
+    inputs: [{ internalType: 'address', name: 'arbiter', type: 'address' }],
+    name: 'withdrawProposal',
+    outputs: [],
+    stateMutability: 'nonpayable',
+    type: 'function',
+  },
+  {
+    inputs: [{ internalType: 'address', name: 'arbiter', type: 'address' }],
+    name: 'hasLiveProposal',
+    outputs: [{ internalType: 'bool', name: '', type: 'bool' }],
+    stateMutability: 'view',
+    type: 'function',
+  },
+  {
+    // Пятое поле `live` — не копия формулы TTL, а ответ самого контракта:
+    // считать «протухло ли предложение» на фронте значит завести второго
+    // хозяина у одного числа.
+    inputs: [{ internalType: 'address', name: 'arbiter', type: 'address' }],
+    name: 'getRemovalProposal',
+    outputs: [
+      { internalType: 'uint8',    name: 'cause',          type: 'uint8' },
+      { internalType: 'bytes32',  name: 'evidenceDigest', type: 'bytes32' },
+      { internalType: 'uint256',  name: 'proposedAt',     type: 'uint256' },
+      { internalType: 'address',  name: 'by',             type: 'address' },
+      { internalType: 'bool',     name: 'live',           type: 'bool' },
+    ],
+    stateMutability: 'view',
+    type: 'function',
+  },
+  {
+    inputs: [],
+    name: 'getProposalTTL',
+    outputs: [{ internalType: 'uint256', name: '', type: 'uint256' }],
+    stateMutability: 'pure',
+    type: 'function',
+  },
+  // ── Право ответа снятого ─────────────────────────────────────────────────
+  {
+    inputs: [{ internalType: 'bytes32', name: 'replyDigest', type: 'bytes32' }],
+    name: 'respondToRemoval',
+    outputs: [],
+    stateMutability: 'nonpayable',
+    type: 'function',
+  },
+  {
+    inputs: [{ internalType: 'address', name: 'arbiter', type: 'address' }],
+    name: 'getRemovalReply',
+    outputs: [{ internalType: 'bytes32', name: '', type: 'bytes32' }],
+    stateMutability: 'view',
+    type: 'function',
+  },
+  // ── Положение арбитра одним чтением ──────────────────────────────────────
+  //
+  // ⚠️ Тринадцать полей ОДНИМ вызовом не ради экономии: собранные семью
+  // отдельными запросами, они расходятся сами с собой — между запросами
+  // проходят блоки, и залог прочитан до сноса, а статус после.
+  {
+    inputs: [{ internalType: 'address', name: 'arbiter', type: 'address' }],
+    name: 'getArbiterStanding',
+    outputs: [
+      { internalType: 'uint256', name: 'xp',                     type: 'uint256' },
+      { internalType: 'uint256', name: 'cleanStreak',            type: 'uint256' },
+      { internalType: 'uint256', name: 'mistakeStreak',          type: 'uint256' },
+      { internalType: 'uint256', name: 'bond',                   type: 'uint256' },
+      { internalType: 'address', name: 'seatedBy',               type: 'address' },
+      { internalType: 'uint256', name: 'suspendedUntil',         type: 'uint256' },
+      { internalType: 'uint256', name: 'openClaims',             type: 'uint256' },
+      { internalType: 'uint256', name: 'cleanVerdicts',          type: 'uint256' },
+      { internalType: 'uint256', name: 'removedAt',              type: 'uint256' },
+      { internalType: 'bool',    name: 'hasLiveRemovalProposal', type: 'bool' },
+      { internalType: 'uint256', name: 'removalCount',           type: 'uint256' },
+      { internalType: 'uint256', name: 'lastRemovalAt',          type: 'uint256' },
+      { internalType: 'uint8',   name: 'lastRemovalCause',       type: 'uint8' },
+    ],
+    stateMutability: 'view',
+    type: 'function',
+  },
+  // ── Отдельные чтения о поведении арбитра ─────────────────────────────────
+  {
+    inputs: [{ internalType: 'address', name: 'addr', type: 'address' }],
+    name: 'getArbiterMistakeStreak',
+    outputs: [{ internalType: 'uint256', name: '', type: 'uint256' }],
+    stateMutability: 'view',
+    type: 'function',
+  },
+  {
+    inputs: [{ internalType: 'address', name: 'arbiterAddr', type: 'address' }],
+    name: 'getCleanVerdicts',
+    outputs: [{ internalType: 'uint256', name: '', type: 'uint256' }],
+    stateMutability: 'view',
+    type: 'function',
+  },
+  {
+    inputs: [{ internalType: 'address', name: 'addr', type: 'address' }],
+    name: 'getArbiterBond',
+    outputs: [{ internalType: 'uint256', name: '', type: 'uint256' }],
+    stateMutability: 'view',
+    type: 'function',
+  },
+  {
+    inputs: [{ internalType: 'address', name: 'addr', type: 'address' }],
+    name: 'getOpenClaimCount',
+    outputs: [{ internalType: 'uint256', name: '', type: 'uint256' }],
+    stateMutability: 'view',
+    type: 'function',
+  },
+  {
+    inputs: [{ internalType: 'address', name: 'arbiter', type: 'address' }],
+    name: 'getArbiterReward',
+    outputs: [{ internalType: 'uint256', name: '', type: 'uint256' }],
+    stateMutability: 'view',
+    type: 'function',
+  },
+  {
+    inputs: [{ internalType: 'address', name: 'arbiter', type: 'address' }],
+    name: 'getArbiterDeals',
+    outputs: [{ internalType: 'address[]', name: '', type: 'address[]' }],
+    stateMutability: 'view',
+    type: 'function',
+  },
+  // ── Провенанс посадки ────────────────────────────────────────────────────
+  {
+    inputs: [{ internalType: 'address', name: 'arbiter', type: 'address' }],
+    name: 'getSeatedBy',
+    outputs: [{ internalType: 'address', name: '', type: 'address' }],
+    stateMutability: 'view',
+    type: 'function',
+  },
+  {
+    inputs: [{ internalType: 'address', name: 'seater', type: 'address' }],
+    name: 'getSeatedCountBy',
+    outputs: [{ internalType: 'uint256', name: '', type: 'uint256' }],
+    stateMutability: 'view',
+    type: 'function',
+  },
+  // ── Доказательства: якорь, молчание, отпечатки, ключи ────────────────────
+  //
+  // ⚠️ Пол записи о молчании здесь СВОИМ ЧИСЛОМ не лежит и лежать не должен:
+  // спрашивается у цепи через ArbiterRegistryFacet.getNoResponseFloor()
+  // (hooks/useNoResponseFloor.ts). Второе объявление означало бы, что наружу
+  // отвечает зеркало, а правило применяется по оригиналу.
+  {
+    inputs: [{ internalType: 'address', name: 'agreement', type: 'address' }],
+    name: 'getDisputeClaimedAt',
+    outputs: [{ internalType: 'uint256', name: '', type: 'uint256' }],
+    stateMutability: 'view',
+    type: 'function',
+  },
+  {
+    inputs: [{ internalType: 'address', name: 'agreement', type: 'address' }],
+    name: 'getNoResponseAt',
+    outputs: [{ internalType: 'uint256', name: '', type: 'uint256' }],
+    stateMutability: 'view',
+    type: 'function',
+  },
+  {
+    inputs: [{ internalType: 'address', name: 'agreement', type: 'address' }],
+    name: 'getPresentationDigests',
+    outputs: [{ internalType: 'bytes32[]', name: '', type: 'bytes32[]' }],
+    stateMutability: 'view',
+    type: 'function',
+  },
+  {
+    // Два подряд uint256 — перестановка offset/limit по типам НЕВИДИМА, поэтому
+    // имена сверяются замком наравне с типами.
+    inputs: [
+      { internalType: 'address', name: 'agreement', type: 'address' },
+      { internalType: 'uint256', name: 'offset',    type: 'uint256' },
+      { internalType: 'uint256', name: 'limit',     type: 'uint256' },
+    ],
+    name: 'getPresentationDigestsPage',
+    outputs: [{ internalType: 'bytes32[]', name: '', type: 'bytes32[]' }],
+    stateMutability: 'view',
+    type: 'function',
+  },
+  {
+    inputs: [{ internalType: 'address', name: 'agreement', type: 'address' }],
+    name: 'getPresentationDigestCount',
+    outputs: [{ internalType: 'uint256', name: '', type: 'uint256' }],
+    stateMutability: 'view',
+    type: 'function',
+  },
+  {
+    // Оба возврата bytes32: перепутанные местами имена дают рабочий на вид код,
+    // который берёт НЕ ТОТ ключ — читающий код деструктурирует по позиции.
+    inputs: [{ internalType: 'address', name: 'arbiter', type: 'address' }],
+    name: 'getArbiterChatKeys',
+    outputs: [
+      { internalType: 'bytes32', name: 'boxKey',  type: 'bytes32' },
+      { internalType: 'bytes32', name: 'signKey', type: 'bytes32' },
+    ],
+    stateMutability: 'view',
+    type: 'function',
+  },
+  // ── События ──────────────────────────────────────────────────────────────
+  //
+  // ⚠️ Флаги `indexed` сверяются с исходником наравне с типами: они решают, что
+  // уедет в topics, а что в data. Ошибка в них не ревертит ничего — фильтр по
+  // арбитру молча не находит НИЧЕГО.
+  {
+    anonymous: false,
+    inputs: [
+      { indexed: true,  internalType: 'address', name: 'arbiter', type: 'address' },
+      { indexed: true,  internalType: 'address', name: 'by',      type: 'address' },
+      { indexed: false, internalType: 'uint256', name: 'until',   type: 'uint256' },
+    ],
+    name: 'ArbiterSuspended',
+    type: 'event',
+  },
+  {
+    anonymous: false,
+    inputs: [
+      { indexed: true, internalType: 'address', name: 'arbiter', type: 'address' },
+      { indexed: true, internalType: 'address', name: 'by',      type: 'address' },
+    ],
+    name: 'ArbiterSuspensionLifted',
+    type: 'event',
+  },
+  {
+    // `verifiedByChain` — правда о том, проверила ли цепь повод сама или только
+    // заверила отпечаток, не читая, что под ним. Без этой метки обе половины
+    // читались бы одинаково, и для второй это было бы враньём.
+    anonymous: false,
+    inputs: [
+      { indexed: true,  internalType: 'address', name: 'arbiter',         type: 'address' },
+      { indexed: true,  internalType: 'address', name: 'by',              type: 'address' },
+      { indexed: true,  internalType: 'enum ArbiterAccountabilityFacet.Cause', name: 'cause', type: 'uint8' },
+      { indexed: false, internalType: 'bool',    name: 'verifiedByChain', type: 'bool' },
+      { indexed: false, internalType: 'bytes32', name: 'evidenceDigest',  type: 'bytes32' },
+      { indexed: false, internalType: 'uint256', name: 'bondForfeited',   type: 'uint256' },
+    ],
+    name: 'ArbiterRemovedForCause',
+    type: 'event',
+  },
+  {
+    anonymous: false,
+    inputs: [
+      { indexed: true,  internalType: 'address', name: 'arbiter',        type: 'address' },
+      { indexed: true,  internalType: 'address', name: 'by',             type: 'address' },
+      { indexed: true,  internalType: 'enum ArbiterAccountabilityFacet.Cause', name: 'cause', type: 'uint8' },
+      { indexed: false, internalType: 'bytes32', name: 'evidenceDigest', type: 'bytes32' },
+      { indexed: false, internalType: 'uint256', name: 'at',             type: 'uint256' },
+    ],
+    name: 'RemovalProposed',
+    type: 'event',
+  },
+  {
+    anonymous: false,
+    inputs: [
+      { indexed: true, internalType: 'address', name: 'arbiter', type: 'address' },
+      { indexed: true, internalType: 'address', name: 'by',      type: 'address' },
+    ],
+    name: 'RemovalProposalWithdrawn',
+    type: 'event',
+  },
+  {
+    anonymous: false,
+    inputs: [
+      { indexed: true,  internalType: 'address', name: 'arbiter',     type: 'address' },
+      { indexed: false, internalType: 'bytes32', name: 'replyDigest', type: 'bytes32' },
+    ],
+    name: 'RemovalAnswered',
+    type: 'event',
+  },
+  {
+    // «Сбылось», в отличие от RemovalProposalWithdrawn («передумали»). Несёт
+    // поля СТЁРТОГО предложения, чтобы «предложили за X — снесли за Y» читалось
+    // из одной транзакции, без сшивания двух логов по адресу арбитра.
+    anonymous: false,
+    inputs: [
+      { indexed: true,  internalType: 'address', name: 'arbiter',        type: 'address' },
+      { indexed: true,  internalType: 'enum ArbiterAccountabilityFacet.Cause', name: 'proposedCause', type: 'uint8' },
+      { indexed: true,  internalType: 'address', name: 'proposedBy',     type: 'address' },
+      { indexed: false, internalType: 'bytes32', name: 'evidenceDigest', type: 'bytes32' },
+      { indexed: false, internalType: 'uint256', name: 'proposedAt',     type: 'uint256' },
+    ],
+    name: 'RemovalProposalConsumed',
+    type: 'event',
+  },
+] as const;
+
 export const REPUTATION_ABI = [
   {
     inputs: [{ internalType: 'address', name: 'agreement', type: 'address' }],
