@@ -72,12 +72,34 @@ function stripComments(source: string): string {
 }
 
 /**
- * Объект-аргумент каждого вызова `writeContract`/`writeContractAsync`, целиком.
+ * Как в этом файле зовут писателя.
+ *
+ * ⚠️ ДОБАВЛЕНО 17 АВГУСТА 2026, И ЭТО БЫЛА НАСТОЯЩАЯ ДЫРА, А НЕ ПРЕДОСТОРОЖНОСТЬ.
+ * Разбор искал два имени, `writeContract` и `writeContractAsync`, — а крючок
+ * отдаётся деструктуризацией и его законно переименовывают. В дереве такой
+ * вызов ровно один и он арбитрский: `const { writeContractAsync:
+ * applyAsArbiterWrite } = useWriteContract()` в `hooks/useWalletAccountData.ts`.
+ * Замер: поставить туда `gas: BigInt(120_000)` — 0 красных из 6. То есть правило
+ * «письмо в арбитражный фасет идёт без gas:» обходилось одной строкой
+ * переименования, и обходилось бы молча.
+ */
+function writerNames(source: string): string[] {
+  const names = new Set(['writeContract', 'writeContractAsync']);
+  for (const [, inside] of source.matchAll(/\{([^}]*)\}\s*=\s*useWriteContract\s*\(/g)) {
+    for (const [, alias] of inside.matchAll(/writeContract(?:Async)?\s*:\s*(\w+)/g)) {
+      names.add(alias);
+    }
+  }
+  return [...names];
+}
+
+/**
+ * Объект-аргумент каждого вызова писателя, целиком.
  * Границы берутся счётом скобок от первой `{` после имени вызова.
  */
 function writeCallArguments(source: string): string[] {
   const blocks: string[] = [];
-  const re = /\bwriteContract(?:Async)?\s*\(/g;
+  const re = new RegExp(`\\b(?:${writerNames(source).join('|')})\\s*\\(`, 'g');
   for (const match of source.matchAll(re)) {
     const open = source.indexOf('{', match.index! + match[0].length);
     if (open === -1) continue;
@@ -111,7 +133,10 @@ describe('письмо в арбитражный фасет оцениваетс
     // Разбор, который перестал что-либо находить (сменилось имя крючка, поехал
     // счёт скобок, сузился обход каталога), выглядит ровно как чистый код.
     // Число 4 — не «столько бывает», а нижняя граница: две кнопки посадки и две
-    // кнопки снятия на двух страницах, admin и arbiter.
+    // кнопки снятия на двух страницах, admin и arbiter. Вердикт, финализация и
+    // награда 17 августа ушли на гейслесс и прямыми вызовами больше не идут —
+    // их место в этом счёте занял `applyAsArbiter`, которого прежний разбор не
+    // видел вовсе (см. `writerNames` выше).
     expect(ARBITER_WRITES.length, `найдено вызовов: ${ARBITER_WRITES.length}`)
       .toBeGreaterThanOrEqual(4);
   });
@@ -155,6 +180,18 @@ describe('разбор сам по себе честен', () => {
       });
     `;
     const [block] = writeCallArguments(stripComments(fake));
+    expect(/\bgas\s*:/.test(block)).toBe(true);
+  });
+
+  it('переименованный писатель виден разбору', () => {
+    // Тот самый обход, который дерево уже содержало: имя крючка сменили при
+    // деструктуризации, и вызов стал невидим.
+    const fake = `
+      const { writeContractAsync: applyAsArbiterWrite } = useWriteContract();
+      await applyAsArbiterWrite({ abi: ARBITER_REGISTRY_ABI, functionName: 'applyAsArbiter', gas: BigInt(1) });
+    `;
+    const [block] = writeCallArguments(stripComments(fake));
+    expect(block).toBeDefined();
     expect(/\bgas\s*:/.test(block)).toBe(true);
   });
 

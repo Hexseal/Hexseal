@@ -20,6 +20,7 @@ import { useTranslations } from "next-intl";
 import {
   commitDisputeClaimGasless, claimDisputeGasless, releaseDisputeGasless,
   setArbiterChatKeyGasless, recordNoResponseGasless,
+  submitVerdictGasless, finalizeVerdictGasless, withdrawArbiterRewardGasless,
 } from "@/lib/relay";
 import { keccak256, encodePacked, parseAbi } from "viem";
 import type { Abi, Address, Hex, TransactionReceipt } from "viem";
@@ -134,7 +135,12 @@ export default function ArbiterPage() {
   const { address } = useAccount();
   const { data: walletClient } = useWalletClient();
   const publicClient = usePublicClient();
-  const { writeContractAsync } = useWriteContract();
+  // ⚠️ `useWriteContract` здесь БОЛЬШЕ НЕ БЕРЁТСЯ (17 августа 2026). Все три
+  // письма этой страницы — вердикт, финализация, награда — ушли на гейслесс:
+  // арбитр по правилу трёх родов пользователь, и эфира от него требовать
+  // нельзя. Прямая транзакция никуда не делась, она внутри обёрток
+  // (`lib/relay.ts`) как запасной путь на молчащий релеер. Крючок остаётся
+  // только у панели управления корпусом ниже — там жмёт владелец или директор.
   // Ключ = действие + дело, а не один голый адрес дела. По одному делу на
   // экране стоят «Вернуть клиенту», «Заплатить исполнителю» и «Отказаться от
   // дела» разом, а на вкладке споров — «Взяться» и «Отказаться»: общий на всех
@@ -583,15 +589,14 @@ export default function ArbiterPage() {
   // button (verdictReady state, gated on the 24h window below) is the only
   // place finalizeVerdict is called from now.
   const handleSubmitVerdict = async (agreement: string, clientWins: boolean) => {
-    if (!publicClient) { toast.error(t("common.error")); return; }
+    if (!walletClient || !publicClient) { toast.error(t("common.error")); return; }
     setBusy(`verdict:${clientWins ? 'client' : 'executor'}:${agreement}`);
     const id = toast.loading(clientWins ? t("arbiter.submitting_refund") : t("arbiter.submitting_pay"));
     try {
-      const hash1 = await writeContractAsync({
-        address: CONTRACTS.diamond as Address, abi: ARBITER_REGISTRY_ABI as Abi,
-        functionName: "submitVerdict", args: [agreement as Address, clientWins],
-      });
-      assertMined(await publicClient.waitForTransactionReceipt({ hash: hash1 }));
+      const { txHash: hash1 } = await submitVerdictGasless(
+        walletClient, publicClient, agreement as Address, clientWins,
+      );
+      assertMined(await publicClient.waitForTransactionReceipt({ hash: hash1 as `0x${string}` }));
 
       toast.success(t("arbiter.verdict_pending"), { id });
       bump();
@@ -602,15 +607,14 @@ export default function ArbiterPage() {
 
   // Finalize an already-submitted verdict, once FINALIZE_DELAY has passed.
   const handleFinalizeVerdict = async (agreement: string) => {
-    if (!publicClient) { toast.error(t("common.error")); return; }
+    if (!walletClient || !publicClient) { toast.error(t("common.error")); return; }
     setBusy(`finalize:${agreement}`);
     const id = toast.loading(t("arbiter.finalizing"));
     try {
-      const hash = await writeContractAsync({
-        address: CONTRACTS.diamond as Address, abi: ARBITER_REGISTRY_ABI as Abi,
-        functionName: "finalizeVerdict", args: [agreement as Address],
-      });
-      assertMined(await publicClient.waitForTransactionReceipt({ hash }));
+      const { txHash: hash } = await finalizeVerdictGasless(
+        walletClient, publicClient, agreement as Address,
+      );
+      assertMined(await publicClient.waitForTransactionReceipt({ hash: hash as `0x${string}` }));
       toast.success(t("arbiter.pay_success"), { id });
       bump();
     } catch (err: any) {
@@ -619,15 +623,12 @@ export default function ArbiterPage() {
   };
 
   const handleWithdraw = async () => {
-    if (!publicClient) return;
+    if (!walletClient || !publicClient) return;
     setBusy("reward");
     const id = toast.loading(t("arbiter.withdrawing"));
     try {
-      const hash = await writeContractAsync({
-        address: CONTRACTS.diamond as Address, abi: ARBITER_REGISTRY_ABI as Abi,
-        functionName: "withdrawArbiterReward",
-      });
-      assertMined(await publicClient.waitForTransactionReceipt({ hash }));
+      const { txHash: hash } = await withdrawArbiterRewardGasless(walletClient, publicClient);
+      assertMined(await publicClient.waitForTransactionReceipt({ hash: hash as `0x${string}` }));
       toast.success(t("arbiter.reward_withdrawn"), { id });
       refetchReward();
       bump();

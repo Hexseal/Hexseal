@@ -25,6 +25,9 @@
  * форвардера, и повтор тем же адресом уходит ждать свежести (9 проб по 750 мс).
  * Поддельное чтение вдобавок отдаёт РАСТУЩИЙ счётчик.
  */
+import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, it, expect, beforeEach, afterAll } from 'vitest';
 import { encodeFunctionData, parseAbi } from 'viem';
 import {
@@ -277,6 +280,168 @@ describe('ответ снятого арбитра идёт через реле�
     expect(lastPost().body.data).not.toBe(encodeFunctionData({
       abi: EXPECTED_ABI, functionName: 'respondToRemoval', args: [DIGEST],
     }));
+  });
+});
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ *  И ВТОРАЯ ПОЛОВИНА ШВА: ОБЁРТКОЙ НАДО ЕЩЁ И ПОЛЬЗОВАТЬСЯ
+ *
+ *  Всё выше доказывает, что обёртки ходят через релеер. Ничто выше не
+ *  доказывает, что их зовут ЭКРАНЫ: страница могла бы завтра вернуться к
+ *  `writeContractAsync`, и замки остались бы зелёными, защищая код, которым
+ *  никто не пользуется. Ровно этот класс уже ловили в этом дереве
+ *  (`arbiterClaimGateStructure.test.ts`, третий слой).
+ *
+ *  ⚠️ ЭТО ПРОВЕРКА ПО ТЕКСТУ, и так и написано. Рендерить страницу нечем — у
+ *  фронта нет jsdom, окружение `node`. Текст здесь и есть предмет: прямой
+ *  `writeContract` в обход обёртки МЕНЯЕТ поведение (кошелёк платит газ сам),
+ *  а не «убирает строчку».
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+const SRC_DIR = fileURLToPath(new URL('../', import.meta.url));
+
+/**
+ * ⚠️ `lib/relay.ts` ИЗ ОБХОДА ИСКЛЮЧЁН НАМЕРЕННО, а не по недосмотру: прямая
+ * отправка живёт там законно — это второй шлюз на молчащий релеер, и он обязан
+ * существовать. Запрет касается всех ОСТАЛЬНЫХ мест.
+ */
+const RELAY_MODULE = 'lib/relay.ts';
+
+/** Арбитрские записи, которым гейслесс обязателен по правилу трёх родов. */
+const USER_ARBITER_WRITES = new Set([
+  'submitVerdict', 'finalizeVerdict', 'withdrawArbiterReward', 'respondToRemoval',
+  'claimDispute', 'commitDisputeClaim', 'releaseDisputeClaim', 'setArbiterChatKey',
+  'recordNoResponse', 'recordPresentationDigest', 'fundDispute', 'withdrawDisputeBounty',
+  'applyAsArbiter',
+]);
+
+/**
+ * Названные исключения — «прямой вызов пока остаётся, и вот почему». Список
+ * существует, чтобы дыра лежала в коде на виду, а не пряталась за тем, что имя
+ * не внесли в запрет.
+ *
+ * `applyAsArbiter` — четвёртое арбитрское письмо, найденное этой работой и
+ * НЕ переведённое. Причины названы замером, а не мнением:
+ *   • кнопка гейтится `daoActive === true` (`useWalletAccountData.ts`), а цепь
+ *     на 17 августа отвечает `isDaoActive() = false` — путь недостижим;
+ *   • заявка тянет залог через `transferFrom`, а разрешения в этом пути нет
+ *     вовсе (ни `approve`, ни `permit` — грепом по файлу ноль), то есть вызов
+ *     отвергается ещё до всякого газа;
+ *   • гейслесс ей нужен ВМЕСТЕ с ногой permit — это форма подписи и решение о
+ *     ней, а не побочный эффект правки соседних кнопок.
+ */
+const KNOWN_DIRECT: Record<string, string> = {
+  applyAsArbiter: 'hooks/useWalletAccountData.ts',
+};
+
+function sourceFiles(dir: string): string[] {
+  const out: string[] = [];
+  for (const entry of readdirSync(dir)) {
+    const full = join(dir, entry);
+    if (statSync(full).isDirectory()) { out.push(...sourceFiles(full)); continue; }
+    if (!/\.tsx?$/.test(entry)) continue;
+    if (/\.test\.tsx?$/.test(entry)) continue;
+    out.push(full);
+  }
+  return out;
+}
+
+/** Комментарии снимаются до разбора: разбор этой самой ловушки записан
+ *  комментарием внутри тех файлов, что она сторожит. */
+function stripComments(source: string): string {
+  return source.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/\/\/[^\n]*/g, ' ');
+}
+
+/**
+ * Как в этом файле зовут писателя. По умолчанию `writeContract`/
+ * `writeContractAsync`, но крючок отдаётся деструктуризацией и его законно
+ * переименовывают: `const { writeContractAsync: applyAsArbiterWrite } =
+ * useWriteContract()`.
+ *
+ * ⚠️ ЭТО НЕ ПЕДАНТИЗМ, А ЗАМЕР. Первая редакция этого замка искала только два
+ * имени и не увидела ЕДИНСТВЕННЫЙ живой прямой вызов арбитрской функции во всём
+ * дереве — `applyAsArbiter` в `hooks/useWalletAccountData.ts`, переименованный
+ * ровно так. То есть запрет был зелёным при нарушении прямо в дереве, и
+ * обойти его дальше можно было бы одной строкой переименования.
+ */
+function writerNames(source: string): string[] {
+  const names = new Set(['writeContract', 'writeContractAsync']);
+  for (const [, inside] of source.matchAll(/\{([^}]*)\}\s*=\s*useWriteContract\s*\(/g)) {
+    for (const [, alias] of inside.matchAll(/writeContract(?:Async)?\s*:\s*(\w+)/g)) {
+      names.add(alias);
+    }
+  }
+  return [...names];
+}
+
+/** Имена функций из аргументов каждого вызова писателя. */
+function writtenFunctionNames(source: string): string[] {
+  const names: string[] = [];
+  const re = new RegExp(`\\b(?:${writerNames(source).join('|')})\\s*\\(`, 'g');
+  for (const match of source.matchAll(re)) {
+    const open = source.indexOf('{', match.index! + match[0].length);
+    if (open === -1) continue;
+    let depth = 0;
+    let end = -1;
+    for (let i = open; i < source.length; i += 1) {
+      if (source[i] === '{') depth += 1;
+      else if (source[i] === '}') { depth -= 1; if (depth === 0) { end = i; break; } }
+    }
+    if (end === -1) throw new Error('незакрытый объект аргументов writeContract — разбор ненадёжен');
+    const name = /functionName\s*:\s*['"](\w+)['"]/.exec(source.slice(open, end + 1))?.[1];
+    if (name) names.push(name);
+  }
+  return names;
+}
+
+const DIRECT_WRITES = sourceFiles(SRC_DIR)
+  .map((file) => ({ path: file.slice(SRC_DIR.length).split(/[\\/]/).join('/'), file }))
+  .filter(({ path }) => path !== RELAY_MODULE)
+  .flatMap(({ path, file }) =>
+    writtenFunctionNames(stripComments(readFileSync(file, 'utf8')))
+      .map((functionName) => ({ path, functionName })));
+
+describe('арбитрские действия зовутся через обёртки, а не мимо них', () => {
+  it('разбор вообще что-то нашёл — иначе проверка ниже тавтологична', () => {
+    // Замок, переставший находить вызовы (сменилось имя крючка, поехал счёт
+    // скобок, сузился обход), выглядит ровно как чистый код.
+    expect(DIRECT_WRITES.length, `найдено прямых вызовов: ${DIRECT_WRITES.length}`)
+      .toBeGreaterThanOrEqual(5);
+  });
+
+  it('ни одно пользовательское арбитрское письмо не идёт прямой транзакцией мимо relay.ts', () => {
+    const offenders = DIRECT_WRITES
+      .filter(({ functionName }) => USER_ARBITER_WRITES.has(functionName))
+      .filter(({ path, functionName }) => KNOWN_DIRECT[functionName] !== path)
+      .map(({ path, functionName }) => `${path}: ${functionName}`);
+    expect(offenders).toEqual([]);
+  });
+
+  it('названные исключения ещё существуют — протухший список прикрывал бы новую дыру', () => {
+    for (const [functionName, path] of Object.entries(KNOWN_DIRECT)) {
+      expect(
+        DIRECT_WRITES.some((w) => w.functionName === functionName && w.path === path),
+        `исключение ${functionName} в ${path} больше не найдено — либо починено (убрать отсюда), либо переехало`,
+      ).toBe(true);
+    }
+  });
+
+  it('переименованный писатель виден разбору — иначе запрет обходится одной строкой', () => {
+    const fake = `
+      const { writeContractAsync: sneaky } = useWriteContract();
+      await sneaky({ abi: A, functionName: 'submitVerdict', args: [] });
+    `;
+    expect(writerNames(fake)).toContain('sneaky');
+    expect(writtenFunctionNames(stripComments(fake))).toEqual(['submitVerdict']);
+  });
+
+  it('панель управления корпусом под правило не подпадает — там жмёт админ-роль', () => {
+    // Посадка и снятие арбитра — не пользовательские действия: их делает
+    // владелец или директор, и по правилу трёх родов эфир у них обязан быть.
+    // Проверяется явно, чтобы «зелено» не означало «этих вызовов не нашли».
+    const admin = DIRECT_WRITES
+      .filter(({ functionName }) => ['addArbiter', 'removeArbiter', 'setChiefArbiter'].includes(functionName));
+    expect(admin.length).toBeGreaterThanOrEqual(3);
   });
 });
 
