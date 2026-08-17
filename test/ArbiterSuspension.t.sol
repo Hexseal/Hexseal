@@ -139,7 +139,8 @@ contract ArbiterSuspensionTest is Test, ArbiterTwoFacetBench {
             arbiter,
             ArbiterAccountabilityFacet.Cause.Collusion,
             keccak256(unicode"переписка"),
-            address(0)
+            address(0),
+            unicode"трижды забирал споры одного контрагента и трижды решал в его пользу"
         );
         assertTrue(acc.isSuspended(arbiter), unicode"сетап: снос выставил окно C-1");
 
@@ -157,7 +158,8 @@ contract ArbiterSuspensionTest is Test, ArbiterTwoFacetBench {
             arbiter,
             ArbiterAccountabilityFacet.Cause.Collusion,
             keccak256(unicode"переписка"),
-            address(0)
+            address(0),
+            unicode"трижды забирал споры одного контрагента и трижды решал в его пользу"
         );
 
         acc.liftSuspension(arbiter);
@@ -593,7 +595,12 @@ contract ArbiterSuspensionTest is Test, ArbiterTwoFacetBench {
         // цепью, поэтому proposeRemoval не трогает arbiterMistakeStreak (503
         // выше остаётся нетронутым) и требует только ненулевой отпечаток.
         vm.prank(chief);
-        acc.proposeRemoval(arbiter, ArbiterAccountabilityFacet.Cause.Collusion, bytes32(uint256(0xC0FFEE)));
+        acc.proposeRemoval(
+            arbiter,
+            ArbiterAccountabilityFacet.Cause.Collusion,
+            bytes32(uint256(0xC0FFEE)),
+            unicode"трижды забирал споры одного контрагента и трижды решал в его пользу"
+        );
 
         (
             uint256 xp,

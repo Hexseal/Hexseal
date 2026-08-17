@@ -8,10 +8,10 @@ pragma solidity ^0.8.20;
 // см. test/StorageLayout.t.sol.
 //
 // Регенерирован 2026-07-25 из живых ABI (`forge inspect <Facet> methodIdentifiers`)
-// после ~40 инкрементальных апгрейдов, которые этот файл не отслеживал. Все 199
-// селектор 12 фасетов проверены против test/DeployFullSelectors.t.sol — тот тест
+// после ~40 инкрементальных апгрейдов, которые этот файл не отслеживал. Все 200
+// селекторов 12 фасетов проверены против test/DeployFullSelectors.t.sol — тот тест
 // падает, если этот файл и живые ABI разойдутся снова. Число здесь — сумма
-// литералов `new bytes4[](n)` в билдерах ниже; оно уже двенадцатикратно протухало (стояло
+// литералов `new bytes4[](n)` в билдерах ниже; оно уже тринадцатикратно протухало (стояло
 // 148, когда фабрика выросла с 13 до 20; затем 159, до порога и котировки
 // платного вызова арбитра; затем 162 — цифру не поправили в том же коммите,
 // где код вырос до 167, 31 июля 2026; затем 167, когда 9 августа 2026 добавился
@@ -74,6 +74,19 @@ pragma solidity ^0.8.20;
 // (69 → 55 и 17 → 31), не добавив и не убрав ни одного селектора. Повод —
 // потолок EIP-170: реестр стоял на 24 516 из 24 576, свободно 60 байт, и
 // задача 5 в него не помещалась; после переноса 23 238, запас 1 338.
+// Затем 200, 17 августа 2026, задача 1 плана removal-due-process: причина
+// СЛОВАМИ. `Cause` — числовой код, и публичная запись о сносе не содержала ни
+// одного слова; «снос с поводом» обещал объяснение, которого не было нигде.
+// ArbiterAccountabilityFacet получил getMaxReasonBytes (+1, 32 против прежних
+// 31) — потолок слов в БАЙТАХ, чтобы форма спрашивала его у цепи, а не хранила
+// копию. Три уже перечисленных входа сменили ПОДПИСЬ, не прибавив селекторов
+// в этом файле (removeArbiterForCause/proposeRemoval получили `string reason`,
+// respondToRemoval — `string reply`): здесь селекторы берутся от типа. В цепи
+// это Replace трёх старых селекторов, а не Add — состав разреза в
+// script/UpgradeArbiterAccountability.s.sol. Новых полей хранилища задача не
+// потребовала: слова живут в СОБЫТИЯХ (RemovalReasonGiven/RemovalReplyGiven),
+// их читатель — лента и карточка, а хранилище стоило бы дороже и двигало бы
+// раскладку зря.
 // Пересчитать, не полагаясь на глаз:
 //   grep -o "new bytes4\[\]([0-9]*)" script/DeployFull.s.sol \
 //     | sed 's/.*(\([0-9]*\))/\1/' | awk '{s+=$1} END {print s}'
@@ -588,7 +601,7 @@ contract DeployFull is Script {
     // (86.4%), запаса не хватало. Делит тот же ArbiterRegistryStorage
     // namespace — переноса данных нет.
     function arbiterAccountabilityFacetSelectors() public pure returns (bytes4[] memory sels) {
-        sels = new bytes4[](31);
+        sels = new bytes4[](32);
         sels[0] = ArbiterAccountabilityFacet.suspendArbiter.selector;
         sels[1] = ArbiterAccountabilityFacet.liftSuspension.selector;
         sels[2] = ArbiterAccountabilityFacet.isSuspended.selector;
@@ -678,6 +691,19 @@ contract DeployFull is Script {
         sels[28] = ArbiterAccountabilityFacet.getPresentationDigests.selector;
         sels[29] = ArbiterAccountabilityFacet.getPresentationDigestCount.selector;
         sels[30] = ArbiterAccountabilityFacet.getPresentationDigestsPage.selector;
+
+        // ── Причина словами (замысел 17 августа 2026, решение 7) ──
+        // Потолок слов в БАЙТАХ, спрашивается у цепи. Копия числа во фронте
+        // разошлась бы молча и дала бы человеку отказ транзакции вместо
+        // подсказки в поле. Той же работой сменились ПОДПИСИ трёх уже
+        // перечисленных входов (removeArbiterForCause, proposeRemoval,
+        // respondToRemoval получили `string`) — здесь селекторы берутся от
+        // типа, поэтому строки выше править не пришлось. В цепи это по-прежнему
+        // Add, а не Replace: разрез этого плана ещё не сделан, ни один из трёх
+        // старых селекторов в даймонде не смонтирован — сменилось лишь
+        // ЗНАЧЕНИЕ селектора внутри Add-группы
+        // script/UpgradeArbiterAccountability.s.sol.
+        sels[31] = ArbiterAccountabilityFacet.getMaxReasonBytes.selector;
     }
 
     // DealMetadataFacet — 1 селектор

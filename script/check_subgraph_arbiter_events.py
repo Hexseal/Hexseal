@@ -95,10 +95,23 @@ ACCOUNTABILITY = {
 }
 
 # An accountability event that is deliberately not indexed goes here with the
-# reason, and the gate stays green. Empty on purpose: everything the facet
-# emits today is indexed. This exists so that leaving one out is a decision
-# someone has to write down, rather than something that happens by forgetting.
-NOT_INDEXED: dict = {}
+# reason, and the gate stays green. This exists so that leaving one out is a
+# decision someone has to write down, rather than something that happens by
+# forgetting.
+NOT_INDEXED: dict = {
+    "RemovalReasonGiven": (
+        "the words of the accusation, added 17 August 2026. Not indexed yet on "
+        "purpose: the contract work landed first so the feed shows what will be, "
+        "not what is. The handler and the schema field are a separate piece of "
+        "work — until it lands, the words live in the log and nowhere else."
+    ),
+    "RemovalReplyGiven": (
+        "the words of the answer, the symmetric half of RemovalReasonGiven. Same "
+        "reason, same piece of work: indexing one side and not the other would "
+        "make the feed one-sided, which is precisely the defect this design "
+        "closes."
+    ),
+}
 
 # From ArbiterRegistryFacet only what the accountability feed needs: how the
 # seat was taken, and the two ways of losing it that live in that facet.

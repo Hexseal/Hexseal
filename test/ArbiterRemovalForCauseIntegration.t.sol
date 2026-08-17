@@ -223,7 +223,8 @@ contract ArbiterRemovalForCauseIntegrationTest is Test {
         );
 
         ArbiterAccountabilityFacet(address(diamond)).removeArbiterForCause(
-            arbiter, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0), address(0)
+            arbiter, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0), address(0),
+            ""
         );
 
         assertFalse(
@@ -243,7 +244,8 @@ contract ArbiterRemovalForCauseIntegrationTest is Test {
         _disputeAndOverturn(address(0x203), address(0x204));
 
         ArbiterAccountabilityFacet(address(diamond)).removeArbiterForCause(
-            arbiter, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0), address(0)
+            arbiter, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0), address(0),
+            ""
         );
 
         address[] memory list = ArbiterRegistryFacet(address(diamond)).getArbiters();
@@ -279,7 +281,8 @@ contract ArbiterRemovalForCauseIntegrationTest is Test {
 
         vm.prank(dao);
         ArbiterAccountabilityFacet(address(diamond)).removeArbiterForCause(
-            arbiter, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0), address(0)
+            arbiter, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0), address(0),
+            ""
         );
 
         assertFalse(
@@ -311,7 +314,8 @@ contract ArbiterRemovalForCauseIntegrationTest is Test {
         address who = address(0x55);
         _addFreshArbiter(who);
         ArbiterAccountabilityFacet(address(diamond)).proposeRemoval(
-            who, ArbiterAccountabilityFacet.Cause.Leak, keccak256("x")
+            who, ArbiterAccountabilityFacet.Cause.Leak, keccak256("x"),
+            unicode"выложил переписку по спору третьей стороне"
         );
 
         vm.prank(who);
@@ -325,7 +329,8 @@ contract ArbiterRemovalForCauseIntegrationTest is Test {
         address who = address(0x56);
         _addFreshArbiter(who);
         ArbiterAccountabilityFacet(address(diamond)).proposeRemoval(
-            who, ArbiterAccountabilityFacet.Cause.Leak, keccak256("x")
+            who, ArbiterAccountabilityFacet.Cause.Leak, keccak256("x"),
+            unicode"выложил переписку по спору третьей стороне"
         );
 
         uint256 ttl = ArbiterAccountabilityFacet(address(diamond)).getProposalTTL();
@@ -344,7 +349,8 @@ contract ArbiterRemovalForCauseIntegrationTest is Test {
         address who = address(0x57);
         _addFreshArbiter(who);
         ArbiterAccountabilityFacet(address(diamond)).proposeRemoval(
-            who, ArbiterAccountabilityFacet.Cause.Leak, keccak256("x")
+            who, ArbiterAccountabilityFacet.Cause.Leak, keccak256("x"),
+            unicode"выложил переписку по спору третьей стороне"
         );
 
         uint256 ttl = ArbiterAccountabilityFacet(address(diamond)).getProposalTTL();
@@ -359,7 +365,8 @@ contract ArbiterRemovalForCauseIntegrationTest is Test {
         address who = address(0x58);
         _addFreshArbiter(who);
         ArbiterAccountabilityFacet(address(diamond)).proposeRemoval(
-            who, ArbiterAccountabilityFacet.Cause.Leak, keccak256("x")
+            who, ArbiterAccountabilityFacet.Cause.Leak, keccak256("x"),
+            unicode"выложил переписку по спору третьей стороне"
         );
         ArbiterAccountabilityFacet(address(diamond)).withdrawProposal(who);
 
@@ -378,7 +385,8 @@ contract ArbiterRemovalForCauseIntegrationTest is Test {
         address who = address(0x59);
         _addFreshArbiter(who);
         ArbiterAccountabilityFacet(address(diamond)).proposeRemoval(
-            who, ArbiterAccountabilityFacet.Cause.Leak, keccak256("x")
+            who, ArbiterAccountabilityFacet.Cause.Leak, keccak256("x"),
+            unicode"выложил переписку по спору третьей стороне"
         );
 
         uint256 ttl = ArbiterAccountabilityFacet(address(diamond)).getProposalTTL();
@@ -401,7 +409,8 @@ contract ArbiterRemovalForCauseIntegrationTest is Test {
     /// целиком — и предложение обязано пропасть тем же путём, через clearSeat.
     function test_AutoDemotionClearsTheProposal() public {
         ArbiterAccountabilityFacet(address(diamond)).proposeRemoval(
-            arbiter, ArbiterAccountabilityFacet.Cause.Leak, keccak256("x")
+            arbiter, ArbiterAccountabilityFacet.Cause.Leak, keccak256("x"),
+            unicode"выложил переписку по спору третьей стороне"
         );
         assertTrue(
             ArbiterAccountabilityFacet(address(diamond)).hasLiveProposal(arbiter),
@@ -441,7 +450,8 @@ contract ArbiterRemovalForCauseIntegrationTest is Test {
     /// посадка/снос сами по себе.
     function test_ReseatingClearsRemovedAtPreventingPhantomAnswer() public {
         ArbiterAccountabilityFacet(address(diamond)).removeArbiterForCause(
-            arbiter, ArbiterAccountabilityFacet.Cause.Collusion, keccak256("evidence"), address(0)
+            arbiter, ArbiterAccountabilityFacet.Cause.Collusion, keccak256("evidence"), address(0),
+            unicode"трижды забирал споры одного контрагента и трижды решал в его пользу"
         );
         assertFalse(ArbiterRegistryFacet(address(diamond)).isRegisteredArbiter(arbiter));
 
@@ -451,7 +461,7 @@ contract ArbiterRemovalForCauseIntegrationTest is Test {
 
         vm.prank(arbiter);
         vm.expectRevert(ArbiterAccountabilityFacet.NothingToAnswer.selector);
-        ArbiterAccountabilityFacet(address(diamond)).respondToRemoval(keccak256("late"));
+        ArbiterAccountabilityFacet(address(diamond)).respondToRemoval(keccak256("late"), "");
     }
 
     /// Симметричная половина: ответил на первый снос, вернули, сняли СНОВА —
@@ -460,10 +470,11 @@ contract ArbiterRemovalForCauseIntegrationTest is Test {
     /// removedAt-половины (предыдущий тест).
     function test_ReseatingAndReremovalAllowsAnsweringAgain() public {
         ArbiterAccountabilityFacet(address(diamond)).removeArbiterForCause(
-            arbiter, ArbiterAccountabilityFacet.Cause.Collusion, keccak256("first evidence"), address(0)
+            arbiter, ArbiterAccountabilityFacet.Cause.Collusion, keccak256("first evidence"), address(0),
+            unicode"трижды забирал споры одного контрагента и трижды решал в его пользу"
         );
         vm.prank(arbiter);
-        ArbiterAccountabilityFacet(address(diamond)).respondToRemoval(keccak256("first answer"));
+        ArbiterAccountabilityFacet(address(diamond)).respondToRemoval(keccak256("first answer"), "");
         assertEq(
             ArbiterAccountabilityFacet(address(diamond)).getRemovalReply(arbiter),
             keccak256("first answer"),
@@ -473,11 +484,12 @@ contract ArbiterRemovalForCauseIntegrationTest is Test {
         ArbiterRegistryFacet(address(diamond)).addArbiter(arbiter);
 
         ArbiterAccountabilityFacet(address(diamond)).removeArbiterForCause(
-            arbiter, ArbiterAccountabilityFacet.Cause.Collusion, keccak256("second evidence"), address(0)
+            arbiter, ArbiterAccountabilityFacet.Cause.Collusion, keccak256("second evidence"), address(0),
+            unicode"трижды забирал споры одного контрагента и трижды решал в его пользу"
         );
 
         vm.prank(arbiter);
-        ArbiterAccountabilityFacet(address(diamond)).respondToRemoval(keccak256("second answer"));
+        ArbiterAccountabilityFacet(address(diamond)).respondToRemoval(keccak256("second answer"), "");
         assertEq(
             ArbiterAccountabilityFacet(address(diamond)).getRemovalReply(arbiter),
             keccak256("second answer"),
@@ -506,7 +518,7 @@ contract ArbiterRemovalForCauseIntegrationTest is Test {
 
         bytes32 reply = keccak256(unicode"меня разжаловали автоматом, вот моя версия");
         vm.prank(arbiter);
-        ArbiterAccountabilityFacet(address(diamond)).respondToRemoval(reply);
+        ArbiterAccountabilityFacet(address(diamond)).respondToRemoval(reply, "");
 
         assertEq(
             ArbiterAccountabilityFacet(address(diamond)).getRemovalReply(arbiter),
@@ -574,7 +586,8 @@ contract ArbiterRemovalForCauseIntegrationTest is Test {
         ArbiterRegistryFacet(address(diamond)).setChiefArbiter(chief);
 
         ArbiterAccountabilityFacet(address(diamond)).removeArbiterForCause(
-            arbiter, ArbiterAccountabilityFacet.Cause.Collusion, keccak256(unicode"переписка"), address(0)
+            arbiter, ArbiterAccountabilityFacet.Cause.Collusion, keccak256(unicode"переписка"), address(0),
+            unicode"трижды забирал споры одного контрагента и трижды решал в его пользу"
         );
         assertTrue(
             ArbiterAccountabilityFacet(address(diamond)).isSuspended(arbiter),
@@ -635,7 +648,8 @@ contract ArbiterRemovalForCauseIntegrationTest is Test {
         ArbiterRegistryFacet(address(diamond)).setChiefArbiter(chief);
 
         ArbiterAccountabilityFacet(address(diamond)).removeArbiterForCause(
-            arbiter, ArbiterAccountabilityFacet.Cause.Collusion, keccak256("x"), address(0)
+            arbiter, ArbiterAccountabilityFacet.Cause.Collusion, keccak256("x"), address(0),
+            unicode"трижды забирал споры одного контрагента и трижды решал в его пользу"
         );
         ArbiterRegistryFacet(address(diamond)).addArbiter(arbiter);   // стирает removedAt
 
@@ -668,7 +682,8 @@ contract ArbiterRemovalForCauseIntegrationTest is Test {
 
         vm.prank(dao);
         ArbiterAccountabilityFacet(address(diamond)).removeArbiterForCause(
-            arbiter, ArbiterAccountabilityFacet.Cause.Collusion, keccak256(unicode"переписка"), address(0)
+            arbiter, ArbiterAccountabilityFacet.Cause.Collusion, keccak256(unicode"переписка"), address(0),
+            unicode"трижды забирал споры одного контрагента и трижды решал в его пользу"
         );
         assertTrue(
             ArbiterAccountabilityFacet(address(diamond)).isSuspended(arbiter),
@@ -773,7 +788,8 @@ contract ArbiterRemovalForCauseIntegrationTest is Test {
 
         uint256 removedAtTs = vm.getBlockTimestamp();
         ArbiterAccountabilityFacet(address(diamond)).removeArbiterForCause(
-            arbiter, ArbiterAccountabilityFacet.Cause.Collusion, keccak256("chat log"), address(0)
+            arbiter, ArbiterAccountabilityFacet.Cause.Collusion, keccak256("chat log"), address(0),
+            unicode"трижды забирал споры одного контрагента и трижды решал в его пользу"
         );
         assertFalse(
             ArbiterRegistryFacet(address(diamond)).isRegisteredArbiter(arbiter),
@@ -801,7 +817,8 @@ contract ArbiterRemovalForCauseIntegrationTest is Test {
 
         uint256 removedAtTs = vm.getBlockTimestamp();
         ArbiterAccountabilityFacet(address(diamond)).removeArbiterForCause(
-            arbiter, ArbiterAccountabilityFacet.Cause.Collusion, keccak256("chat log"), address(0)
+            arbiter, ArbiterAccountabilityFacet.Cause.Collusion, keccak256("chat log"), address(0),
+            unicode"трижды забирал споры одного контрагента и трижды решал в его пользу"
         );
 
         vm.warp(
@@ -850,7 +867,8 @@ contract ArbiterRemovalForCauseIntegrationTest is Test {
     /// писали».
     function test_ReseatingByOwnerClearsTheSuspensionLeftByRemoval() public {
         ArbiterAccountabilityFacet(address(diamond)).removeArbiterForCause(
-            arbiter, ArbiterAccountabilityFacet.Cause.Collusion, keccak256("evidence"), address(0)
+            arbiter, ArbiterAccountabilityFacet.Cause.Collusion, keccak256("evidence"), address(0),
+            unicode"трижды забирал споры одного контрагента и трижды решал в его пользу"
         );
         assertTrue(
             ArbiterAccountabilityFacet(address(diamond)).isSuspended(arbiter),
@@ -909,10 +927,11 @@ contract ArbiterRemovalForCauseIntegrationTest is Test {
     /// человеческой транзакции.
     function test_SelfRegistrationClearsTheRemovalRecord() public {
         ArbiterAccountabilityFacet(address(diamond)).removeArbiterForCause(
-            arbiter, ArbiterAccountabilityFacet.Cause.Collusion, keccak256("evidence"), address(0)
+            arbiter, ArbiterAccountabilityFacet.Cause.Collusion, keccak256("evidence"), address(0),
+            unicode"трижды забирал споры одного контрагента и трижды решал в его пользу"
         );
         vm.prank(arbiter);
-        ArbiterAccountabilityFacet(address(diamond)).respondToRemoval(keccak256("my side"));
+        ArbiterAccountabilityFacet(address(diamond)).respondToRemoval(keccak256("my side"), "");
 
         _setUniqueActiveUsers(ArbiterRegistryFacet(address(diamond)).getDaoThreshold());
         assertTrue(ArbiterRegistryFacet(address(diamond)).isDaoActive(), unicode"сетап: ДАО активна заработанным путём");
@@ -933,7 +952,7 @@ contract ArbiterRemovalForCauseIntegrationTest is Test {
         // давно закрытое обвинение.
         vm.prank(arbiter);
         vm.expectRevert(ArbiterAccountabilityFacet.NothingToAnswer.selector);
-        ArbiterAccountabilityFacet(address(diamond)).respondToRemoval(keccak256("phantom"));
+        ArbiterAccountabilityFacet(address(diamond)).respondToRemoval(keccak256("phantom"), "");
     }
 
     // ============================================================
@@ -960,7 +979,8 @@ contract ArbiterRemovalForCauseIntegrationTest is Test {
 
         uint256 removedAtTs = vm.getBlockTimestamp();
         ArbiterAccountabilityFacet(address(diamond)).removeArbiterForCause(
-            arbiter, ArbiterAccountabilityFacet.Cause.Collusion, keccak256("evidence"), address(0)
+            arbiter, ArbiterAccountabilityFacet.Cause.Collusion, keccak256("evidence"), address(0),
+            unicode"трижды забирал споры одного контрагента и трижды решал в его пользу"
         );
         assertTrue(ArbiterAccountabilityFacet(address(diamond)).isSuspended(arbiter), unicode"сетап: снос приостановил");
 
@@ -998,7 +1018,8 @@ contract ArbiterRemovalForCauseIntegrationTest is Test {
 
         uint256 removedAtTs = vm.getBlockTimestamp();
         ArbiterAccountabilityFacet(address(diamond)).removeArbiterForCause(
-            arbiter, ArbiterAccountabilityFacet.Cause.Collusion, keccak256("evidence"), address(0)
+            arbiter, ArbiterAccountabilityFacet.Cause.Collusion, keccak256("evidence"), address(0),
+            unicode"трижды забирал споры одного контрагента и трижды решал в его пользу"
         );
 
         ArbiterRegistryFacet(address(diamond)).addArbiter(arbiter);
@@ -1104,12 +1125,16 @@ contract ArbiterRemovalForCauseIntegrationTest is Test {
 
         // ── Реализация №2: ArbiterAccountabilityFacet._msgSender ──
         ArbiterAccountabilityFacet(address(diamond)).removeArbiterForCause(
-            human, ArbiterAccountabilityFacet.Cause.Collusion, keccak256("evidence"), address(0)
+            human, ArbiterAccountabilityFacet.Cause.Collusion, keccak256("evidence"), address(0),
+            unicode"трижды забирал споры одного контрагента и трижды решал в его пользу"
         );
         bytes32 reply = keccak256("my side");
         _forward(
             fwd, pk, human,
-            abi.encodeWithSelector(ArbiterAccountabilityFacet.respondToRemoval.selector, reply)
+            // ⚠️ Аргументов два с 17 августа 2026 (слова ответа). Селектор
+            // берётся от типа — смену подписи подхватывает компилятор, а не
+            // человек, читающий этот файл.
+            abi.encodeWithSelector(ArbiterAccountabilityFacet.respondToRemoval.selector, reply, "")
         );
         bytes32 gotReply = ArbiterAccountabilityFacet(address(diamond)).getRemovalReply(human);
 
@@ -1339,7 +1364,8 @@ contract ArbiterRemovalForCauseIntegrationTest is Test {
     /// Стираемая половина обнуляется, вечная растёт.
     function test_StandingRemembersRemovalsAcrossReseating() public {
         ArbiterAccountabilityFacet(address(diamond)).removeArbiterForCause(
-            arbiter, ArbiterAccountabilityFacet.Cause.Collusion, keccak256("evidence"), address(0)
+            arbiter, ArbiterAccountabilityFacet.Cause.Collusion, keccak256("evidence"), address(0),
+            unicode"трижды забирал споры одного контрагента и трижды решал в его пользу"
         );
 
         (, , , , , , , , uint256 removedAt1, , uint256 count1, uint256 lastAt1, uint8 cause1)
@@ -1361,7 +1387,8 @@ contract ArbiterRemovalForCauseIntegrationTest is Test {
 
         vm.warp(vm.getBlockTimestamp() + 1 days);
         ArbiterAccountabilityFacet(address(diamond)).removeArbiterForCause(
-            arbiter, ArbiterAccountabilityFacet.Cause.Leak, keccak256("leak"), address(0)
+            arbiter, ArbiterAccountabilityFacet.Cause.Leak, keccak256("leak"), address(0),
+            unicode"выложил переписку по спору третьей стороне"
         );
 
         (, , , , , , , , , , uint256 count3, uint256 lastAt3, uint8 cause3)
@@ -1490,7 +1517,8 @@ contract ArbiterRemovalForCauseIntegrationTest is Test {
     /// и не должен уносить с собой историю.
     function test_SelfRegistrationCannotEraseTheRemovalHistory() public {
         ArbiterAccountabilityFacet(address(diamond)).removeArbiterForCause(
-            arbiter, ArbiterAccountabilityFacet.Cause.Collusion, keccak256("evidence"), address(0)
+            arbiter, ArbiterAccountabilityFacet.Cause.Collusion, keccak256("evidence"), address(0),
+            unicode"трижды забирал споры одного контрагента и трижды решал в его пользу"
         );
 
         _setUniqueActiveUsers(ArbiterRegistryFacet(address(diamond)).getDaoThreshold());
@@ -1551,7 +1579,8 @@ contract ArbiterRemovalForCauseIntegrationTest is Test {
             seat, owner, ArbiterAccountabilityFacet.Cause.Collusion, false, keccak256("chat log"), 0
         );
         ArbiterAccountabilityFacet(address(diamond)).removeArbiterForCause(
-            seat, ArbiterAccountabilityFacet.Cause.Collusion, keccak256("chat log"), address(0)
+            seat, ArbiterAccountabilityFacet.Cause.Collusion, keccak256("chat log"), address(0),
+            unicode"трижды забирал споры одного контрагента и трижды решал в его пользу"
         );
 
         assertEq(

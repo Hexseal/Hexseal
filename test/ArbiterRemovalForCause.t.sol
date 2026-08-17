@@ -123,7 +123,7 @@ contract ArbiterRemovalForCauseTest is Test {
         vm.expectRevert(
             abi.encodeWithSelector(ArbiterAccountabilityFacet.CauseNotProven.selector, uint8(0))
         );
-        acc.removeArbiterForCause(arbiter, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0), address(0));
+        acc.removeArbiterForCause(arbiter, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0), address(0), "");
     }
 
     function test_OverturnedVerdictsPassesAtThreshold() public {
@@ -134,7 +134,7 @@ contract ArbiterRemovalForCauseTest is Test {
             arbiter, owner, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, true, bytes32(0), 0
         );
 
-        acc.removeArbiterForCause(arbiter, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0), address(0));
+        acc.removeArbiterForCause(arbiter, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0), address(0), "");
         assertFalse(_isArbiterRaw(arbiter), unicode"снятый больше не арбитр");
     }
 
@@ -142,7 +142,7 @@ contract ArbiterRemovalForCauseTest is Test {
 
     function test_CollusionWithoutEvidenceIsRefused() public {
         vm.expectRevert(ArbiterAccountabilityFacet.EvidenceRequired.selector);
-        acc.removeArbiterForCause(arbiter, ArbiterAccountabilityFacet.Cause.Collusion, bytes32(0), address(0));
+        acc.removeArbiterForCause(arbiter, ArbiterAccountabilityFacet.Cause.Collusion, bytes32(0), address(0), unicode"трижды забирал споры одного контрагента и трижды решал в его пользу");
     }
 
     function test_CollusionWithEvidenceIsMarkedUnverified() public {
@@ -153,7 +153,7 @@ contract ArbiterRemovalForCauseTest is Test {
             arbiter, owner, ArbiterAccountabilityFacet.Cause.Collusion, false, digest, 0
         );
 
-        acc.removeArbiterForCause(arbiter, ArbiterAccountabilityFacet.Cause.Collusion, digest, address(0));
+        acc.removeArbiterForCause(arbiter, ArbiterAccountabilityFacet.Cause.Collusion, digest, address(0), unicode"трижды забирал споры одного контрагента и трижды решал в его пользу");
     }
 
     /// I-6 (круг правок 1): вторая копия DisputeRefNotApplicable, живущая ВНЕ
@@ -162,7 +162,8 @@ contract ArbiterRemovalForCauseTest is Test {
     function test_UnverifiableCauseRejectsDisputeRef() public {
         vm.expectRevert(ArbiterAccountabilityFacet.DisputeRefNotApplicable.selector);
         acc.removeArbiterForCause(
-            arbiter, ArbiterAccountabilityFacet.Cause.Collusion, keccak256("evidence"), address(0xD1)
+            arbiter, ArbiterAccountabilityFacet.Cause.Collusion, keccak256("evidence"), address(0xD1),
+            unicode"трижды забирал споры одного контрагента и трижды решал в его пользу"
         );
     }
 
@@ -171,7 +172,7 @@ contract ArbiterRemovalForCauseTest is Test {
     /// не то, что написано в записи.
     function test_SilenceRequiresDisputeRef() public {
         vm.expectRevert(ArbiterAccountabilityFacet.DisputeRefRequired.selector);
-        acc.removeArbiterForCause(arbiter, ArbiterAccountabilityFacet.Cause.Silence, bytes32(0), address(0));
+        acc.removeArbiterForCause(arbiter, ArbiterAccountabilityFacet.Cause.Silence, bytes32(0), address(0), "");
     }
 
     function test_SilenceRequiresTheRecord() public {
@@ -179,13 +180,13 @@ contract ArbiterRemovalForCauseTest is Test {
         vm.expectRevert(
             abi.encodeWithSelector(ArbiterAccountabilityFacet.CauseNotProven.selector, uint8(2))
         );
-        acc.removeArbiterForCause(arbiter, ArbiterAccountabilityFacet.Cause.Silence, bytes32(0), deal);
+        acc.removeArbiterForCause(arbiter, ArbiterAccountabilityFacet.Cause.Silence, bytes32(0), deal, "");
     }
 
     function test_SilencePassesWhenRecorded() public {
         address deal = address(0xD1);
         _setNoResponse(deal, arbiter, 1_700_000_000);
-        acc.removeArbiterForCause(arbiter, ArbiterAccountabilityFacet.Cause.Silence, bytes32(0), deal);
+        acc.removeArbiterForCause(arbiter, ArbiterAccountabilityFacet.Cause.Silence, bytes32(0), deal, "");
         assertFalse(_isArbiterRaw(arbiter), unicode"снят по записанному молчанию");
     }
 
@@ -195,7 +196,8 @@ contract ArbiterRemovalForCauseTest is Test {
         _setStreak(arbiter, 2);
         vm.expectRevert(ArbiterAccountabilityFacet.DisputeRefNotApplicable.selector);
         acc.removeArbiterForCause(
-            arbiter, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0), address(0xD1)
+            arbiter, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0), address(0xD1),
+            ""
         );
     }
 
@@ -203,7 +205,7 @@ contract ArbiterRemovalForCauseTest is Test {
     /// различает. Тест это фиксирует, чтобы никто не считал, будто различает.
     function test_TimeoutsUsesTheSameCounter() public {
         _setStreak(arbiter, 2);
-        acc.removeArbiterForCause(arbiter, ArbiterAccountabilityFacet.Cause.Timeouts, bytes32(0), address(0));
+        acc.removeArbiterForCause(arbiter, ArbiterAccountabilityFacet.Cause.Timeouts, bytes32(0), address(0), "");
         assertFalse(_isArbiterRaw(arbiter));
     }
 
@@ -214,14 +216,14 @@ contract ArbiterRemovalForCauseTest is Test {
         _setChief(chief);
         vm.prank(chief);
         vm.expectRevert(ArbiterAccountabilityFacet.NotOwner.selector);
-        acc.removeArbiterForCause(arbiter, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0), address(0));
+        acc.removeArbiterForCause(arbiter, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0), address(0), "");
     }
 
     /// I-4 (круг правок 1): NotAnArbiter на пути сноса не был покрыт ничем.
     function test_RemovalForCauseRevertsIfNotAnArbiter() public {
         address stranger = address(0xF00D); // никогда не регистрировался
         vm.expectRevert(ArbiterAccountabilityFacet.NotAnArbiter.selector);
-        acc.removeArbiterForCause(stranger, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0), address(0));
+        acc.removeArbiterForCause(stranger, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0), address(0), "");
     }
 
     /// Храповик: после активации ДАО И назначения преемника владельца цепь не
@@ -271,7 +273,8 @@ contract ArbiterRemovalForCauseTest is Test {
         _activateDAO();
         vm.expectRevert(ArbiterAccountabilityFacet.RemovalHandedOver.selector);
         acc.removeArbiterForCause(
-            arbiter, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0), address(0)
+            arbiter, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0), address(0),
+            ""
         );
     }
 
@@ -284,7 +287,7 @@ contract ArbiterRemovalForCauseTest is Test {
         _setDaoAddress(dao);
         vm.prank(dao);
         vm.expectRevert(ArbiterAccountabilityFacet.NotOwner.selector);
-        acc.removeArbiterForCause(arbiter, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0), address(0));
+        acc.removeArbiterForCause(arbiter, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0), address(0), "");
     }
 
     /// Симметричная половина test_OwnerCannotRemoveAfterDAO: назначенный
@@ -302,7 +305,7 @@ contract ArbiterRemovalForCauseTest is Test {
         );
 
         vm.prank(dao);
-        acc.removeArbiterForCause(arbiter, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0), address(0));
+        acc.removeArbiterForCause(arbiter, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0), address(0), "");
         assertFalse(_isArbiterRaw(arbiter), unicode"снят голосованием ДАО после передачи");
     }
 
@@ -326,7 +329,7 @@ contract ArbiterRemovalForCauseTest is Test {
             arbiter, owner, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, true, bytes32(0), bond
         );
 
-        acc.removeArbiterForCause(arbiter, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0), address(0));
+        acc.removeArbiterForCause(arbiter, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0), address(0), "");
 
         assertEq(_getArbiterBond(arbiter), 0, unicode"бонд снят с арбитра");
         assertEq(_getVaultBalance(), bond, unicode"бонд ушёл в банк арбитров, не пропал");
@@ -346,7 +349,7 @@ contract ArbiterRemovalForCauseTest is Test {
         _setSeatedCountBy(director, 1);
         assertEq(_getSeatedCountBy(director), 1, unicode"сетап: посадка директора учтена");
 
-        acc.removeArbiterForCause(arbiter, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0), address(0));
+        acc.removeArbiterForCause(arbiter, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0), address(0), "");
 
         assertEq(_getSeatedCountBy(director), 0, unicode"снос по поводу обязан освобождать место посадившего");
     }
@@ -371,10 +374,10 @@ contract ArbiterRemovalForCauseTest is Test {
         vm.expectRevert(
             abi.encodeWithSelector(ArbiterAccountabilityFacet.CauseNotProven.selector, uint8(0))
         );
-        acc.removeArbiterForCause(untouched, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0), address(0));
+        acc.removeArbiterForCause(untouched, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0), address(0), "");
 
         _setStreak(arbiter, acc.getMistakeThreshold());
-        acc.removeArbiterForCause(arbiter, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0), address(0));
+        acc.removeArbiterForCause(arbiter, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0), address(0), "");
         assertFalse(_isArbiterRaw(arbiter), unicode"снятый больше не арбитр");
     }
 
@@ -387,10 +390,10 @@ contract ArbiterRemovalForCauseTest is Test {
         vm.expectRevert(
             abi.encodeWithSelector(ArbiterAccountabilityFacet.CauseNotProven.selector, uint8(2))
         );
-        acc.removeArbiterForCause(arbiter, ArbiterAccountabilityFacet.Cause.Silence, bytes32(0), untouchedDeal);
+        acc.removeArbiterForCause(arbiter, ArbiterAccountabilityFacet.Cause.Silence, bytes32(0), untouchedDeal, "");
 
         _setNoResponse(deal, arbiter, 1_700_000_000);
-        acc.removeArbiterForCause(arbiter, ArbiterAccountabilityFacet.Cause.Silence, bytes32(0), deal);
+        acc.removeArbiterForCause(arbiter, ArbiterAccountabilityFacet.Cause.Silence, bytes32(0), deal, "");
         assertFalse(_isArbiterRaw(arbiter), unicode"снят по записанному молчанию");
     }
 
@@ -427,7 +430,8 @@ contract ArbiterRemovalForCauseTest is Test {
 
         vm.expectRevert(ArbiterAccountabilityFacet.RemovalHandedOver.selector);
         acc.removeArbiterForCause(
-            arbiter, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0), address(0)
+            arbiter, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0), address(0),
+            ""
         );
     }
 
@@ -447,7 +451,8 @@ contract ArbiterRemovalForCauseTest is Test {
         // daoAddress НЕ назначаем — это и есть разбираемое окно
 
         acc.removeArbiterForCause(
-            arbiter, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0), address(0)
+            arbiter, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0), address(0),
+            ""
         );
 
         assertFalse(
@@ -467,7 +472,8 @@ contract ArbiterRemovalForCauseTest is Test {
 
         vm.expectRevert(ArbiterAccountabilityFacet.RemovalHandedOver.selector);
         acc.removeArbiterForCause(
-            arbiter, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0), address(0)
+            arbiter, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0), address(0),
+            ""
         );
     }
 
@@ -520,7 +526,7 @@ contract ArbiterRemovalForCauseTest is Test {
         );
 
         vm.prank(chief);
-        acc.proposeRemoval(arbiter, ArbiterAccountabilityFacet.Cause.Leak, digest);
+        acc.proposeRemoval(arbiter, ArbiterAccountabilityFacet.Cause.Leak, digest, unicode"выложил переписку по спору третьей стороне");
 
         (uint8 c, bytes32 dg, uint256 at, address by, bool live) = acc.getRemovalProposal(arbiter);
         assertEq(c, uint8(ArbiterAccountabilityFacet.Cause.Leak));
@@ -533,7 +539,7 @@ contract ArbiterRemovalForCauseTest is Test {
     function test_ProposalExpires() public {
         _setChief(chief);
         vm.prank(chief);
-        acc.proposeRemoval(arbiter, ArbiterAccountabilityFacet.Cause.Leak, keccak256("x"));
+        acc.proposeRemoval(arbiter, ArbiterAccountabilityFacet.Cause.Leak, keccak256("x"), unicode"выложил переписку по спору третьей стороне");
 
         vm.warp(vm.getBlockTimestamp() + 14 days);
         assertFalse(acc.hasLiveProposal(arbiter), unicode"через 14 суток предложение протухло");
@@ -542,7 +548,7 @@ contract ArbiterRemovalForCauseTest is Test {
     function test_ProposalIsLiveUntilTheLastSecond() public {
         _setChief(chief);
         vm.prank(chief);
-        acc.proposeRemoval(arbiter, ArbiterAccountabilityFacet.Cause.Leak, keccak256("x"));
+        acc.proposeRemoval(arbiter, ArbiterAccountabilityFacet.Cause.Leak, keccak256("x"), unicode"выложил переписку по спору третьей стороне");
 
         vm.warp(vm.getBlockTimestamp() + 14 days - 1);
         assertTrue(acc.hasLiveProposal(arbiter), unicode"за секунду до конца ещё живо");
@@ -551,7 +557,7 @@ contract ArbiterRemovalForCauseTest is Test {
     function test_ChiefWithdrawsHisOwnProposal() public {
         _setChief(chief);
         vm.startPrank(chief);
-        acc.proposeRemoval(arbiter, ArbiterAccountabilityFacet.Cause.Leak, keccak256("x"));
+        acc.proposeRemoval(arbiter, ArbiterAccountabilityFacet.Cause.Leak, keccak256("x"), unicode"выложил переписку по спору третьей стороне");
         acc.withdrawProposal(arbiter);
         vm.stopPrank();
         assertFalse(acc.hasLiveProposal(arbiter), unicode"передумал — отозвал");
@@ -560,7 +566,7 @@ contract ArbiterRemovalForCauseTest is Test {
     function test_StrangerCannotPropose() public {
         vm.prank(address(0x5A));
         vm.expectRevert(ArbiterAccountabilityFacet.NotOwnerOrChief.selector);
-        acc.proposeRemoval(arbiter, ArbiterAccountabilityFacet.Cause.Leak, keccak256("x"));
+        acc.proposeRemoval(arbiter, ArbiterAccountabilityFacet.Cause.Leak, keccak256("x"), unicode"выложил переписку по спору третьей стороне");
     }
 
     /// Второе требование контроллера сверх брифа: код заверяемый — отпечаток
@@ -569,7 +575,7 @@ contract ArbiterRemovalForCauseTest is Test {
         _setChief(chief);
         vm.prank(chief);
         vm.expectRevert(ArbiterAccountabilityFacet.EvidenceRequired.selector);
-        acc.proposeRemoval(arbiter, ArbiterAccountabilityFacet.Cause.Collusion, bytes32(0));
+        acc.proposeRemoval(arbiter, ArbiterAccountabilityFacet.Cause.Collusion, bytes32(0), unicode"трижды забирал споры одного контрагента и трижды решал в его пользу");
     }
 
     /// Проверяемые цепью коды (OverturnedVerdicts/Timeouts/Silence) на этапе
@@ -580,14 +586,14 @@ contract ArbiterRemovalForCauseTest is Test {
         _setChief(chief);
         // streak НЕ выставлен — ниже MISTAKE_THRESHOLD (и вообще ноль).
         vm.prank(chief);
-        acc.proposeRemoval(arbiter, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0));
+        acc.proposeRemoval(arbiter, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0), "");
         assertTrue(acc.hasLiveProposal(arbiter), unicode"проверяемый код не сверяется на этапе предложения");
     }
 
     /// Владелец предлагает наравне с директором — onlyOwnerOrChief пускает
     /// обоих, не только директора.
     function test_OwnerCanAlsoPropose() public {
-        acc.proposeRemoval(arbiter, ArbiterAccountabilityFacet.Cause.Leak, keccak256("x"));
+        acc.proposeRemoval(arbiter, ArbiterAccountabilityFacet.Cause.Leak, keccak256("x"), unicode"выложил переписку по спору третьей стороне");
         (, , , address by, ) = acc.getRemovalProposal(arbiter);
         assertEq(by, owner);
     }
@@ -598,7 +604,7 @@ contract ArbiterRemovalForCauseTest is Test {
     function test_OwnerWithdrawsChiefsProposal() public {
         _setChief(chief);
         vm.prank(chief);
-        acc.proposeRemoval(arbiter, ArbiterAccountabilityFacet.Cause.Leak, keccak256("x"));
+        acc.proposeRemoval(arbiter, ArbiterAccountabilityFacet.Cause.Leak, keccak256("x"), unicode"выложил переписку по спору третьей стороне");
 
         acc.withdrawProposal(arbiter);
         assertFalse(acc.hasLiveProposal(arbiter), unicode"владелец снял чужое предложение");
@@ -609,8 +615,8 @@ contract ArbiterRemovalForCauseTest is Test {
     function test_SecondProposalOverwritesFirst() public {
         _setChief(chief);
         vm.startPrank(chief);
-        acc.proposeRemoval(arbiter, ArbiterAccountabilityFacet.Cause.Leak, keccak256("first"));
-        acc.proposeRemoval(arbiter, ArbiterAccountabilityFacet.Cause.Other, keccak256("second"));
+        acc.proposeRemoval(arbiter, ArbiterAccountabilityFacet.Cause.Leak, keccak256("first"), unicode"выложил переписку по спору третьей стороне");
+        acc.proposeRemoval(arbiter, ArbiterAccountabilityFacet.Cause.Other, keccak256("second"), unicode"разбор целиком под приложенным отпечатком");
         vm.stopPrank();
 
         (uint8 c, bytes32 dg, , , ) = acc.getRemovalProposal(arbiter);
@@ -623,11 +629,11 @@ contract ArbiterRemovalForCauseTest is Test {
     function test_RemovalClearsTheProposal() public {
         _setChief(chief);
         vm.prank(chief);
-        acc.proposeRemoval(arbiter, ArbiterAccountabilityFacet.Cause.Leak, keccak256("x"));
+        acc.proposeRemoval(arbiter, ArbiterAccountabilityFacet.Cause.Leak, keccak256("x"), unicode"выложил переписку по спору третьей стороне");
         assertTrue(acc.hasLiveProposal(arbiter), unicode"сетап: предложение живо");
 
         _setStreak(arbiter, 2);
-        acc.removeArbiterForCause(arbiter, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0), address(0));
+        acc.removeArbiterForCause(arbiter, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0), address(0), "");
 
         assertFalse(acc.hasLiveProposal(arbiter), unicode"снос обязан стереть предложение");
     }
@@ -637,7 +643,7 @@ contract ArbiterRemovalForCauseTest is Test {
     function test_ProposeRevertsIfNotAnArbiter() public {
         address stranger = address(0xF00D);
         vm.expectRevert(ArbiterAccountabilityFacet.NotAnArbiter.selector);
-        acc.proposeRemoval(stranger, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0));
+        acc.proposeRemoval(stranger, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0), "");
     }
 
     /// Minor 5, круг правок 1: ветка ArbiterZeroAddress была объявлена, но ни
@@ -647,7 +653,7 @@ contract ArbiterRemovalForCauseTest is Test {
     /// в test/ArbiterSuspension.t.sol).
     function test_ProposeRevertsOnZeroAddress() public {
         vm.expectRevert(ArbiterAccountabilityFacet.ArbiterZeroAddress.selector);
-        acc.proposeRemoval(address(0), ArbiterAccountabilityFacet.Cause.Leak, keccak256("x"));
+        acc.proposeRemoval(address(0), ArbiterAccountabilityFacet.Cause.Leak, keccak256("x"), unicode"выложил переписку по спору третьей стороне");
     }
 
     // ============================================================
@@ -668,7 +674,7 @@ contract ArbiterRemovalForCauseTest is Test {
     /// Симметричная позитивная половина Minor 3: реальное предложение реально
     /// отзывается событием — правка не превратила withdraw в вечно немой.
     function test_WithdrawProposalOnExistingEmitsEvent() public {
-        acc.proposeRemoval(arbiter, ArbiterAccountabilityFacet.Cause.Leak, keccak256("x"));
+        acc.proposeRemoval(arbiter, ArbiterAccountabilityFacet.Cause.Leak, keccak256("x"), unicode"выложил переписку по спору третьей стороне");
 
         vm.expectEmit(true, true, true, true, address(acc));
         emit ArbiterAccountabilityFacet.RemovalProposalWithdrawn(arbiter, owner);
@@ -682,7 +688,7 @@ contract ArbiterRemovalForCauseTest is Test {
         _setChief(chief);
         bytes32 digest = keccak256(unicode"докладная");
         vm.prank(chief);
-        acc.proposeRemoval(arbiter, ArbiterAccountabilityFacet.Cause.Leak, digest);
+        acc.proposeRemoval(arbiter, ArbiterAccountabilityFacet.Cause.Leak, digest, unicode"выложил переписку по спору третьей стороне");
         (, , uint256 proposedAt, , ) = acc.getRemovalProposal(arbiter);
 
         _setStreak(arbiter, 2);
@@ -692,7 +698,8 @@ contract ArbiterRemovalForCauseTest is Test {
             arbiter, ArbiterAccountabilityFacet.Cause.Leak, chief, digest, proposedAt
         );
         acc.removeArbiterForCause(
-            arbiter, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0), address(0)
+            arbiter, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0), address(0),
+            ""
         );
     }
 
@@ -703,7 +710,8 @@ contract ArbiterRemovalForCauseTest is Test {
         _setStreak(arbiter, 2);
         vm.recordLogs();
         acc.removeArbiterForCause(
-            arbiter, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0), address(0)
+            arbiter, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0), address(0),
+            ""
         );
         Vm.Log[] memory logs = vm.getRecordedLogs();
         assertEq(logs.length, 1, unicode"без предложения — только ArbiterRemovedForCause, Consumed молчит");
@@ -713,7 +721,7 @@ contract ArbiterRemovalForCauseTest is Test {
     /// hasLiveProposal на протухшей записи, не только на свежей (свежую уже
     /// проверяет test_ChiefProposes).
     function test_GetRemovalProposalLiveFieldFalseAfterExpiry() public {
-        acc.proposeRemoval(arbiter, ArbiterAccountabilityFacet.Cause.Leak, keccak256("x"));
+        acc.proposeRemoval(arbiter, ArbiterAccountabilityFacet.Cause.Leak, keccak256("x"), unicode"выложил переписку по спору третьей стороне");
         vm.warp(vm.getBlockTimestamp() + 14 days);
 
         (, , , , bool live) = acc.getRemovalProposal(arbiter);
@@ -745,7 +753,7 @@ contract ArbiterRemovalForCauseTest is Test {
 
     function test_RemovedArbiterAnswers() public {
         _setStreak(arbiter, 2);
-        acc.removeArbiterForCause(arbiter, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0), address(0));
+        acc.removeArbiterForCause(arbiter, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0), address(0), "");
 
         bytes32 reply = keccak256(unicode"вот переписка целиком, судите сами");
 
@@ -753,28 +761,28 @@ contract ArbiterRemovalForCauseTest is Test {
         emit ArbiterAccountabilityFacet.RemovalAnswered(arbiter, reply);
 
         vm.prank(arbiter);
-        acc.respondToRemoval(reply);
+        acc.respondToRemoval(reply, "");
 
         assertEq(acc.getRemovalReply(arbiter), reply, unicode"ответ лёг в цепь");
     }
 
     function test_AnswerIsOnceOnly() public {
         _setStreak(arbiter, 2);
-        acc.removeArbiterForCause(arbiter, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0), address(0));
+        acc.removeArbiterForCause(arbiter, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0), address(0), "");
 
         vm.startPrank(arbiter);
-        acc.respondToRemoval(keccak256("first"));
+        acc.respondToRemoval(keccak256("first"), "");
         vm.expectRevert(ArbiterAccountabilityFacet.AlreadyAnswered.selector);
-        acc.respondToRemoval(keccak256("second"));
+        acc.respondToRemoval(keccak256("second"), "");
         vm.stopPrank();
     }
 
     function test_ZeroReplyIsRefused() public {
         _setStreak(arbiter, 2);
-        acc.removeArbiterForCause(arbiter, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0), address(0));
+        acc.removeArbiterForCause(arbiter, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0), address(0), "");
         vm.prank(arbiter);
         vm.expectRevert(ArbiterAccountabilityFacet.ZeroDigest.selector);
-        acc.respondToRemoval(bytes32(0));
+        acc.respondToRemoval(bytes32(0), "");
     }
 
     /// Отвечать может только тот, кого сняли. Иначе посторонний засыпал бы
@@ -782,7 +790,7 @@ contract ArbiterRemovalForCauseTest is Test {
     function test_OnlyRemovedCanAnswer() public {
         vm.prank(address(0x5A));
         vm.expectRevert(ArbiterAccountabilityFacet.NothingToAnswer.selector);
-        acc.respondToRemoval(keccak256("x"));
+        acc.respondToRemoval(keccak256("x"), "");
     }
 
     // ============================================================
@@ -829,7 +837,7 @@ contract ArbiterRemovalForCauseTest is Test {
         emit ArbiterAccountabilityFacet.ArbiterRemovedForCause(
             arbiter, owner, ArbiterAccountabilityFacet.Cause.Timeouts, true, bytes32(0), 0
         );
-        acc.removeArbiterForCause(arbiter, ArbiterAccountabilityFacet.Cause.Timeouts, bytes32(0), address(0));
+        acc.removeArbiterForCause(arbiter, ArbiterAccountabilityFacet.Cause.Timeouts, bytes32(0), address(0), "");
 
         address second = address(0xA2);
         vm.store(address(acc), keccak256(abi.encode(second, uint256(ARB_BASE))), bytes32(uint256(1)));
@@ -837,7 +845,246 @@ contract ArbiterRemovalForCauseTest is Test {
         emit ArbiterAccountabilityFacet.ArbiterRemovedForCause(
             second, owner, ArbiterAccountabilityFacet.Cause.Collusion, false, keccak256("e"), 0
         );
-        acc.removeArbiterForCause(second, ArbiterAccountabilityFacet.Cause.Collusion, keccak256("e"), address(0));
+        acc.removeArbiterForCause(second, ArbiterAccountabilityFacet.Cause.Collusion, keccak256("e"), address(0), unicode"трижды забирал споры одного контрагента и трижды решал в его пользу");
+    }
+
+    // ============================================================
+    //  ПРИЧИНА СЛОВАМИ (замысел 17 августа 2026, решение 7)
+    //
+    //  Обязательна ровно там, где цепь молчит, — и на ОБЕИХ дверях, не только
+    //  на сносе: пауза задачи 2 даёт обвиняемому время ответить, и отвечать он
+    //  должен на обвинение, а не на числовой код.
+    //
+    //  Живут слова в СОБЫТИИ, не в хранилище: их читатель — лента и карточка,
+    //  а хранилище стоило бы дороже и двигало бы раскладку зря.
+    // ============================================================
+
+    /// Заверяемый код без слов не проходит. До правки проходил: хватало
+    /// ненулевого отпечатка, под которым может лежать что угодно.
+    function test_UnverifiableCauseRequiresWords() public {
+        vm.expectRevert(ArbiterAccountabilityFacet.ReasonRequired.selector);
+        acc.removeArbiterForCause(
+            arbiter,
+            ArbiterAccountabilityFacet.Cause.Collusion,
+            keccak256("evidence"),
+            address(0),
+            ""
+        );
+    }
+
+    /// Проверяемый код словами не обязан объясняться: «три перевёрнутых
+    /// вердикта» само себя объясняет, и требовать поверх этого текст значило бы
+    /// заводить поле, которое заполняют точкой.
+    function test_VerifiableCauseNeedsNoWords() public {
+        _setStreak(arbiter, 2);
+        acc.removeArbiterForCause(
+            arbiter,
+            ArbiterAccountabilityFacet.Cause.OverturnedVerdicts,
+            bytes32(0),
+            address(0),
+            ""
+        );
+        assertFalse(_isArbiterRaw(arbiter), unicode"проверяемый код прошёл без слов");
+    }
+
+    /// Слова уезжают отдельным событием — старое НЕ переопределяется, потому
+    /// что его уже читает лента.
+    function test_WordsRideTheirOwnEvent() public {
+        string memory why = unicode"трижды забирал споры одного контрагента и трижды решал в его пользу";
+
+        vm.expectEmit(true, true, true, true, address(acc));
+        emit ArbiterAccountabilityFacet.RemovalReasonGiven(arbiter, owner, 1, why);
+
+        acc.removeArbiterForCause(
+            arbiter, ArbiterAccountabilityFacet.Cause.Leak, keccak256("dump"), address(0), why
+        );
+    }
+
+    /// Потолок считается в БАЙТАХ. 513 байт — уже нет.
+    function test_ReasonOverTheCapIsRefused() public {
+        bytes memory tooLong = new bytes(513);
+        for (uint256 i = 0; i < 513; i++) tooLong[i] = "x";
+
+        vm.expectRevert(
+            abi.encodeWithSelector(ArbiterAccountabilityFacet.ReasonTooLong.selector, uint256(513))
+        );
+        acc.removeArbiterForCause(
+            arbiter, ArbiterAccountabilityFacet.Cause.Other, keccak256("e"), address(0), string(tooLong)
+        );
+    }
+
+    /// Ровно потолок — проходит. Граница строгая с одной стороны, как у всех
+    /// границ этого проекта.
+    function test_ReasonExactlyAtTheCapPasses() public {
+        bytes memory atCap = new bytes(acc.getMaxReasonBytes());
+        for (uint256 i = 0; i < atCap.length; i++) atCap[i] = "x";
+
+        acc.removeArbiterForCause(
+            arbiter, ArbiterAccountabilityFacet.Cause.Other, keccak256("e"), address(0), string(atCap)
+        );
+        assertFalse(_isArbiterRaw(arbiter), unicode"512 байт — законная длина");
+    }
+
+    /// Предложение подчиняется тому же правилу. Без этого пауза давала бы
+    /// обвиняемому код повода и ничего больше.
+    function test_ProposalWithUnverifiableCauseRequiresWords() public {
+        _setChief(chief);
+        vm.prank(chief);
+        vm.expectRevert(ArbiterAccountabilityFacet.ReasonRequired.selector);
+        acc.proposeRemoval(
+            arbiter, ArbiterAccountabilityFacet.Cause.Collusion, keccak256("evidence"), ""
+        );
+    }
+
+    /// У обвиняемого это ПРАВО, а не обязанность: ответ без слов принимается.
+    /// Заставлять человека оправдываться публично нельзя.
+    function test_ReplyWordsAreOptional() public {
+        _setStreak(arbiter, 2);
+        acc.removeArbiterForCause(
+            arbiter, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0), address(0), ""
+        );
+
+        vm.prank(arbiter);
+        acc.respondToRemoval(keccak256("full log attached"), "");
+
+        assertEq(
+            acc.getRemovalReply(arbiter),
+            keccak256("full log attached"),
+            unicode"ответ без слов принят"
+        );
+    }
+
+    /// Но если слова есть — они публичны, своим событием.
+    function test_ReplyWordsRideTheirOwnEvent() public {
+        _setStreak(arbiter, 2);
+        acc.removeArbiterForCause(
+            arbiter, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0), address(0), ""
+        );
+
+        string memory said = unicode"оба вердикта перевернули по апелляции, третьего не было";
+
+        vm.expectEmit(true, false, false, true, address(acc));
+        emit ArbiterAccountabilityFacet.RemovalReplyGiven(arbiter, said);
+
+        vm.prank(arbiter);
+        acc.respondToRemoval(keccak256("x"), said);
+    }
+
+    /// Потолок один на обе стороны: ответ длиннее 512 байт тоже отвергается.
+    /// Разная длина у обвинения и защиты была бы перекосом ровно там, где вся
+    /// работа про симметрию.
+    function test_ReplyOverTheCapIsRefused() public {
+        _setStreak(arbiter, 2);
+        acc.removeArbiterForCause(
+            arbiter, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0), address(0), ""
+        );
+
+        bytes memory tooLong = new bytes(513);
+        for (uint256 i = 0; i < 513; i++) tooLong[i] = "y";
+
+        vm.prank(arbiter);
+        vm.expectRevert(
+            abi.encodeWithSelector(ArbiterAccountabilityFacet.ReasonTooLong.selector, uint256(513))
+        );
+        acc.respondToRemoval(keccak256("x"), string(tooLong));
+    }
+
+    /// Пустых событий не бывает. Молчание — сигнал (решение 9 замысла), и
+    /// пустая строка в ленте стирала бы разницу между «объяснил» и «промолчал».
+    function test_NoWordsMeansNoWordsEvent() public {
+        _setStreak(arbiter, 2);
+        vm.recordLogs();
+        acc.removeArbiterForCause(
+            arbiter, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0), address(0), ""
+        );
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        for (uint256 i = 0; i < logs.length; i++) {
+            assertTrue(
+                logs[i].topics[0] != ArbiterAccountabilityFacet.RemovalReasonGiven.selector,
+                unicode"пустых слов в ленте быть не должно"
+            );
+        }
+    }
+
+    // ────────────────────────────────────────────────────────────
+    //  БАЙТ, А НЕ СИМВОЛ — И ЭТО ВИДНО ТОЛЬКО НА МНОГОБАЙТНОЙ БУКВЕ
+    //
+    //  Три проверки выше меряют потолок латинским «x», а у него байт и
+    //  символ — одно и то же. Значит на них правило «считаем символы»
+    //  неотличимо от правила «считаем байты»: обе редакции зелёные. Тот
+    //  самый класс, ради которого потолок и назван в БАЙТАХ.
+    //
+    //  Здесь стоит кириллица: 257 букв — это 257 символов и 514 байт.
+    //  Счётом по символам такая строка проходит (257 < 512), счётом по
+    //  байтам отвергается. Ровно эту развилку разыгрывают два теста ниже,
+    //  и больше её не разыгрывает никто.
+    //
+    //  ⚠️ Ожидаемое здесь — ЛИТЕРАЛЫ 512 и 514, а не getMaxReasonBytes():
+    //  спросив потолок у той же цепи, стенд сверял бы её с самой собой и
+    //  пережил бы любую смену числа молча. Соседний
+    //  test_ReasonExactlyAtTheCapPasses такой потолок как раз спрашивает —
+    //  он сторожит границу, но не значение.
+    // ────────────────────────────────────────────────────────────
+
+    /// Строка из `letters` кириллических «я». Байты берутся из самой буквы, а
+    /// не выписаны хексом: стенд, в котором «многобайтная буква» оказалась бы
+    /// однобайтной опечаткой, обязан упасть здесь, а не выдать зелёный замер.
+    function _cyrillic(uint256 letters) private pure returns (string memory) {
+        bytes memory ya = bytes(unicode"я");
+        require(ya.length == 2, unicode"стенд врёт: «я» обязана весить два байта");
+        bytes memory out = new bytes(letters * 2);
+        for (uint256 i = 0; i < letters; i++) {
+            out[2 * i]     = ya[0];
+            out[2 * i + 1] = ya[1];
+        }
+        return string(out);
+    }
+
+    /// 257 кириллических букв — 514 байт, и цепь их отвергает. Счётом по
+    /// символам это была бы законная строка, и обвинитель клал бы в цепь
+    /// вдвое больше обещанного.
+    function test_TheCapCountsBytesNotCharacters() public {
+        string memory tooLong = _cyrillic(257);
+        assertEq(bytes(tooLong).length, 514, unicode"стенд собран неверно: не 514 байт");
+
+        vm.expectRevert(
+            abi.encodeWithSelector(ArbiterAccountabilityFacet.ReasonTooLong.selector, uint256(514))
+        );
+        acc.removeArbiterForCause(
+            arbiter, ArbiterAccountabilityFacet.Cause.Other, keccak256("e"), address(0), tooLong
+        );
+    }
+
+    /// А 256 кириллических букв — ровно 512 байт — проходят. Это и есть та
+    /// «~256 символов», что обещаны человеку: в худшей кодировке, которой он
+    /// тут пишет.
+    function test_TwoHundredFiftySixCyrillicLettersFitExactly() public {
+        string memory atCap = _cyrillic(256);
+        assertEq(bytes(atCap).length, 512, unicode"стенд собран неверно: не 512 байт");
+
+        acc.removeArbiterForCause(
+            arbiter, ArbiterAccountabilityFacet.Cause.Other, keccak256("e"), address(0), atCap
+        );
+        assertFalse(_isArbiterRaw(arbiter), unicode"256 кириллических букв — законная длина");
+    }
+
+    /// Ответ считается той же единицей. Разойдись стороны в единице счёта —
+    /// защита получила бы вдвое меньше места, чем обвинение, и заметил бы это
+    /// только тот, кто пишет не по-английски.
+    function test_TheReplyCapCountsBytesToo() public {
+        _setStreak(arbiter, 2);
+        acc.removeArbiterForCause(
+            arbiter, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0), address(0), ""
+        );
+
+        string memory tooLong = _cyrillic(257);
+        assertEq(bytes(tooLong).length, 514, unicode"стенд собран неверно: не 514 байт");
+
+        vm.prank(arbiter);
+        vm.expectRevert(
+            abi.encodeWithSelector(ArbiterAccountabilityFacet.ReasonTooLong.selector, uint256(514))
+        );
+        acc.respondToRemoval(keccak256("x"), tooLong);
     }
 
     // ============================================================
@@ -882,7 +1129,7 @@ contract ArbiterRemovalForCauseTest is Test {
         _activateDAO();
         vm.prank(chief);
         vm.expectRevert(ArbiterAccountabilityFacet.NotOwnerOrChief.selector);
-        acc.proposeRemoval(arbiter, ArbiterAccountabilityFacet.Cause.Leak, keccak256("x"));
+        acc.proposeRemoval(arbiter, ArbiterAccountabilityFacet.Cause.Leak, keccak256("x"), unicode"выложил переписку по спору третьей стороне");
     }
 
     /// Четвёртая дверь. Важна отдельно: без неё несменяемый директор,
@@ -890,7 +1137,7 @@ contract ArbiterRemovalForCauseTest is Test {
     /// то есть гасить обвинения владельца против своих ставленников.
     function test_ChiefLosesWithdrawProposalAfterDao() public {
         _setChief(chief);
-        acc.proposeRemoval(arbiter, ArbiterAccountabilityFacet.Cause.Leak, keccak256("x"));
+        acc.proposeRemoval(arbiter, ArbiterAccountabilityFacet.Cause.Leak, keccak256("x"), unicode"выложил переписку по спору третьей стороне");
         _activateDAO();
         vm.prank(chief);
         vm.expectRevert(ArbiterAccountabilityFacet.NotOwnerOrChief.selector);
@@ -933,7 +1180,7 @@ contract ArbiterRemovalForCauseTest is Test {
         _setStreak(arbiter, 2);
         assertEq(acc.getSuspendedUntil(arbiter), 0, unicode"сетап: приостановки не было");
 
-        acc.removeArbiterForCause(arbiter, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0), address(0));
+        acc.removeArbiterForCause(arbiter, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0), address(0), "");
 
         assertEq(
             acc.getSuspendedUntil(arbiter), t0 + acc.getSuspensionWindow(),
@@ -947,7 +1194,7 @@ contract ArbiterRemovalForCauseTest is Test {
     /// сноса — новое оружие, а не защита.
     function test_RemovalSuspensionExpiresByItself() public {
         _setStreak(arbiter, 2);
-        acc.removeArbiterForCause(arbiter, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0), address(0));
+        acc.removeArbiterForCause(arbiter, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0), address(0), "");
 
         vm.warp(vm.getBlockTimestamp() + acc.getSuspensionWindow());
         assertFalse(acc.isSuspended(arbiter), unicode"на границе окна отпустило");
@@ -1001,7 +1248,7 @@ contract ArbiterRemovalForCauseTest is Test {
         _setForwarder(address(acc), address(fwd));
 
         _setStreak(arb, 2);
-        acc.removeArbiterForCause(arb, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0), address(0));
+        acc.removeArbiterForCause(arb, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0), address(0), "");
 
         MinimalForwarder.ForwardRequest memory req = MinimalForwarder.ForwardRequest({
             from:  arb,
@@ -1009,7 +1256,11 @@ contract ArbiterRemovalForCauseTest is Test {
             value: 0,
             gas:   500_000,
             nonce: fwd.getNonce(arb),
-            data:  abi.encodeWithSelector(acc.respondToRemoval.selector, keccak256("x"))
+            // ⚠️ Селектор берётся ОТ ТИПА, поэтому смену подписи (17 августа
+            // 2026, слова ответа) компилятор подхватывает сам; аргументов
+            // теперь два. Собранная руками старая калдата дала бы «function
+            // not found» — красный по чужой причине.
+            data:  abi.encodeWithSelector(acc.respondToRemoval.selector, keccak256("x"), "")
         });
 
         vm.prank(relayer);

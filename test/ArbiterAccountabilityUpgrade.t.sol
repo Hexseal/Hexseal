@@ -238,22 +238,22 @@ contract ArbiterAccountabilityUpgradeTest is Test, ArbiterChainCensus {
         regSigs[1] = "getMaxClaimsPerArbiter()";
         regSigs[2] = "getMaxArbiterMistakes()";
 
-        string[] memory accSigs = new string[](20);
+        string[] memory accSigs = new string[](21);
         accSigs[0]  = "suspendArbiter(address)";
         accSigs[1]  = "liftSuspension(address)";
         accSigs[2]  = "isSuspended(address)";
         accSigs[3]  = "getSuspendedUntil(address)";
         accSigs[4]  = "getSuspensionWindow()";
-        accSigs[5]  = "removeArbiterForCause(address,uint8,bytes32,address)";
+        accSigs[5]  = "removeArbiterForCause(address,uint8,bytes32,address,string)";
         accSigs[6]  = "getMistakeThreshold()";
         accSigs[7]  = "getMaxArbiterMistakesMirror()";
         accSigs[8]  = "getDaoThresholdMirror()";
-        accSigs[9]  = "proposeRemoval(address,uint8,bytes32)";
+        accSigs[9]  = "proposeRemoval(address,uint8,bytes32,string)";
         accSigs[10] = "withdrawProposal(address)";
         accSigs[11] = "getRemovalProposal(address)";
         accSigs[12] = "hasLiveProposal(address)";
         accSigs[13] = "getProposalTTL()";
-        accSigs[14] = "respondToRemoval(bytes32)";
+        accSigs[14] = "respondToRemoval(bytes32,string)";
         accSigs[15] = "getRemovalReply(address)";
         accSigs[16] = "getArbiterStanding(address)";
         // Задача 4.5: три чтения переехали из реестра и ЕЩЁ НЕ смонтированы,
@@ -261,6 +261,10 @@ contract ArbiterAccountabilityUpgradeTest is Test, ArbiterChainCensus {
         accSigs[17] = "getSeatedBy(address)";
         accSigs[18] = "getSeatedCountBy(address)";
         accSigs[19] = "getCleanVerdicts(address)";
+        // Причина словами (замысел 17 августа 2026, решение 7): потолок слов в
+        // БАЙТАХ. Три подписи выше переписаны той же работой — обвинение и
+        // защита получили строку, и подпись в цепи от этого сменилась.
+        accSigs[20] = "getMaxReasonBytes()";
 
         bytes4[] memory declaredReg = upgrade.addRegistrySelectors();
         assertEq(declaredReg.length, regSigs.length, unicode"Add-реестр: число селекторов разошлось с числом подписей");
@@ -415,7 +419,7 @@ contract ArbiterAccountabilityUpgradeTest is Test, ArbiterChainCensus {
 
         assertTrue(cuts[3].action == IDiamondCut.FacetCutAction.Add, unicode"cuts[3] должен быть Add");
         assertEq(cuts[3].facetAddress, acc, unicode"Add-ответственность: адрес обязан быть новым фасетом");
-        assertEq(cuts[3].functionSelectors.length, 20, unicode"Add-ответственность: ожидались ровно 20 селекторов");
+        assertEq(cuts[3].functionSelectors.length, 21, unicode"Add-ответственность: ожидались ровно 21 селектор");
 
         // Remove — последним и с нулевым адресом: DiamondCutLib.removeFunctions
         // требует ровно этого ("Diamond: remove needs zero address"), а
@@ -456,7 +460,7 @@ contract ArbiterAccountabilityUpgradeTest is Test, ArbiterChainCensus {
     // Оба теста ниже — ТОЖДЕСТВА, а не количества. Счёт ловит одиночный переезд
     // и не ловит обмен: переложи смонтированный селектор в Add, а
     // несмонтированный в Replace, поправив заодно литеральный список подписей —
-    // и все числа останутся прежними (11 и 20, 63+1). Замерено ревью задачи
+    // и все числа останутся прежними (11 и 21, 63+1). Замерено ревью задачи
     // 4.5: 843 зелёных, 0 красных, разрез в бою отвергнут целиком.
     // ════════════════════════════════════════════════════════════════════
 
@@ -1301,7 +1305,7 @@ contract ArbiterAccountabilityUpgradeTest is Test, ArbiterChainCensus {
         // даймонда ревертнул бы "Diamond: function not found", а не прикладной
         // ошибкой фасета.
         vm.expectRevert(abi.encodeWithSignature("NothingToAnswer()"));
-        ArbiterAccountabilityFacet(address(diamond)).respondToRemoval(bytes32(uint256(1)));
+        ArbiterAccountabilityFacet(address(diamond)).respondToRemoval(bytes32(uint256(1)), "");
     }
 
     /// Прямая запись в vaultBalance (простое uint256-поле, слот POSITION+9).

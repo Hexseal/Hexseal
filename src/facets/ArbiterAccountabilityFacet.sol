@@ -99,6 +99,27 @@ contract ArbiterAccountabilityFacet {
     /// обвинение висело кварталами.
     uint256 private constant PROPOSAL_TTL = 14 days;
 
+    /// Потолок слов, в БАЙТАХ, а не в символах — цепь символов не считает и
+    /// считать не может: `bytes(s).length` это длина UTF-8, и «256 символов»
+    /// на кириллице это 512 байт, а на эмодзи 1024.
+    ///
+    /// Число выбрано так, чтобы обещанные владельцем ~256 символов помещались
+    /// в ХУДШЕЙ кодировке из тех, которыми люди тут пишут: 512 байт — это 512
+    /// латинских символов или 256 кириллических. Хватает на «трижды забирал
+    /// споры одного контрагента и трижды решал в его пользу» (123 байта) и не
+    /// превращает цепь в блог.
+    ///
+    /// ⚠️ Форма обязана показывать остаток В БАЙТАХ. Счётчик «осталось 40
+    /// символов» соврёт на первом же эмодзи вчетверо, и человек получит отказ
+    /// транзакции вместо подсказки.
+    uint256 private constant MAX_REASON_BYTES = 512;
+
+    /// Этап, на котором сказаны слова. Уезжает indexed-топиком, чтобы лента
+    /// могла спросить «покажи все обвинения» отдельно от «покажи все сносы»,
+    /// не разбирая тело события.
+    uint8 private constant REASON_STAGE_PROPOSAL = 0;
+    uint8 private constant REASON_STAGE_REMOVAL  = 1;
+
     // -------- ERRORS --------
 
     error NotOwnerOrChief();
@@ -141,6 +162,15 @@ contract ArbiterAccountabilityFacet {
     error AlreadyAnswered();
     error NothingToAnswer();
     error ZeroDigest();
+
+    // ── Причина словами (замысел 17 августа 2026, решение 7) ──
+    /// Цепь этот повод не проверяет, значит обвинитель обязан объяснить
+    /// словами. Обязанность лежит на обвинителе и только на нём: у
+    /// обвиняемого слова — право.
+    error ReasonRequired();
+    /// Длина в БАЙТАХ, не в символах. Значение возвращается в ошибке, чтобы
+    /// форма могла показать, насколько именно перебрали.
+    error ReasonTooLong(uint256 given);
 
     // Примечание: addArbiter/setChiefArbiter в ArbiterRegistryFacet тем же
     // решением владельца («никаких ручных», человек выходит, остаётся только
@@ -209,6 +239,30 @@ contract ArbiterAccountabilityFacet {
         bytes32         evidenceDigest,
         uint256         proposedAt
     );
+
+    /// Слова обвинителя. ОТДЕЛЬНОЕ событие, а не поле в
+    /// ArbiterRemovedForCause/RemovalProposed: те уже индексируются живым
+    /// сабграфом (subgraph/src/arbiter.ts), и смена их подписи остановила бы
+    /// ленту молча — graph-cli сопоставляет лог по канонической подписи с
+    /// `indexed` включительно. Тот же приём, что уже применён к
+    /// RemovalProposalConsumed: два лога в одной транзакции, сшиваются по ней.
+    ///
+    /// `stage` различает предложение (0) и снос (1). Молчит, если слов нет:
+    /// пустая строка в ленте стирала бы разницу между «объяснил» и
+    /// «промолчал», а вся эта работа держится ровно на этой разнице.
+    event RemovalReasonGiven(
+        address indexed arbiter,
+        address indexed by,
+        uint8   indexed stage,
+        string          reason
+    );
+
+    /// Слова обвиняемого. Симметрия с RemovalReasonGiven, но модальность
+    /// другая: у обвинителя это обязанность (когда цепь молчит), у
+    /// обвиняемого — право. Заставлять человека оправдываться публично
+    /// нельзя; оставлять запись односторонней — обвинение словами, защита
+    /// хешем — тоже.
+    event RemovalReplyGiven(address indexed arbiter, string reply);
 
     // -------- MODIFIERS --------
 
@@ -436,6 +490,20 @@ contract ArbiterAccountabilityFacet {
             || cause == Cause.Silence;
     }
 
+    /// Одно правило на обе двери обвинения (proposeRemoval и
+    /// removeArbiterForCause). Копии здесь быть не должно: разойдясь, они дали
+    /// бы предложение, которое проходит без слов, и снос, который без них не
+    /// проходит, — то есть паузу, в которую обвиняемому нечего читать.
+    ///
+    /// Порядок проверок: длина ПЕРЕД обязательностью. Иначе обвинитель,
+    /// приславший 5 килобайт на проверяемом коде, получил бы «ок» вместо
+    /// отказа, и калдата такого размера доехала бы до цепи.
+    function _requireReason(bool verified, string calldata reason) private pure {
+        uint256 len = bytes(reason).length;
+        if (len > MAX_REASON_BYTES) revert ReasonTooLong(len);
+        if (!verified && len == 0) revert ReasonRequired();
+    }
+
     /// Каждый проверяемый код смотрит СВОЙ признак. Слить их в одну проверку
     /// нельзя: тогда `Silence` проходил бы по счётчику переворотов, то есть
     /// цепь заверяла бы не то, что написано в записи.
@@ -566,11 +634,20 @@ contract ArbiterAccountabilityFacet {
     /// `setDAOAddress(свой_адрес)`, круг правок 1, C-3). Обе половины
     /// обязаны запираться синхронно — починка тут без починки там ничего не
     /// стоила бы.
+    ///
+    /// ⚠️ `reason` — ОБЯЗАННОСТЬ обвинителя ровно там, где цепь молчит
+    /// (замысел 17 августа 2026, решение 7). До этой правки публичная запись о
+    /// сносе не содержала ни одного слова: `Cause` — числовой код, событие
+    /// несёт адреса, код, отпечаток и сумму. Имя «снос с поводом» обещало
+    /// объяснение, которого не было нигде. Правило легло на уже существующий
+    /// `_isChainVerifiable` без нового условия: три проверяемых кода цепь
+    /// объясняет сама, три заверяемых на слово — обязаны объясняться словами.
     function removeArbiterForCause(
         address arbiter,
         Cause   cause,
         bytes32 evidenceDigest,
-        address disputeRef
+        address disputeRef,
+        string calldata reason
     ) external {
         if (arbiter == address(0)) revert ArbiterZeroAddress();
 
@@ -626,6 +703,7 @@ contract ArbiterAccountabilityFacet {
             // тоже не годится: у нуля нет прообраза, который можно показать.
             if (evidenceDigest == bytes32(0)) revert EvidenceRequired();
         }
+        _requireReason(verified, reason);
 
         // Снос по поводу — не самостоятельный уход: бонд форфейтится в банк
         // арбитров, а не возвращается (обратное поведение resignAsArbiter,
@@ -713,6 +791,13 @@ contract ArbiterAccountabilityFacet {
                 consumedProposal.proposedAt
             );
         }
+
+        // Слова — отдельным логом той же транзакции, и только если они есть:
+        // пустая строка в ленте стирала бы разницу между «объяснил» и
+        // «промолчал».
+        if (bytes(reason).length != 0) {
+            emit RemovalReasonGiven(arbiter, msg.sender, REASON_STAGE_REMOVAL, reason);
+        }
     }
 
     // ⚠️ Сброс XP здесь не делается: ReputationStorage живёт в другом
@@ -734,8 +819,17 @@ contract ArbiterAccountabilityFacet {
     /// _msgSender(), а не msg.sender: её зовёт снятый арбитр — обычный человек,
     /// у которого может не быть ETH. На пути через релеер msg.sender это адрес
     /// MinimalForwarder, и ответ записался бы форвардеру, а не человеку.
-    function respondToRemoval(bytes32 replyDigest) external {
+    ///
+    /// ⚠️ `reply` — ПРАВО, а не обязанность (замысел 17 августа 2026, решение
+    /// 7). Пустая строка законна и события не порождает. Отпечаток
+    /// по-прежнему обязателен: он и есть ответ, а слова — его краткое
+    /// изложение для ленты. Пускать ответ без отпечатка означало бы, что
+    /// «ответ» может быть строкой без прообраза, а признак «уже отвечал»
+    /// (`removalReply != 0`) перестал бы работать.
+    function respondToRemoval(bytes32 replyDigest, string calldata reply) external {
         if (replyDigest == bytes32(0)) revert ZeroDigest();
+        uint256 len = bytes(reply).length;
+        if (len > MAX_REASON_BYTES) revert ReasonTooLong(len);
 
         address caller = _msgSender();
         ArbiterRegistryStorage.Data storage d = ArbiterRegistryStorage.data();
@@ -745,6 +839,9 @@ contract ArbiterAccountabilityFacet {
 
         d.removalReply[caller] = replyDigest;
         emit RemovalAnswered(caller, replyDigest);
+        if (len != 0) {
+            emit RemovalReplyGiven(caller, reply);
+        }
     }
 
     function getRemovalReply(address arbiter) external view returns (bytes32) {
@@ -786,14 +883,28 @@ contract ArbiterAccountabilityFacet {
 
     /// Положить предложение в цепь. Одно живое предложение на арбитра —
     /// второе перезаписывает первое (претензия одна, а не очередь).
-    function proposeRemoval(address arbiter, Cause cause, bytes32 evidenceDigest)
+    ///
+    /// ⚠️ Слова обязательны ЗДЕСЬ, а не только при исполнении (замысел 17
+    /// августа 2026, решения 1+7 вместе). Между предложением и сносом теперь
+    /// стоит пауза, во время которой обвиняемый вправе ответить. Если слова
+    /// появляются только в момент сноса, пауза даёт человеку числовой код
+    /// повода и ничего больше — отвечать он будет на догадку.
+    function proposeRemoval(
+        address arbiter,
+        Cause   cause,
+        bytes32 evidenceDigest,
+        string calldata reason
+    )
         external
         onlyOwnerOrChief
     {
         if (arbiter == address(0)) revert ArbiterZeroAddress();
         ArbiterRegistryStorage.Data storage d = ArbiterRegistryStorage.data();
         if (!d.isArbiter[arbiter]) revert NotAnArbiter();
-        if (!_isChainVerifiable(cause) && evidenceDigest == bytes32(0)) revert EvidenceRequired();
+
+        bool verified = _isChainVerifiable(cause);
+        if (!verified && evidenceDigest == bytes32(0)) revert EvidenceRequired();
+        _requireReason(verified, reason);
 
         d.removalProposals[arbiter] = ArbiterRegistryStorage.RemovalProposal({
             cause:          uint8(cause),
@@ -802,6 +913,9 @@ contract ArbiterAccountabilityFacet {
             by:             msg.sender
         });
         emit RemovalProposed(arbiter, msg.sender, cause, evidenceDigest, block.timestamp);
+        if (bytes(reason).length != 0) {
+            emit RemovalReasonGiven(arbiter, msg.sender, REASON_STAGE_PROPOSAL, reason);
+        }
     }
 
     /// Отозвать предложение раньше срока — своё или чужое: владелец и
@@ -893,6 +1007,13 @@ contract ArbiterAccountabilityFacet {
 
     function getProposalTTL() external pure returns (uint256) {
         return PROPOSAL_TTL;
+    }
+
+    /// Потолок слов в БАЙТАХ. Форма обязана спрашивать его у цепи, а не
+    /// хранить своё число: разойдясь, они дадут человеку отказ транзакции
+    /// вместо подсказки в поле.
+    function getMaxReasonBytes() external pure returns (uint256) {
+        return MAX_REASON_BYTES;
     }
 
     // -------- ПОЛОЖЕНИЕ АРБИТРА ОДНИМ ЧТЕНИЕМ (задача 9, 15 августа 2026) --------

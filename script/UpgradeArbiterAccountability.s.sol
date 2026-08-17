@@ -34,7 +34,7 @@ interface ISuspensionWindowProbe {
  *                                                 сегодня, потому Replace)
  *   Add      3 → тот же новый ArbiterRegistryFacet (входы задач 2, 3 и 5,
  *                                                 оставшиеся в реестре)
- *   Add     20 → ArbiterAccountabilityFacet       (весь фасет целиком: 17 своих
+ *   Add     21 → ArbiterAccountabilityFacet       (весь фасет целиком: 18 своих
  *                                                 плюс 3 переехавших, которых в
  *                                                 цепи ещё нет)
  *   Remove   1 → address(0): removeArbiter(address), 0x3487e08c
@@ -60,6 +60,18 @@ interface ISuspensionWindowProbe {
  * → остаются Add, просто в другом списке. Итог по числам не сдвинулся:
  * Add было 6+17=23, стало 3+20=23.
  *
+ * ⚠️ ЗАДАЧА 1 ПЛАНА removal-due-process (17 августа 2026) — ПРИЧИНА СЛОВАМИ.
+ * Add-группа ответственности 20 → 21: приехал getMaxReasonBytes, потолок слов в
+ * БАЙТАХ. Той же работой сменились ПОДПИСИ трёх входов этой же группы
+ * (removeArbiterForCause и proposeRemoval получили `string reason`,
+ * respondToRemoval — `string reply`), и это НЕ переводит их в Replace: ни один
+ * из трёх в цепи не смонтирован, разрез ещё не сделан. Сменилось только
+ * ЗНАЧЕНИЕ селектора внутри Add-группы, и подхватил его компилятор — списки
+ * ниже берут `.selector` от типа. Литеральные подписи в
+ * test/ArbiterAccountabilityUpgrade.t.sol переписаны руками: там и стоит
+ * замок, который замечает смену подписи (цепь на этот счёт молчит, потому что
+ * этих селекторов у неё нет ни до, ни после).
+ *
  * ⚠️ ГЛАВНОЕ ПРАВИЛО ДЕЛЕНИЯ Replace/Add, из-за которого разрез отвергается
  * ЦЕЛИКОМ. `Replace` требует, чтобы селектор УЖЕ был смонтирован
  * (DiamondCutLib.replaceFunctions → removeFunction → "Diamond: selector not
@@ -79,7 +91,7 @@ interface ISuspensionWindowProbe {
  *   всего смонтировано               177 селекторов, 11 фасетов
  *   ArbiterRegistryFacet             0x1CF4c7DaA27f2241eafd8E818329719418403013, 64 селектора
  *   арбитров                         1 (0x42dCd14e…), банк 6 000 000, пол 10 000 000
- * После разреза: 177 + 23 − 1 = 199 селекторов, 12 фасетов. Задача 4.5 это
+ * После разреза: 177 + 24 − 1 = 200 селекторов, 12 фасетов. Задача 4.5 это
  * число НЕ сдвинула: она переложила селекторы между фасетами, не добавив и не
  * убрав ни одного. Старый адрес по-прежнему опустошается ровно: 63 Replace
  * (52 + 11) плюс 1 Remove — те самые 64, что сидят на нём сегодня.
@@ -771,7 +783,7 @@ contract UpgradeArbiterAccountability is Script {
     /// означает функцию, которой в даймонде нет, то есть мёртвую кнопку во
     /// фронте.
     function addAccountabilitySelectors() public pure returns (bytes4[] memory sels) {
-        sels = new bytes4[](20);
+        sels = new bytes4[](21);
 
         // Задача 4: приостановка — быстрая, обратимая, протухает сама
         sels[0]  = ArbiterAccountabilityFacet.suspendArbiter.selector;
@@ -808,6 +820,10 @@ contract UpgradeArbiterAccountability is Script {
         sels[17] = ArbiterAccountabilityFacet.getSeatedBy.selector;
         sels[18] = ArbiterAccountabilityFacet.getSeatedCountBy.selector;
         sels[19] = ArbiterAccountabilityFacet.getCleanVerdicts.selector;
+
+        // Причина словами (замысел 17 августа 2026, решение 7): потолок в
+        // БАЙТАХ, спрашивается у цепи, а не хранится копией во фронте.
+        sels[20] = ArbiterAccountabilityFacet.getMaxReasonBytes.selector;
     }
 
     /// Ровно один: голая removeArbiter(address). Просто убрать её из исходника

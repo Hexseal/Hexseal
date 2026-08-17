@@ -50,7 +50,7 @@ import "../src/JobReceiptFacet.sol";
 ///   - `buildInitCuts`/`buildRemainingCuts` wire a correct selector set to the
 ///     wrong `FacetCut.facetAddress`
 ///   - the actual `DiamondProxy` this script would produce does not end up with
-///     exactly 12 facets, exactly 199 routed selectors, and consistent
+///     exactly 12 facets, exactly 200 routed selectors, and consistent
 ///     `facetAddress(sel)` <-> `facets()` routing in both directions
 ///     (177 -> 179, 15 Aug 2026: arbiter-accountability task 1 added
 ///     getSeatedBy/getSeatedCountBy to ArbiterRegistryFacet; 179 -> 180,
@@ -115,7 +115,21 @@ import "../src/JobReceiptFacet.sol";
 ///     `cleanVerdicts` and `removedAt` landing in storage — both are read
 ///     into the return tuple, plus `hasLiveRemovalProposal` via a call to
 ///     the facet's own `hasLiveProposal`, not a copy of its formula. No new
-///     storage fields, ArbiterRegistryFacet unchanged)
+///     storage fields, ArbiterRegistryFacet unchanged; 199 -> 200, 17 Aug 2026,
+///     task 1 of the removal-due-process plan: the accusation got WORDS.
+///     `Cause` is a numeric code, so the public record of a removal carried no
+///     words at all — "removal for cause" promised an explanation that existed
+///     nowhere. ArbiterAccountabilityFacet gained `getMaxReasonBytes` (+1, 31
+///     -> 32): the cap on those words, in BYTES, asked of the chain so the form
+///     does not keep a copy that can drift. Three already-listed entries
+///     changed SIGNATURE without adding selectors here
+///     (`removeArbiterForCause`/`proposeRemoval` gained `string reason`,
+///     `respondToRemoval` gained `string reply`) — still an Add on chain, not
+///     a Replace: this plan's cut has not been made, so none of the three old
+///     selectors is mounted on the diamond and only the selector VALUE inside
+///     the Add group changed, see script/UpgradeArbiterAccountability.s.sol.
+///     No new storage fields: the words live in events
+///     (RemovalReasonGiven/RemovalReplyGiven), read by the feed and the card)
 contract DeployFullSelectorsTest is Test {
     DeployFull internal deploy;
 
@@ -405,7 +419,7 @@ contract DeployFullSelectorsTest is Test {
                 );
             }
         }
-        assertEq(totalRouted, 199, "diamond should route exactly 199 selectors total");
+        assertEq(totalRouted, 200, "diamond should route exactly 200 selectors total");
 
         // Reverse direction: facetAddresses() must report exactly the same set
         // of addresses facets() reported them under.
