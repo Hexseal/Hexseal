@@ -38,6 +38,12 @@ can actually be removed» — у всякого, кого можно снест�
   • оператор `=`, а правая часть НЕ литеральный ноль        → ненулевая запись
   • составной оператор (`+=`, `-=`, `|=` и прочие)          → ненулевая запись
     (составной оператор может увеличить, каким бы ни был операнд)
+  • `d.arbiterBond[кто]++` и `--d.arbiterBond[кто]`         → ненулевая запись
+    (Ф-1/Ф-2 переревью: `++` увеличивает залог ровно как `+=`, а первая
+    редакция разбирала `UnaryOperation` только ради `delete` и молчала)
+  • кортеж: `(d.arbiterBond[кто], x) = (…, …)`              → ненулевая запись,
+    кроме случая «справа кортеж той же длины и на нашей позиции литеральный
+    ноль» (Ф-4 переревью: слева тут TupleExpression, а не IndexAccess)
   • оператор `=` с литеральным нулём справа                 → НУЛЕВАЯ, не в счёт
   • `delete d.arbiterBond[кто]`                             → НУЛЕВАЯ, не в счёт
 
@@ -80,6 +86,47 @@ can actually be removed» — у всякого, кого можно снест�
 самом деле» — ровно тот дефект, ради которого гейт и написан. Сегодня таких
 мест в src/ ноль.
 
+То же самое — про ГОЛЫЙ ПСЕВДОНИМ (Ф-5 переревью, 17 августа 2026). Первая
+редакция искала здесь только узлы `MemberAccess`, а в
+
+    mapping(address => uint256) storage bonds = d.arbiterBond;
+    _grant(bonds, кто);                          // запись живёт внутри _grant
+
+аргументом стоит `Identifier`. Гейт печатал «ссылка на поле никуда не
+утекает» — утверждение, ОБРАТНОЕ истине, и это хуже молчания: молчание никого
+не убеждает, а такая строка убеждает. Теперь голый псевдоним красит наравне с
+голым полем.
+
+---------------------------------------------------------------------------
+КУДА ЭТО ПРАВИЛО НЕЛЬЗЯ КОПИРОВАТЬ — ЗАМЕРЕНО, А НЕ ПРИКИНУТО
+
+Замер 17 августа 2026: правило «голая ссылка = красное» прогнано по КАЖДОМУ
+полю-состоянию в src/, поимённо.
+
+  • **Поля-отображения: 77 штук, 0 красных мест.** К мэппингу обращаются только
+    по ключу, голой ссылки на него в рабочем коде не встречается вовсе. То есть
+    работе гейт не мешает — это не удача `arbiterBond`, а свойство идиомы.
+
+  • **Поля-массивы: 5 штук, 35 красных мест.** `.push`, `.length`, `.pop` — это
+    как раз `MemberAccess` по голой ссылке, а не `IndexAccess`. Скопировать
+    гейт на `arbiterList` НЕЛЬЗЯ: он покраснеет на исправном коде в первый же
+    прогон, и его отключат. Массиву нужна другая разметка законных обращений.
+
+  • **⚠️ И третье, менее очевидное: мэппинг НА СТРУКТУРУ.** Ветка псевдонимов
+    (выше) считает псевдонимом всякий локальный storage-указатель, чей
+    инициализатор упоминает поле, — а `PendingVerdict storage v =
+    d.pendingVerdicts[спор];` это ровно он. После чего КАЖДОЕ чтение `v.поле`
+    — голый псевдоним, то есть красное. Замер по тому же прогону: с веткой
+    псевдонимов те же 77 мэппингов дают уже **201** красное место, и все 201
+    сидят на мэппингах со структурой в значении (`pendingVerdicts` 72, `jobs`
+    29, `requests` 31, `services` 31, …).
+
+    `arbiterBond` от этого защищён не проверкой, а ТИПОМ: значение `uint256`,
+    а локальным storage-указателем на `uint256`-элемент в Solidity быть
+    нечему. Значит гейт годен для мэппингов с ЗНАЧЕНИЕМ-ЗНАЧИМЫМ ТИПОМ и не
+    годен для мэппингов на структуру — до тех пор, пока `collect_aliases` не
+    научится отличать указатель на САМО ПОЛЕ от указателя на его ЭЛЕМЕНТ.
+
 ---------------------------------------------------------------------------
 ЧЕГО ГЕЙТ НЕ ЛОВИТ — СКАЗАНО ВСЛУХ
 
@@ -107,8 +154,11 @@ script/check_gasless_sender.py. Регулярки здесь не годятс�
 и ровно там, где объясняется, почему рядом его как раз НЕ трогают.
 
 Коды возврата:
-    0   — ненулевой писатель ровно один и он тот, что записан ниже
-    1   — писателей стало больше/меньше, или это не тот писатель
+    0   — ненулевой писатель ровно один и он тот, что записан ниже, и ни одна
+          ссылка на поле не утекла из-под разбора
+    1   — писателей стало больше/меньше, это не тот писатель, ИЛИ ссылка на
+          поле (либо локальный указатель на него) утекла туда, куда разбор не
+          идёт: покрытие в этом месте меньше обещанного
     3   — разбор не состоялся: нет артефакта с AST, или поле `arbiterBond`
           не найдено в src/ вовсе. Сломан сам гейт, правило НЕ проверено —
           это не то же самое, что «нарушений нет»
@@ -250,6 +300,15 @@ def touches_field(node) -> bool:
     return node.get("nodeType") == "MemberAccess" and node.get("memberName") == FIELD
 
 
+def is_alias_id(node, aliases=()) -> bool:
+    """`x`, где `x` — локальный storage-указатель на это поле."""
+    return (
+        isinstance(node, dict)
+        and node.get("nodeType") == "Identifier"
+        and node.get("referencedDeclaration") in aliases
+    )
+
+
 def is_field_slot(node, aliases=()) -> bool:
     """Левая часть присваивания вида `d.arbiterBond[кто]` — или `x[кто]`, где
     `x` локальный storage-указатель на то же поле.
@@ -262,12 +321,15 @@ def is_field_slot(node, aliases=()) -> bool:
     base = node.get("baseExpression")
     if not isinstance(base, dict):
         return False
-    if touches_field(base):
-        return True
-    return (
-        base.get("nodeType") == "Identifier"
-        and base.get("referencedDeclaration") in aliases
-    )
+    return touches_field(base) or is_alias_id(base, aliases)
+
+
+def through_alias(slot) -> str:
+    """Пометка для сообщения: место найдено по псевдониму, а не по
+    `d.arbiterBond[…]` напрямую."""
+    if not isinstance(slot, dict):
+        return " через псевдоним"
+    return "" if touches_field(slot.get("baseExpression") or {}) else " через псевдоним"
 
 
 def is_storage_pointer_decl(node) -> bool:
@@ -343,12 +405,42 @@ class Write:
         self.contract = contract
         self.member = member
         self.line = line
-        self.kind = kind      # "nonzero" | "zero"
+        self.kind = kind      # "nonzero" | "zero" | "escape"
         self.text = text
 
     @property
     def key(self) -> str:
         return f"{self.relpath} :: {self.contract}.{self.member}"
+
+
+def classify_tuple(lhs, rhs, op, aliases):
+    """Кортежное присваивание: `(d.arbiterBond[кто], x) = (…, …)`.
+
+    Слева тут стоит TupleExpression, а не IndexAccess, — первая редакция такое
+    место не видела ВОВСЕ и отвечала `exit 0`.
+
+    Нулевой запись засчитывается только когда справа тоже кортеж той же длины и
+    на нашей позиции стоит литеральный ноль. Во всех прочих случаях (распаковка
+    возврата функции, кортеж иной длины) — «ненулевая»: громкое красное здесь
+    дешевле молчания, а живых кортежных записей в поле сегодня ноль.
+    """
+    comps = lhs.get("components") or []
+    rcomps = (
+        rhs.get("components") or []
+        if isinstance(rhs, dict) and rhs.get("nodeType") == "TupleExpression"
+        else []
+    )
+    verdict = None
+    for i, comp in enumerate(comps):
+        if not is_field_slot(comp, aliases):
+            continue
+        through = through_alias(comp)
+        paired = rcomps[i] if len(rcomps) == len(comps) else None
+        if op == "=" and paired is not None and is_literal_zero(paired):
+            verdict = verdict or ("zero", f"в кортеже = 0{through}")
+        else:
+            return "nonzero", f"в кортеже = <не ноль>{through}"
+    return verdict
 
 
 def classify(node, aliases=()):
@@ -357,50 +449,66 @@ def classify(node, aliases=()):
 
     if ntype == "Assignment":
         lhs = node.get("leftHandSide")
+        op = node.get("operator") or "="
+        if isinstance(lhs, dict) and lhs.get("nodeType") == "TupleExpression":
+            return classify_tuple(lhs, node.get("rightHandSide"), op, aliases)
         if not is_field_slot(lhs, aliases):
             return None
-        through = "" if touches_field(lhs.get("baseExpression") or {}) else " через псевдоним"
-        op = node.get("operator") or "="
+        through = through_alias(lhs)
         if op != "=":
             return "nonzero", f"составной оператор {op}{through}"
         if is_literal_zero(node.get("rightHandSide")):
             return "zero", f"= 0{through}"
         return "nonzero", f"= <не ноль>{through}"
 
-    if ntype == "UnaryOperation" and node.get("operator") == "delete":
+    if ntype == "UnaryOperation":
         sub = node.get("subExpression")
-        if is_field_slot(sub, aliases):
-            through = "" if touches_field(sub.get("baseExpression") or {}) else " через псевдоним"
+        if not is_field_slot(sub, aliases):
+            return None
+        op = node.get("operator")
+        through = through_alias(sub)
+        if op == "delete":
             return "zero", f"delete{through}"
+        # `d.arbiterBond[кто]++` и `--d.arbiterBond[кто]` — настоящие записи,
+        # и `++` увеличивает залог ровно так же, как `+=`. Прочие унарные
+        # (`!`, `~`, унарный минус) значения не меняют — это чтения.
+        if op in ("++", "--"):
+            return "nonzero", f"{op}{through}"
         return None
 
     return None
 
 
 def find_escapes(member, aliases, relpath, cname, mname, starts):
-    """Места, где `arbiterBond` упомянута НЕ под индексом и НЕ как связывание
-    псевдонима, — то есть ссылка уехала туда, куда разбор не идёт.
+    """Места, где `arbiterBond` — ИЛИ ЛОКАЛЬНЫЙ УКАЗАТЕЛЬ НА НЕЁ — упомянуты НЕ
+    под индексом и НЕ как связывание псевдонима: то есть ссылка уехала туда,
+    куда разбор не идёт.
 
     Такое место гейт красит, а не пропускает: аргумент storage-указателем в
     чужую функцию (`f(d.arbiterBond)` и `m[кто] = …` внутри неё) — настоящий
     путь записи, и молчать о нём значило бы обещать покрытие шире фактического.
+
+    ⚠️ ПСЕВДОНИМ ТОЖЕ УТЕКАЕТ (Ф-5 переревью, 17 августа 2026). Первая редакция
+    искала только узлы `MemberAccess`, а в `_grant(bonds)` стоит `Identifier`, —
+    и гейт печатал «ссылка на поле никуда не утекает» ровно тогда, когда она
+    утекла. Утверждение, обратное истине, хуже молчания: молчание не убеждает.
     """
     ok_ids = set()
     for node in iter_nodes(member):
         ntype = node.get("nodeType")
 
-        # `d.arbiterBond[кто]` — законное обращение по ключу.
+        # `d.arbiterBond[кто]` и `x[кто]` — законное обращение по ключу.
         if ntype == "IndexAccess":
             base = node.get("baseExpression")
-            if isinstance(base, dict) and touches_field(base):
+            if isinstance(base, dict) and (touches_field(base) or is_alias_id(base, aliases)):
                 ok_ids.add(id(base))
 
-        # `mapping(...) storage x = d.arbiterBond;` — законное связывание.
+        # `mapping(...) storage x = d.arbiterBond;` (или `= y;`) — законное связывание.
         elif ntype == "VariableDeclarationStatement":
             init = node.get("initialValue")
             if (
                 isinstance(init, dict)
-                and touches_field(init)
+                and (touches_field(init) or is_alias_id(init, aliases))
                 and any(
                     is_storage_pointer_decl(dcl) and dcl.get("id") in aliases
                     for dcl in node.get("declarations") or []
@@ -408,25 +516,27 @@ def find_escapes(member, aliases, relpath, cname, mname, starts):
             ):
                 ok_ids.add(id(init))
 
-        # `x = d.arbiterBond;` — переприсваивание уже признанного указателя.
+        # `x = d.arbiterBond;` / `x = y;` — переприсваивание уже признанного указателя.
         elif ntype == "Assignment" and (node.get("operator") or "=") == "=":
             lhs, rhs = node.get("leftHandSide"), node.get("rightHandSide")
-            if (
-                isinstance(lhs, dict)
-                and lhs.get("nodeType") == "Identifier"
-                and lhs.get("referencedDeclaration") in aliases
-                and isinstance(rhs, dict)
-                and touches_field(rhs)
-            ):
-                ok_ids.add(id(rhs))
+            if is_alias_id(lhs, aliases):
+                ok_ids.add(id(lhs))  # цель присваивания — не утечка
+                if isinstance(rhs, dict) and (touches_field(rhs) or is_alias_id(rhs, aliases)):
+                    ok_ids.add(id(rhs))
 
     out = []
     for node in iter_nodes(member):
-        if touches_field(node) and id(node) not in ok_ids:
-            out.append(
-                Write(relpath, cname, mname, line_of(starts, src_offset(node)),
-                      "escape", "ссылка на поле утекла из-под разбора")
-            )
+        if id(node) in ok_ids:
+            continue
+        if touches_field(node):
+            what = "ссылка на поле утекла из-под разбора"
+        elif is_alias_id(node, aliases):
+            what = "псевдоним поля утёк из-под разбора"
+        else:
+            continue
+        out.append(
+            Write(relpath, cname, mname, line_of(starts, src_offset(node)), "escape", what)
+        )
     return out
 
 
@@ -543,13 +653,14 @@ def main(argv) -> int:
 
     for w in escapes:
         print(
-            f"  ССЫЛКА НА ПОЛЕ УТЕКЛА ИЗ-ПОД РАЗБОРА: {w.key}\n"
+            f"  {w.text.upper()}: {w.key}\n"
             f"    {w.relpath}:{w.line}\n"
-            f"    `{FIELD}` упомянута не под индексом и не как связывание\n"
-            "    storage-указателя — значит уехала аргументом в чужую функцию,\n"
-            "    возвратом или в кортеж. Куда именно, разбор не идёт, и запись\n"
-            "    там он не увидит. Это не запрет: либо перепишите обращение\n"
-            "    прямым `d.arbiterBond[кто]`, либо научите гейт этому случаю.",
+            f"    `{FIELD}` (или локальный указатель на неё) упомянута не под\n"
+            "    индексом и не как связывание storage-указателя — значит уехала\n"
+            "    аргументом в чужую функцию, возвратом или в кортеж. Куда именно,\n"
+            "    разбор не идёт, и запись там он не увидит. Это не запрет: либо\n"
+            "    перепишите обращение прямым `d.arbiterBond[кто]`, либо научите\n"
+            "    гейт этому случаю.",
             file=sys.stderr,
         )
 
