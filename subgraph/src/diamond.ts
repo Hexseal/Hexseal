@@ -224,3 +224,27 @@ export function handleFeeCollected(event: FeeCollected): void {
   fc.timestamp = event.block.timestamp
   fc.save()
 }
+
+// Arbiter accountability. The bodies are in ./arbiter.ts — this file is about
+// the boards, and mixing four hundred lines of arbiter history into it would
+// help nobody. The re-export is what the manifest needs: a data source names
+// exactly one mapping file, and every handler it declares has to be an export
+// of that file.
+//
+// A second data source would have been the cleaner shape and is not available:
+// frontend/src/lib/arbiterTurn.test.ts reads subgraph.yaml to check its own
+// copy of the diamond's deploy block and refuses to guess between two
+// `startBlock:` lines. Rather than teach a neighbour's lock to guess, the
+// manifest keeps one data source and pays for it here.
+export {
+  handleArbiterSeated,
+  handleArbiterResigned,
+  handleArbiterDemoted,
+  handleArbiterSuspended,
+  handleArbiterSuspensionLifted,
+  handleArbiterRemovedForCause,
+  handleRemovalProposed,
+  handleRemovalProposalWithdrawn,
+  handleRemovalProposalConsumed,
+  handleRemovalAnswered,
+} from './arbiter'

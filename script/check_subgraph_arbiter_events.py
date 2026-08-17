@@ -47,6 +47,16 @@ WHAT IS NOT COMPARED, said plainly:
     and test/ArbiterAccountabilityUpgrade.t.sol's.
   * That the handlers do anything sensible with what they decode.
 
+THE MANIFEST SIDE IS READ BY SPELLING, and that is measured rather than
+assumed. subgraph.yaml is matched with regular expressions, not parsed as YAML:
+the file carries reasoning in its comments, and PyYAML is not a dependency
+here. Write the same handler entry in flow style — `- {event: "...", handler:
+...}`, valid YAML, identical meaning — and this gate reports "no handler" while
+`graph build` stays green (measured, 17 August 2026). Every spelling this parser
+does not know fails towards a false alarm rather than towards silence, which is
+the direction to fail in, but a red from this gate is worth reading before it
+is believed.
+
 Exit codes:
     0   ABI and manifest agree with the contracts
     1   they disagree, or an accountability event is neither indexed nor
@@ -69,7 +79,7 @@ ARTIFACTS = {
 
 ABI_PATH = "subgraph/abis/Diamond.json"
 MANIFEST_PATH = "subgraph/subgraph.yaml"
-MAPPING_PATH = "subgraph/src/arbiter.ts"
+MAPPING_PATH = "subgraph/src/arbiter.ts"   # where the handler bodies live
 
 # Every event of ArbiterAccountabilityFacet is about the accountability of an
 # arbiter, so every one of them is expected in the subgraph. Coverage over this
@@ -99,8 +109,10 @@ REGISTRY = {
     "ArbiterDemoted": "handleArbiterDemoted",
 }
 
-DIAMOND_DATA_SOURCE = "Diamond"
-ARBITER_DATA_SOURCE = "DiamondArbiter"
+# The arbiter handlers ride the data source that already indexes the boards.
+# This handler is the anchor for "that one": it has been indexing the live
+# diamond since July, so a section carrying it is the diamond's section.
+BOARD_ANCHOR_HANDLER = "handleJobPosted"
 
 
 def fail(msg):
@@ -145,63 +157,47 @@ def describe(entry):
     return entry["name"] + "(" + ", ".join(parts) + ")"
 
 
-def parse_manifest_handlers(text):
-    """Event signature -> handler name, for the arbiter data source only.
+def parse_data_sources(text):
+    """Every ethereum data source in the manifest, as dicts.
 
-    Deliberately not a YAML parse: subgraph.yaml carries comments that are part
-    of the reasoning and PyYAML is not a dependency of this repository. The
-    section is found by its data source name and ended by the next `- kind:` at
-    the same indentation, so a handler that belongs to another data source
-    cannot be counted here.
+    Deliberately not a YAML parse: subgraph.yaml carries reasoning in its
+    comments and PyYAML is not a dependency of this repository. A section runs
+    from its `- kind: ethereum` to the next one, or to the next top-level key,
+    so a handler cannot be counted against the wrong data source.
     """
     lines = text.splitlines()
-    start = None
-    for i, line in enumerate(lines):
-        if re.match(r"^\s*-\s+kind:\s*ethereum\s*$", line):
-            for j in range(i, min(i + 4, len(lines))):
-                if re.match(r"^\s*name:\s*%s\s*$" % ARBITER_DATA_SOURCE, lines[j]):
-                    start = i
-                    break
-        if start is not None:
-            break
-    if start is None:
-        return None, None, None
+    starts = [
+        i for i, line in enumerate(lines) if re.match(r"^\s{2}-\s+kind:\s*ethereum\s*$", line)
+    ]
+    sources = []
+    for n, start in enumerate(starts):
+        end = starts[n + 1] if n + 1 < len(starts) else len(lines)
+        for i in range(start + 1, end):
+            if re.match(r"^\S", lines[i]):
+                end = i
+                break
 
-    end = len(lines)
-    for i in range(start + 1, len(lines)):
-        if re.match(r"^\s*-\s+kind:\s*", lines[i]) or re.match(r"^\S", lines[i]):
-            end = i
-            break
-    section = lines[start:end]
-
-    address = None
-    mapping_file = None
-    handlers = {}
-    pending = None
-    for line in section:
-        m = re.match(r'^\s*address:\s*"?(0x[0-9a-fA-F]{40})"?\s*$', line)
-        if m:
-            address = m.group(1)
-        m = re.match(r"^\s*file:\s*(\S+)\s*$", line)
-        if m:
-            mapping_file = m.group(1)
-        m = re.match(r"^\s*-\s*event:\s*(.+?)\s*$", line)
-        if m:
-            pending = m.group(1)
-        m = re.match(r"^\s*handler:\s*(\S+)\s*$", line)
-        if m and pending is not None:
-            handlers[pending] = m.group(1)
-            pending = None
-    return address, mapping_file, handlers
-
-
-def diamond_address(text):
-    m = re.search(
-        r'-\s+kind:\s*ethereum\s*\n\s*name:\s*%s\s*\n(?:.*\n)*?\s*address:\s*"?(0x[0-9a-fA-F]{40})"?'
-        % DIAMOND_DATA_SOURCE,
-        text,
-    )
-    return m.group(1) if m else None
+        source = {"name": None, "address": None, "file": None, "handlers": {}}
+        pending = None
+        for line in lines[start:end]:
+            m = re.match(r"^\s*name:\s*(\S+)\s*$", line)
+            if m and source["name"] is None:
+                source["name"] = m.group(1)
+            m = re.match(r'^\s*address:\s*"?(0x[0-9a-fA-F]{40})"?\s*$', line)
+            if m:
+                source["address"] = m.group(1)
+            m = re.match(r"^\s*file:\s*(\S+)\s*$", line)
+            if m:
+                source["file"] = m.group(1)
+            m = re.match(r"^\s*-\s*event:\s*(.+?)\s*$", line)
+            if m:
+                pending = m.group(1)
+            m = re.match(r"^\s*handler:\s*(\S+)\s*$", line)
+            if m and pending is not None:
+                source["handlers"][pending] = m.group(1)
+                pending = None
+        sources.append(source)
+    return sources
 
 
 def main():
@@ -315,32 +311,54 @@ def main():
                     )
 
     # ── 3. the manifest against the ABI ──────────────────────────────────────
-    address, mapping_file, handlers = parse_manifest_handlers(manifest)
-    if handlers is None:
+    sources = parse_data_sources(manifest)
+    hosting = [
+        s
+        for s in sources
+        if any(h in ACCOUNTABILITY.values() or h in REGISTRY.values() for h in s["handlers"].values())
+    ]
+
+    if not hosting:
         problems += fail(
-            "no `%s` data source in %s — nothing is listening for the "
-            "accountability events" % (ARBITER_DATA_SOURCE, MANIFEST_PATH)
+            "no data source in %s declares a single accountability handler — "
+            "nothing is listening" % MANIFEST_PATH
+        )
+    elif len(hosting) > 1:
+        problems += fail(
+            "the accountability handlers are spread over %d data sources (%s). "
+            "They belong to one, and it has to be the one indexing the boards."
+            % (len(hosting), ", ".join(str(s["name"]) for s in hosting))
         )
     else:
-        expected_address = diamond_address(manifest)
-        if expected_address is None:
+        host = hosting[0]
+
+        # The address is not compared against a literal here: with one data
+        # source that would be the file agreeing with itself. It is compared
+        # against a job — handleJobPosted has been indexing the live diamond
+        # since July, so the section carrying it is the diamond's section. Move
+        # the arbiter handlers to a data source pointed at a facet and this
+        # goes red; facets are replaced by every cut, the proxy address never
+        # changes, and a data source aimed at a facet goes quiet at the next
+        # upgrade with no error anywhere.
+        if BOARD_ANCHOR_HANDLER not in host["handlers"].values():
             problems += fail(
-                "could not read the address of the `%s` data source in %s"
-                % (DIAMOND_DATA_SOURCE, MANIFEST_PATH)
-            )
-        elif address is None or address.lower() != expected_address.lower():
-            problems += fail(
-                "`%s` listens at %s, the diamond is at %s. Facets are replaced by "
-                "every cut and the proxy address never changes: point a data "
-                "source at a facet and indexing goes quiet at the next upgrade "
-                "with no error anywhere."
-                % (ARBITER_DATA_SOURCE, address, expected_address)
+                "the accountability handlers sit on data source `%s` at %s, which "
+                "does not carry %s — that is not the diamond's data source"
+                % (host["name"], host["address"], BOARD_ANCHOR_HANDLER)
             )
 
-        if mapping_file != "./" + os.path.relpath(mapping_path, os.path.join(ROOT, "subgraph")):
+        # One data source, therefore one startBlock. Not a style rule: a second
+        # one makes frontend/src/lib/arbiterTurn.test.ts refuse to guess which
+        # block belongs to the diamond, and it is right to refuse. Measured on
+        # 17 August 2026 — a second data source here turned two of its tests
+        # red, in a file with nothing to do with arbiters.
+        blocks = re.findall(r"^\s*startBlock:\s*\d+\s*$", manifest, re.M)
+        if len(blocks) != 1:
             problems += fail(
-                "`%s` maps through %r, this gate reads %s"
-                % (ARBITER_DATA_SOURCE, mapping_file, MAPPING_PATH)
+                "%d `startBlock:` lines in %s. The frontend reads this file for the "
+                "diamond's deploy block and refuses to guess between two of them "
+                "(frontend/src/lib/arbiterTurn.test.ts) — keep the arbiter handlers "
+                "on the existing data source." % (len(blocks), MANIFEST_PATH)
             )
 
         for contract, name, handler in sorted(wanted, key=lambda t: t[1]):
@@ -348,26 +366,46 @@ def main():
             if source is None:
                 continue
             sig = canonical(source)
-            if sig not in handlers:
-                near = [s for s in handlers if s.startswith(name + "(")]
+            if sig not in host["handlers"]:
+                near = [s for s in host["handlers"] if s.startswith(name + "(")]
                 problems += fail(
                     "no handler for %s\n     contract: %s\n     manifest: %s"
                     % (sig, describe(source), near[0] if near else "nothing at all")
                 )
                 continue
-            if handlers[sig] != handler:
+            if host["handlers"][sig] != handler:
                 problems += fail(
                     "%s is handled by %s, this gate expects %s"
-                    % (sig, handlers[sig], handler)
+                    % (sig, host["handlers"][sig], handler)
                 )
 
-    # ── 4. the handlers exist in the mapping ─────────────────────────────────
-    for _, name, handler in sorted(wanted, key=lambda t: t[1]):
-        if not re.search(r"^export function %s\(" % re.escape(handler), mapping, re.M):
+        # ── 4. the handlers reach the file the manifest names ────────────────
+        # The bodies are in arbiter.ts; the manifest names diamond.ts, which
+        # re-exports them. `graph build` refuses a handler the mapping does not
+        # export (measured), so this is a second pair of eyes rather than the
+        # only one — but it names the two-file arrangement, which a compile
+        # error does not.
+        mapping_named = os.path.join(ROOT, "subgraph", (host["file"] or "").lstrip("./"))
+        named_text = ""
+        if os.path.isfile(mapping_named):
+            with open(mapping_named) as fh:
+                named_text = fh.read()
+        else:
             problems += fail(
-                "%s is named in the manifest for %s and not exported from %s"
-                % (handler, name, MAPPING_PATH)
+                "the manifest maps through %r, which is not a file" % host["file"]
             )
+
+        for _, name, handler in sorted(wanted, key=lambda t: t[1]):
+            if not re.search(r"^export function %s\(" % re.escape(handler), mapping, re.M):
+                problems += fail(
+                    "%s is named in the manifest for %s and not defined in %s"
+                    % (handler, name, MAPPING_PATH)
+                )
+            if named_text and not re.search(r"\b%s\b" % re.escape(handler), named_text):
+                problems += fail(
+                    "%s never reaches %s — a data source only sees what its own "
+                    "mapping file exports" % (handler, host["file"])
+                )
 
     if problems:
         print()
@@ -375,9 +413,9 @@ def main():
         return 1
 
     print(
-        "✅ %d arbiter events: ABI matches solc parameter for parameter "
-        "(names, types, indexed), every one has a handler on the diamond address"
-        % len(wanted)
+        "✅ %d arbiter events: the ABI matches solc parameter for parameter "
+        "(names, types, indexed), and every one is handled by the data source "
+        "that indexes the diamond" % len(wanted)
     )
     return 0
 

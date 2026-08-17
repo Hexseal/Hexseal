@@ -19,6 +19,15 @@ dataSources:
         - ServiceRequest
         - Agreement
         - FeeCollection
+        - Arbiter
+        - ArbiterSeating
+        - ArbiterResignation
+        - ArbiterDemotion
+        - ArbiterRemoval
+        - ArbiterSuspension
+        - ArbiterSuspensionLift
+        - RemovalProposal
+        - RemovalAnswer
       abis:
         - name: Diamond
           file: ./abis/Diamond.json
@@ -57,57 +66,41 @@ dataSources:
           handler: handleAgreementDeployed
         - event: FeeCollected(indexed uint256,indexed address,indexed uint8,uint256)
           handler: handleFeeCollected
-      file: ./src/diamond.ts
 
-  # Arbiter accountability. A SECOND data source on the SAME address, not extra
-  # handlers on the one above, for three reasons: a data source takes exactly
-  # one mapping file and diamond.ts is about the boards, the entity list stays
-  # readable, and startBlock can later be moved up to the cut block on its own
-  # without touching the board indexing. The two event sets are disjoint, so
-  # nothing is processed twice.
-  #
-  # ⚠️ THE ADDRESS IS THE DIAMOND, NOT THE FACET, and it must stay that way.
-  # Facets are replaced by every cut — ArbiterRegistryFacet has been swapped
-  # three times since July — while the proxy address never changes. Point this
-  # at a facet and indexing goes silent at the next upgrade, with no error.
-  #
-  # ⚠️ NONE OF THESE EVENTS EXIST ON CHAIN YET: the cut that mounts
-  # ArbiterAccountabilityFacet and the reworked ArbiterRegistryFacet has not
-  # been made. Until it is, every handler below is simply never called, which
-  # is the expected state and not a fault. The ABI is taken from the branch.
-  #
-  # ⚠️ TWO SIGNATURES CHANGED UNDER EVENTS THAT KEEP THEIR NAME. ArbiterDemoted
-  # used to be ArbiterDemoted(address) and is now four fields, and the old
-  # ArbiterRemoved(address) is gone with the bare removeArbiter that emitted it.
-  # A log is matched by the hash of its full signature, so anything the live
-  # diamond emitted under the old shapes before the cut is invisible here.
-  # Whether that history is empty is a question for the chain, not for this
-  # file; see docs and the task report.
-  - kind: ethereum
-    name: DiamondArbiter
-    network: base-sepolia
-    source:
-      address: "0x760F07367888C62f7c2Dfb619A5e534132855ce5"
-      abi: Diamond
-      startBlock: 44613049
-    mapping:
-      kind: ethereum/events
-      apiVersion: 0.0.7
-      language: wasm/assemblyscript
-      entities:
-        - Arbiter
-        - ArbiterSeating
-        - ArbiterResignation
-        - ArbiterDemotion
-        - ArbiterRemoval
-        - ArbiterSuspension
-        - ArbiterSuspensionLift
-        - RemovalProposal
-        - RemovalAnswer
-      abis:
-        - name: Diamond
-          file: ./abis/Diamond.json
-      eventHandlers:
+        # ── Arbiter accountability ───────────────────────────────────────────
+        # Handlers live in ./src/arbiter.ts and reach the manifest through a
+        # re-export at the bottom of ./src/diamond.ts.
+        #
+        # ⚠️ A SECOND DATA SOURCE WOULD BE THE CLEANER SHAPE AND IS NOT ALLOWED
+        # HERE. One data source takes exactly one mapping file, so keeping the
+        # arbiter code out of diamond.ts costs either a second data source or a
+        # re-export. The second data source was written, and it broke two tests
+        # in a neighbour: frontend/src/lib/arbiterTurn.test.ts reads THIS file
+        # to check its own copy of the diamond's deploy block, and refuses to
+        # guess when it finds two `startBlock:` lines — deliberately, with a
+        # test of its own asserting the refusal. It is right to refuse: with two
+        # data sources nothing in the text says which block belongs to the
+        # diamond. So the manifest keeps one data source, one address and one
+        # start block, and the re-export pays for it.
+        #
+        # ⚠️ THE ADDRESS ABOVE IS THE DIAMOND, NOT A FACET, and it must stay
+        # that way. Facets are replaced by every cut — ArbiterRegistryFacet has
+        # been swapped three times since July — while the proxy address never
+        # changes. Point this at a facet and indexing goes quiet at the next
+        # upgrade, with no error anywhere.
+        #
+        # ⚠️ NONE OF THESE EVENTS EXIST ON CHAIN YET: the cut that mounts
+        # ArbiterAccountabilityFacet and the reworked ArbiterRegistryFacet has
+        # not been made. Until it is, every handler below is simply never
+        # called, which is the expected state and not a fault. The ABI comes
+        # from the branch.
+        #
+        # ⚠️ TWO SIGNATURES CHANGED UNDER EVENTS THAT KEPT THEIR NAME.
+        # ArbiterDemoted used to be ArbiterDemoted(address) and now has four
+        # fields, and the old ArbiterRemoved(address) went with the bare
+        # removeArbiter that emitted it. A log is matched by the hash of its
+        # full signature, so anything the live diamond emitted under the old
+        # shapes before the cut is invisible here.
         - event: ArbiterSeated(indexed address,indexed address,bool)
           handler: handleArbiterSeated
         - event: ArbiterResigned(indexed address,uint256)
@@ -128,7 +121,7 @@ dataSources:
           handler: handleRemovalProposalConsumed
         - event: RemovalAnswered(indexed address,bytes32)
           handler: handleRemovalAnswered
-      file: ./src/arbiter.ts
+      file: ./src/diamond.ts
 templates:
   - kind: ethereum
     name: AgreementContract

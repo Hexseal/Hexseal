@@ -10,7 +10,7 @@ import {
   RemovalProposalWithdrawn,
   RemovalProposalConsumed,
   RemovalAnswered,
-} from '../generated/DiamondArbiter/Diamond'
+} from '../generated/Diamond/Diamond'
 import {
   Arbiter,
   ArbiterSeating,
