@@ -112,6 +112,12 @@ contract ArbiterRemovalForCauseTest is Test {
     /// purpose: what these scenes test is the pause, not the words.
     string constant PROPOSAL_WORDS = "the accusation, stated once, on the proposal";
 
+    /// Отпечаток, которым обходятся сцены про саму дверь: поводы, которые цепь
+    /// не проверяет, требуют непустой bytes32, но какой именно — этим сценам
+    /// безразлично. Один на всех, чтобы разница в отпечатке не читалась как
+    /// часть проверяемого правила.
+    bytes32 constant DIGEST = keccak256("the evidence, attested not verified");
+
 
     function setUp() public {
         acc = new ArbiterAccountabilityFacet();
@@ -772,18 +778,101 @@ contract ArbiterRemovalForCauseTest is Test {
         assertFalse(acc.hasLiveProposal(arbiter), unicode"владелец снял чужое предложение");
     }
 
-    /// Второе предложение перезаписывает первое — претензия одна, а не
-    /// очередь претензий.
-    function test_SecondProposalOverwritesFirst() public {
+    /// Претензия одна, а не очередь претензий — запись ЗАМЕЩАЕТСЯ, не копится.
+    ///
+    /// ⚠️ Сцена называлась test_SecondProposalOverwritesFirst и клала второе
+    /// предложение прямо поверх первого (задача 10, 17 августа 2026). Ровно эту
+    /// перезапись правка и запретила: она бесшумно сбрасывала 48-часовые часы.
+    /// Смысл сцены («одна претензия, не очередь») правкой не отменён — отменён
+    /// способ её сменить, и теперь он проходит через отзыв, попадающий в ленту.
+    function test_ChangingTheAccusationRunsThroughAWithdrawal() public {
         _setChief(chief);
         vm.startPrank(chief);
         acc.proposeRemoval(arbiter, ArbiterAccountabilityFacet.Cause.Leak, keccak256("first"), unicode"выложил переписку по спору третьей стороне");
+        acc.withdrawProposal(arbiter);
         acc.proposeRemoval(arbiter, ArbiterAccountabilityFacet.Cause.Other, keccak256("second"), unicode"разбор целиком под приложенным отпечатком");
         vm.stopPrank();
 
         (uint8 c, bytes32 dg, , , ) = acc.getRemovalProposal(arbiter);
         assertEq(c, uint8(ArbiterAccountabilityFacet.Cause.Other));
         assertEq(dg, keccak256("second"));
+    }
+
+    // ── Живое предложение занимает дверь (задача 10, 17 августа 2026) ──
+    //
+    // Круг правок 1 отнял у директора власть «снос остановить и завести
+    // заново, сколько угодно раз» на withdrawProposal. Перезапись возвращала её
+    // через соседнюю дверь одной транзакцией и не оставляла в ленте НИЧЕГО.
+
+    function test_ChiefCannotOverwriteOwnersLiveProposal() public {
+        _setChief(chief);
+        acc.proposeRemoval(arbiter, ArbiterAccountabilityFacet.Cause.Other, DIGEST, "owner's case");
+
+        (, , uint256 proposedAt, address by, ) = acc.getRemovalProposal(arbiter);
+        vm.prank(chief);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                ArbiterAccountabilityFacet.ProposalAlreadyLive.selector, by, proposedAt
+            )
+        );
+        acc.proposeRemoval(arbiter, ArbiterAccountabilityFacet.Cause.Collusion, DIGEST, "mine instead");
+    }
+
+    /// Автор своего предложения — тоже нет. Сброс часов обязан быть видимым.
+    function test_ProposerCannotRefreshHisOwnClockSilently() public {
+        acc.proposeRemoval(arbiter, ArbiterAccountabilityFacet.Cause.Other, DIGEST, "first");
+        (, , uint256 proposedAt, , ) = acc.getRemovalProposal(arbiter);
+
+        vm.warp(vm.getBlockTimestamp() + 47 hours);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                ArbiterAccountabilityFacet.ProposalAlreadyLive.selector, owner, proposedAt
+            )
+        );
+        acc.proposeRemoval(arbiter, ArbiterAccountabilityFacet.Cause.Other, DIGEST, "again");
+    }
+
+    /// А через отзыв — можно, и отзыв остаётся в ленте.
+    function test_WithdrawThenProposeIsAllowedAndRecorded() public {
+        acc.proposeRemoval(arbiter, ArbiterAccountabilityFacet.Cause.Other, DIGEST, "first");
+
+        vm.expectEmit(true, true, false, false);
+        emit ArbiterAccountabilityFacet.RemovalProposalWithdrawn(arbiter, owner);
+        acc.withdrawProposal(arbiter);
+
+        acc.proposeRemoval(arbiter, ArbiterAccountabilityFacet.Cause.Collusion, DIGEST, "second");
+        (uint8 cause, , , , ) = acc.getRemovalProposal(arbiter);
+        assertEq(cause, uint8(ArbiterAccountabilityFacet.Cause.Collusion));
+    }
+
+    /// Протухшее не занимает дверь: гейт читает hasLiveProposal, а не proposedAt != 0.
+    function test_StaleProposalDoesNotBlockANewOne() public {
+        _setChief(chief);
+        acc.proposeRemoval(arbiter, ArbiterAccountabilityFacet.Cause.Other, DIGEST, "old");
+
+        vm.warp(vm.getBlockTimestamp() + acc.getProposalTTL() + 1);
+        vm.prank(chief);
+        acc.proposeRemoval(arbiter, ArbiterAccountabilityFacet.Cause.Collusion, DIGEST, "fresh");
+        (, , , address by, ) = acc.getRemovalProposal(arbiter);
+        assertEq(by, chief);
+    }
+
+    /// Директор больше не прикроет самого себя.
+    function test_ChiefCannotShieldHimselfByOverwriting() public {
+        // посадить директора арбитром, чтобы против него можно было предложить снос
+        _setChief(chief);
+        _seatChiefAsArbiter();
+
+        acc.proposeRemoval(chief, ArbiterAccountabilityFacet.Cause.Collusion, DIGEST, "against the chief");
+        (, , uint256 proposedAt, , ) = acc.getRemovalProposal(chief);
+
+        vm.prank(chief);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                ArbiterAccountabilityFacet.ProposalAlreadyLive.selector, owner, proposedAt
+            )
+        );
+        acc.proposeRemoval(chief, ArbiterAccountabilityFacet.Cause.Other, DIGEST, "nothing to see");
     }
 
     /// Успешный снос очищает предложение — иначе оно пережило бы уже снятого
@@ -1710,6 +1799,14 @@ contract ArbiterRemovalForCauseTest is Test {
     function _setStreak(address who, uint256 n) internal {
         bytes32 base = bytes32(uint256(ARB_BASE) + SLOT_MISTAKE_STREAK);
         vm.store(address(acc), keccak256(abi.encode(who, uint256(base))), bytes32(n));
+    }
+
+    /// Посадить директора арбитром — тем же единственным способом, каким setUp
+    /// сажает `arbiter`: `isArbiter[who] = true` по слоту 0 неймспейса. Нужен
+    /// сценам, где обвинение кладут ПРОТИВ директора: proposeRemoval отказывает
+    /// NotAnArbiter тому, кто арбитром не числится.
+    function _seatChiefAsArbiter() internal {
+        vm.store(address(acc), keccak256(abi.encode(chief, uint256(ARB_BASE))), bytes32(uint256(1)));
     }
 
     /// chiefArbiter делит слот 5 с daoActiveManual (bool, байт-смещение 20).

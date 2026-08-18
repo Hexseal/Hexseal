@@ -223,6 +223,12 @@ contract ArbiterAccountabilityFacet {
     /// proposal — is no lighter.
     error NotYourProposal();
 
+    /// A live proposal occupies the door. Named fields, not a bare marker: the
+    /// caller needs to know WHOSE record stands in the way and since when —
+    /// without them the only recourse is to guess, and the front cannot tell
+    /// "someone beat you to it" from "you already did this".
+    error ProposalAlreadyLive(address by, uint256 proposedAt);
+
     // Примечание: addArbiter/setChiefArbiter в ArbiterRegistryFacet тем же
     // решением владельца («никаких ручных», человек выходит, остаётся только
     // гейт applyAsArbiter) ревертят ошибкой SeatingHandedOver при активном
@@ -1075,6 +1081,23 @@ contract ArbiterAccountabilityFacet {
     /// expression meaning "the same thing" is the seam this branch has already
     /// dug out three times (M-3, В-2, and the measurement that justified
     /// test_AfterHandoverTheSuccessorWithdrawsAnyProposal).
+    ///
+    /// ⚠️ ONE LIVE PROPOSAL PER PERSON, AND IT HOLDS THE DOOR (task 10, review
+    /// of task 2). This used to overwrite whatever stood there — anyone's
+    /// record, silently, resetting the 48-hour clock with it. That is exactly
+    /// the power round 1 denied the chief on withdrawProposal, walking back in
+    /// one door over: measured on the live diamond, the chief could keep the
+    /// owner's accusation from ever ripening (RemovalTooEarly on every attempt
+    /// to execute), do it to an accusation against HIMSELF, swap the cause out
+    /// from under a removal already in flight (CauseDiffersFromProposal), and
+    /// hold the arbiter's bond hostage on the way — resignAsArbiter is barred
+    /// while a proposal is live, and the proposal renewed forever.
+    ///
+    /// Now the record is cleared by an explicit withdrawProposal, which leaves
+    /// RemovalProposalWithdrawn in the feed. Nobody is locked out: the
+    /// authority may withdraw anyone's, so two transactions do everything one
+    /// used to — and both are readable. The author of a live proposal gets no
+    /// exemption either, because a silent clock reset is the whole finding.
     function proposeRemoval(
         address arbiter,
         Cause   cause,
@@ -1098,6 +1121,25 @@ contract ArbiterAccountabilityFacet {
         }
 
         if (!d.isArbiter[arbiter]) revert NotAnArbiter();
+
+        // ⚠️ Round 1 took this power away from the chief on withdrawProposal —
+        // "stop a removal, and start it over, every time" — and it walked back
+        // in through this door: an overwrite resets the clock just as well as a
+        // withdrawal did, and leaves nothing in the ledger. Measured, not
+        // suspected (review of task 2): the chief killed the owner's accusation
+        // indefinitely, including one against himself.
+        //
+        // Clearing a record now costs an explicit withdrawProposal, which emits
+        // RemovalProposalWithdrawn. The authority is never locked out — he may
+        // withdraw anyone's — and the author of a live proposal is refused too,
+        // on purpose: a silent clock reset is the whole finding.
+        //
+        // hasLiveProposal, not `proposedAt != 0`: staleness is one rule and it
+        // already has a home. A second copy here would be the M-3 class again.
+        if (hasLiveProposal(arbiter)) {
+            ArbiterRegistryStorage.RemovalProposal storage live = d.removalProposals[arbiter];
+            revert ProposalAlreadyLive(live.by, live.proposedAt);
+        }
 
         bool verified = _isChainVerifiable(cause);
         if (!verified && evidenceDigest == bytes32(0)) revert EvidenceRequired();

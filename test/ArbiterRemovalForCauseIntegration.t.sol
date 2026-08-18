@@ -405,6 +405,47 @@ contract ArbiterRemovalForCauseIntegrationTest is Test {
         assertFalse(ArbiterRegistryFacet(address(diamond)).isRegisteredArbiter(who));
     }
 
+    /// Задача 10 на боевом даймонде: обвинение НЕЛЬЗЯ обновить, значит залог
+    /// нельзя держать заложником вечно. Сцена стоит здесь, а не на лёгком
+    /// стенде, потому что она — про ШОВ между двумя фасетами на одном
+    /// хранилище: гейт живёт в ArbiterAccountabilityFacet.proposeRemoval, а
+    /// запертая им дверь — ArbiterRegistryFacet.resignAsArbiter. Лёгкий стенд
+    /// разворачивает только один фасет и второй половины не видит вовсе.
+    ///
+    /// Замеряется именно невозможность ПРОДЛИТЬ: до правки обвинитель клал
+    /// второе предложение за секунду до протухания, и окно, в котором человек
+    /// уходит с залогом, не наступало никогда.
+    function test_ProposalCannotBeRenewedToKeepTheBondHostage() public {
+        address who = address(0x5A);
+        _addFreshArbiter(who);
+        ArbiterAccountabilityFacet(address(diamond)).proposeRemoval(
+            who, ArbiterAccountabilityFacet.Cause.Leak, keccak256("x"), PROPOSAL_WORDS
+        );
+        (, , uint256 proposedAt, , ) =
+            ArbiterAccountabilityFacet(address(diamond)).getRemovalProposal(who);
+
+        uint256 ttl = ArbiterAccountabilityFacet(address(diamond)).getProposalTTL();
+        vm.warp(proposedAt + ttl - 1); // последняя секунда, когда продление ещё имело бы смысл
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                ArbiterAccountabilityFacet.ProposalAlreadyLive.selector, address(this), proposedAt
+            )
+        );
+        ArbiterAccountabilityFacet(address(diamond)).proposeRemoval(
+            who, ArbiterAccountabilityFacet.Cause.Leak, keccak256("x"), PROPOSAL_WORDS
+        );
+
+        // И ровно на границе залог перестаёт быть заложником.
+        vm.warp(proposedAt + ttl);
+        vm.prank(who);
+        ArbiterRegistryFacet(address(diamond)).resignAsArbiter();
+        assertFalse(
+            ArbiterRegistryFacet(address(diamond)).isRegisteredArbiter(who),
+            unicode"обвинение протухло и не было продлено — человек ушёл сам"
+        );
+    }
+
     function test_ResignSucceedsAfterProposalWithdrawn() public {
         address who = address(0x58);
         _addFreshArbiter(who);

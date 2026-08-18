@@ -1827,6 +1827,14 @@ export const FORWARDER_CUSTOM_ERRORS = {
   //     way in to a removal, clearing someone else's became the power to STOP
   //     one — which the chief was deliberately never given.
   '0x4fbe5f11': 'NotYourProposal',
+  //   ProposalAlreadyLive(address,uint256) — one live accusation per person,
+  //     and it holds the door. Overwriting someone else's proposal used to
+  //     reset the 48-hour clock and leave nothing behind — the very power round
+  //     1 denied the chief on withdrawProposal, walking back in one door over.
+  //     Clearing a record now costs an explicit withdrawal, which the feed
+  //     records. Same open seam as RemovalTooEarly above: the table decodes the
+  //     name only, so `by` and `proposedAt` reach nobody today.
+  '0x21efc74d': 'ProposalAlreadyLive',
 };
 
 // Decodes MinimalForwarder.execute()'s `retdata` (the inner call's own revert data)

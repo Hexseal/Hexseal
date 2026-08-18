@@ -722,6 +722,14 @@ export async function POST(req: NextRequest) {
           //     now that the proposal is the only way in to a removal, it is
           //     the power to stop one.
           '0x4fbe5f11': 'NotYourProposal',
+          //   ProposalAlreadyLive(address,uint256) — one live accusation per
+          //     person, and it holds the door. Overwriting used to reset the
+          //     48-hour clock silently; clearing a record now costs an explicit
+          //     withdrawal, which the feed records. The arguments name WHOSE
+          //     record stands in the way and since when — same open seam as
+          //     RemovalTooEarly above: this table decodes the name only, so the
+          //     two values do not reach the person today.
+          '0x21efc74d': 'ProposalAlreadyLive',
         };
 
         let reason = 'Inner call reverted';
