@@ -681,9 +681,19 @@ contract ArbiterRegistryFacet {
     /// повода, ни нажавшего. Снаружи это читалось как «система сама демоутнула
     /// судью за три ошибки подряд»: запись не просто скрывала обвинителя, она
     /// перекладывала вину на обвиняемого убедительнее любого обвинения. При том
-    /// что владелец тремя вызовами overturnVerdict по ОДНОМУ агрименту снимает
-    /// арбитра мимо двери с поводом, а проверок обоснованности в overturnVerdict
-    /// нет ни одной.
+    /// что владелец тремя переворотами снимает арбитра мимо двери с поводом, а
+    /// проверок обоснованности в overturnVerdict нет ни одной.
+    ///
+    /// ⚠️ ЦЕНА ЭТОГО ПУТИ ПОДНЯЛАСЬ ДВАЖДЫ 18 августа 2026 (задача 11 и круг
+    /// правок к ней), и прежняя редакция строки выше — «тремя вызовами по
+    /// ОДНОМУ агрименту» — с тех пор неправда:
+    ///
+    ///   • `AlreadyOverturned` закрыл повторное нажатие по одному вердикту:
+    ///     нужны три РАЗНЫХ спора, а не три нажатия;
+    ///   • коллегия, вернувшая вердикт арбитра, забирает записанную ошибку
+    ///     назад (см. resolveAppeal). До этой правки она, наоборот, ДАРИЛА
+    ///     владельцу вторую ошибку своим верным решением, и снятие стоило двух
+    ///     споров вместо трёх.
     ///
     /// `by` нулевой там, где нажавшего нет ВООБЩЕ (таймаут, голосование) — это
     /// утверждение, а не пропуск: см. докстринг DemotionPath.
@@ -760,6 +770,17 @@ contract ArbiterRegistryFacet {
     error AppealAlreadyResolved();
     error AppealWindowNotClosed();
     error AlreadyFinalized();
+    /// The flag was written and never read back as a refusal, so three calls
+    /// against the SAME agreement in the SAME block reached the demotion
+    /// threshold — the price of unseating an arbiter was one submitted verdict,
+    /// not three disputes.
+    ///
+    /// ⚠️ This error is only HALF of "one verdict, at most one judicial
+    /// mistake". It shuts the hand pressing twice; it never touched the second
+    /// way to book two, which ran through resolveAppeal and is closed there.
+    /// Alone it was not the promise, and saying otherwise here would be the
+    /// very class of documentation this branch keeps having to correct.
+    error AlreadyOverturned();
     error VerdictFrozenError();
     error VerdictAlreadySubmitted();
     error NotTheClaimer();
@@ -1644,6 +1665,22 @@ contract ArbiterRegistryFacet {
 
     /// @notice Owner или DAO отменяют вердикт до финализации.
     /// Арбитр теряет XP и награду. Новый вердикт исполняется вместо старого.
+    ///
+    /// ONE VERDICT EARNS AT MOST ONE JUDICIAL MISTAKE — and that promise is
+    /// kept by two lines, not by this one. Here: a verdict already overturned,
+    /// by this door or by the appeal vote, refuses with AlreadyOverturned.
+    /// There in resolveAppeal: a panel that overturns a verdict the hand had
+    /// already overturned books nothing, and takes the hand's booking back.
+    ///
+    /// There is no changing one's mind after the press, and none is needed:
+    /// the mind is made up inside the call, through `newClientWins`. Letting
+    /// the hand press twice would let the owner walk a dispute's outcome back
+    /// and forth without limit, and "whoever pressed last decided" is a worse
+    /// property than not being able to reconsider.
+    ///
+    /// ⚠️ No check of MERIT lives on this door — not one. The whole restraint
+    /// on it is arithmetic (three mistakes to unseat) plus the appeal, which
+    /// stays open after a press here precisely so that it can contradict it.
     function overturnVerdict(address agreement, bool newClientWins) external onlyOwnerOrDAO {
         ArbiterRegistryStorage.Data storage d = ArbiterRegistryStorage.data();
         ArbiterRegistryStorage.PendingVerdict storage v = d.pendingVerdicts[agreement];
@@ -1651,6 +1688,20 @@ contract ArbiterRegistryFacet {
         if (v.submittedAt == 0) revert NoVerdict();
         if (v.finalized) revert AlreadyFinalized();
         if (v.appealed && !v.appealResolved) revert AppealInProgress();
+        // ⚠️ resolveAppeal sets this flag too, so a verdict already reversed by
+        // the vote can no longer be reversed again by hand — deliberately: one
+        // verdict earns at most one judicial mistake, whoever books it.
+        //
+        // This line alone did NOT deliver that. The reverse order — hand first,
+        // panel second — stayed open, had to stay open (the appeal is the only
+        // check on this door), and booked the second mistake there instead.
+        // That half is closed inside resolveAppeal, not here.
+        //
+        // Stands BELOW the three checks above, and that is load-bearing: both
+        // `finalized` and an appeal in flight are reachable with `overturned`
+        // already true, and in both the older reason is the larger fact and
+        // must be the one the person reads.
+        if (v.overturned) revert AlreadyOverturned();
 
         address slashedArbiter = v.arbiter;
         v.clientWins = newClientWins;
@@ -1969,16 +2020,79 @@ contract ArbiterRegistryFacet {
 
         if (overturn) {
             address slashedArbiter = v.arbiter;
+
+            // ⚠️ READ BEFORE THE WRITE BELOW (review round 1 of task 11,
+            // 18 August 2026). At this point `overturned` is true if and only
+            // if a HAND already overturned this verdict: overturnVerdict and
+            // this branch are its only writers, and this branch runs at most
+            // once per verdict (appealResolved). That is why telling the two
+            // cases apart needs no new storage field and the layout does not
+            // move.
+            bool alreadyOverturned = v.overturned;
+
             v.clientWins = !v.clientWins;
             v.overturned = true;
 
-            ReputationStorage.Data storage rep = ReputationStorage.data();
-            _slashArbiterXP(rep, slashedArbiter);
-            // `by` нулевой: resolveAppeal зовёт кто угодно, а решают ГОЛОСА.
-            // Назвать нажавшего «подвести итог» виновником было бы худшей из
-            // трёх возможных неправд.
-            _recordArbiterMistake(d, rep, slashedArbiter, address(0), DemotionPath.AppealVote, agreement);
+            // ⚠️ A PANEL THAT VINDICATES THE ARBITER TAKES HIS MISTAKE BACK.
+            // The sequence that made this necessary: the arbiter rules, the
+            // owner's hand overturns him (mistake one), the losing side appeals
+            // — which stays open on purpose, it is the only check on the owner
+            // there is — and the panel votes to overturn, flipping the ruling
+            // back to the ARBITER'S OWN. The panel has just said he was right
+            // and the owner was wrong.
+            //
+            // Booking that as HIS mistake slashed his XP twice for one verdict
+            // and wrote DemotionPath.AppealVote into the permanent record: the
+            // chain asserting "the panel found him wrong" precisely where it
+            // found the opposite. Measured before the fix: two disputes unseated
+            // an arbiter instead of three, and no collusion was needed — an
+            // honest panel deciding correctly handed the owner the second
+            // mistake for free.
+            //
+            // So the second booking does not happen, and the first is taken
+            // back: if the panel says there was no judicial mistake, then a
+            // mark standing against him for that verdict is the record lying.
+            // ONE is subtracted, not the whole streak — mistakes on OTHER
+            // disputes are his and stay his.
+            //
+            // ⚠️ XP IS NOT GIVEN BACK, and that is said out loud rather than
+            // passed over. _slashArbiterXP takes OVERTURN_XP_SLASH with a floor
+            // at zero and records nowhere how much it actually took, so adding
+            // the constant back would hand an arbiter who was slashed INTO the
+            // floor points he never had. Storing the amount taken would cost a
+            // storage field for a small truth, and that trade was refused. The
+            // slash he keeps is one instead of two, the second having left
+            // together with the booking.
+            //
+            // ⚠️ THE COUNTER COMES BACK, THE SEAT DOES NOT. If the booking being
+            // withdrawn was his third, the demotion already fired inside
+            // _recordArbiterMistake — seat gone, bond forfeited, suspension set
+            // — and none of that is walked back here. Re-seating a demoted
+            // arbiter is a different decision from arithmetic on a counter, and
+            // it is not this line's to make. Named so that it is a known gap
+            // rather than a silent one.
+            if (alreadyOverturned) {
+                // ⚠️ Underflow is reachable, not theoretical: the hand overturn
+                // that booked mistake one may have been his THIRD, in which
+                // case _recordArbiterMistake already reset the streak to zero
+                // and demoted him — and raiseAppeal does not ask whether the
+                // arbiter is still seated. Same with a third mistake arriving
+                // on another dispute while this appeal was in flight.
+                uint256 streak = d.arbiterMistakeStreak[slashedArbiter];
+                if (streak > 0) d.arbiterMistakeStreak[slashedArbiter] = streak - 1;
+            } else {
+                ReputationStorage.Data storage rep = ReputationStorage.data();
+                _slashArbiterXP(rep, slashedArbiter);
+                // `by` нулевой: resolveAppeal зовёт кто угодно, а решают ГОЛОСА.
+                // Назвать нажавшего «подвести итог» виновником было бы худшей из
+                // трёх возможных неправд.
+                _recordArbiterMistake(d, rep, slashedArbiter, address(0), DemotionPath.AppealVote, agreement);
+            }
 
+            // Outside the branch: the appellant won the vote and gets his
+            // deposit back whether or not this verdict had already been
+            // overturned by hand. The deposit is the price of asking, not part
+            // of the arbiter's penalty.
             bool refundOk = IUSDCFull(usdc).transfer(v.appellant, APPEAL_DEPOSIT);
             require(refundOk, "ArbiterRegistry: deposit refund failed");
         } else {

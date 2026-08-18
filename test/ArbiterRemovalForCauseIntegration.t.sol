@@ -1330,23 +1330,100 @@ contract ArbiterRemovalForCauseIntegrationTest is Test {
     }
 
     // ============================================================
+    //  ONE VERDICT, AT MOST ONE JUDICIAL MISTAKE (task 11, 18 August 2026)
+    //
+    //  overturnVerdict wrote v.overturned and never read it back as a
+    //  refusal. Three calls against the SAME agreement, inside one block,
+    //  reached MAX_ARBITER_MISTAKES — so the price of unseating an arbiter
+    //  was one submitted verdict, not three disputes.
+    //
+    //  The gate closes that. Where it sits among the three older checks is a
+    //  property of its own, and the two scenes below pin it: both states are
+    //  reachable with `overturned` already true, and in both the older reason
+    //  is the more final of the two and must survive.
+    //
+    //  ⚠️ THE GATE WAS ONLY HALF OF IT (review round 1, same day). Hand first
+    //  and panel second stayed open — deliberately, the appeal is the only
+    //  check on that door — and booked the second mistake there instead, so
+    //  unseating an arbiter still cost two disputes rather than three. That
+    //  half is closed inside resolveAppeal; the scenes for it live in
+    //  test/Diamond.t.sol, where the appeal machinery is.
+    // ============================================================
+
+    /// The price of unseating an arbiter must not equal one submitted verdict.
+    ///
+    /// `_disputeAndOverturn` is the file's own way in: it builds the dispute,
+    /// submits the verdict AND performs the first overturn. No second way of
+    /// building one is written here.
+    function test_OneVerdictCannotBeOverturnedThreeTimes() public {
+        address agreement = _disputeAndOverturn(address(0x661), address(0x662));
+
+        assertEq(
+            ArbiterAccountabilityFacet(address(diamond)).getArbiterMistakeStreak(arbiter), 1,
+            "first overturn counts once"
+        );
+
+        vm.expectRevert(ArbiterRegistryFacet.AlreadyOverturned.selector);
+        ArbiterRegistryFacet(address(diamond)).overturnVerdict(agreement, false);
+
+        vm.expectRevert(ArbiterRegistryFacet.AlreadyOverturned.selector);
+        ArbiterRegistryFacet(address(diamond)).overturnVerdict(agreement, true);
+
+        assertEq(
+            ArbiterAccountabilityFacet(address(diamond)).getArbiterMistakeStreak(arbiter), 1,
+            "one verdict, one mistake"
+        );
+        assertTrue(
+            ArbiterRegistryFacet(address(diamond)).isRegisteredArbiter(arbiter),
+            "still seated after one bad verdict"
+        );
+    }
+
+    /// Placement, half one: overturned AND finalized is a reachable state —
+    /// finalizeVerdict leaves `overturned` standing, it only adds `finalized`.
+    /// The refusal a person reads there must stay AlreadyFinalized: the verdict
+    /// is over, which is the larger fact. Lifting the new gate above the
+    /// finalized check swaps the reason and says the smaller one instead.
+    ///
+    /// ⚠️ vm.getBlockTimestamp(), not block.timestamp: under via_ir solc treats
+    /// TIMESTAMP as constant within a call (docs/OPEN-ITEMS.md, item 57).
+    function test_OverturnedThenFinalizedStillRefusesAsFinalized() public {
+        address agreement = _disputeAndOverturn(address(0x663), address(0x664));
+
+        vm.warp(vm.getBlockTimestamp() + 24 hours + 1); // FINALIZE_DELAY
+        ArbiterRegistryFacet(address(diamond)).finalizeVerdict(agreement);
+
+        vm.expectRevert(ArbiterRegistryFacet.AlreadyFinalized.selector);
+        ArbiterRegistryFacet(address(diamond)).overturnVerdict(agreement, true);
+    }
+
+    // ============================================================
     //  ЗАПИСЬ ОБ АВТОСНЯТИИ НАЗЫВАЕТ ПРОИСХОЖДЕНИЕ (п. 65, 16 августа 2026)
     //
-    //  Одного поданного вердикта хватает, чтобы владелец тремя вызовами
-    //  overturnVerdict по ОДНОМУ агрименту снял арбитра, минуя дверь с
+    //  Тремя перевёрнутыми вердиктами владелец снимает арбитра, минуя дверь с
     //  поводом. Прежнее событие из одного поля читалось как автоматика — то
     //  есть валило вину на снятого. Путей у автоснятия ровно три, и каждый
     //  обязан быть назван своим.
+    //
+    //  ⚠️ Три вердикта, а не три нажатия по одному: с задачи 11 (18 августа
+    //  2026) перевёрнутый вердикт отказывает AlreadyOverturned. Обе сцены
+    //  ниже строят по ТРИ РАЗНЫХ спора — свойство сцены от этого не изменилось,
+    //  изменилась только цена.
     // ============================================================
 
     /// Путь первый: владелец переворачивает вердикт. Нажавший есть, и он
-    /// назван. Три переворота ОДНОГО агримента — ровно тот сценарий, ради
-    /// которого правка делалась.
+    /// назван. Три переворота — ровно тот сценарий, ради которого правка
+    /// делалась.
+    ///
+    /// ⚠️ Три РАЗНЫХ спора (задача 11): раньше сцена трижды переворачивала
+    /// ОДИН агримент, и то была не экономия на сетапе, а сама дыра —
+    /// перевёрнутый вердикт теперь отказывает AlreadyOverturned. Проверяемое
+    /// свойство прежнее: событие называет нажавшего.
     function test_ArbiterDemotedNamesOwnerOnTheOverturnPath() public {
-        address agr = _disputeAndSubmit(address(0x651), address(0x652));
+        _disputeAndOverturn(address(0x651), address(0x652));
+        _disputeAndOverturn(address(0x653), address(0x654));
 
-        ArbiterRegistryFacet(address(diamond)).overturnVerdict(agr, false);
-        ArbiterRegistryFacet(address(diamond)).overturnVerdict(agr, true);
+        address agr = _disputeAndSubmit(address(0x655), address(0x656));
 
         vm.expectEmit(true, true, true, true, address(diamond));
         emit ArbiterRegistryFacet.ArbiterDemoted(
@@ -1394,12 +1471,14 @@ contract ArbiterRemovalForCauseIntegrationTest is Test {
         );
         assertTrue(dao != owner, unicode"сетап: нажимающий и владелец — РАЗНЫЕ адреса");
 
-        address agr = _disputeAndSubmit(address(0x65F), address(0x660));
-
         // Первые две ошибки нажимает владелец, третью — управление. Именно
         // третья попадает в запись, и она обязана назвать управление.
-        ArbiterRegistryFacet(address(diamond)).overturnVerdict(agr, false);
-        ArbiterRegistryFacet(address(diamond)).overturnVerdict(agr, true);
+        //
+        // ⚠️ Три РАЗНЫХ спора (задача 11), см. сцену выше.
+        _disputeAndOverturn(address(0x65B), address(0x65C));
+        _disputeAndOverturn(address(0x65D), address(0x65E));
+
+        address agr = _disputeAndSubmit(address(0x65F), address(0x660));
 
         vm.expectEmit(true, true, true, true, address(diamond));
         emit ArbiterRegistryFacet.ArbiterDemoted(

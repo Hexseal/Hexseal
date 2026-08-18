@@ -1612,6 +1612,19 @@ export const FORWARDER_CUSTOM_ERRORS = {
   '0x422a8e97': 'VerdictAlreadySubmitted',
   '0x7fcc22c9': 'HasOpenDisputeClaims',
   '0xf1898254': 'AppealInProgress',
+  //   AlreadyOverturned() — the hand may not press twice on one verdict. The
+  //     flag was written and never read back as a refusal, so three presses
+  //     against the SAME agreement reached the demotion threshold: unseating an
+  //     arbiter cost one submitted verdict, not three disputes. resolveAppeal
+  //     sets the same flag, so a verdict reversed by the vote is closed to the
+  //     hand as well.
+  //     ⚠️ This refusal is only half of "one verdict, at most one judicial
+  //     mistake" — the reverse order, hand then panel, stays open on purpose
+  //     and is handled inside resolveAppeal, which books nothing there and
+  //     takes the hand's booking back. Nobody sees THAT as a refusal, so it has
+  //     no entry here; it is named only so this comment does not read as the
+  //     whole promise.
+  '0xd8d3519a': 'AlreadyOverturned',
   '0xdf726563': 'NoVerdict',
   '0x7c9a1cf9': 'AlreadyVoted',
   '0x4dcfa42d': 'AlreadyAppealed',
