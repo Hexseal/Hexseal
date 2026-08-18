@@ -116,7 +116,7 @@ type FeeCollection @entity(immutable: true) {
 #  in ArbiterRemovedForCause, and that boolean is copied through untouched. The
 #  numbering behind `cause` and `path` is decoded in the frontend, where
 #  decodeRemovalCause() is already held against both .sol sources by a lock
-#  (frontend/src/lib/removalCause.test.ts). A second decoder here would be a
+#  (frontend/src/lib/arbiterRemovalCause.test.ts). A second decoder here would be a
 #  second copy of the same enum with nothing watching it.
 #
 #  NULLABLE Int AND Boolean ARE NOT USED ANYWHERE BELOW, and that is a rule
