@@ -1041,7 +1041,9 @@ contract ArbiterAccountabilityFacet {
     // предупреждать раньше, чем случилось.
 
     /// Положить предложение в цепь. Одно живое предложение на арбитра —
-    /// второе перезаписывает первое (претензия одна, а не очередь).
+    /// претензия одна, а не очередь. Сменить её можно, но НЕ перезаписью:
+    /// прежнюю сначала отзывают (withdrawProposal), и отзыв остаётся в ленте
+    /// событием RemovalProposalWithdrawn. Разбор — в отдельном ⚠️ ниже.
     ///
     /// ⚠️ Слова обязательны ЗДЕСЬ, а не только при исполнении (замысел 17
     /// августа 2026, решения 1+7 вместе). Между предложением и сносом теперь
@@ -1098,6 +1100,16 @@ contract ArbiterAccountabilityFacet {
     /// authority may withdraw anyone's, so two transactions do everything one
     /// used to — and both are readable. The author of a live proposal gets no
     /// exemption either, because a silent clock reset is the whole finding.
+    ///
+    /// ⚠️ THE GATE SITS BELOW THE ROLE CHECKS, AND THAT ORDER IS PART OF THE
+    /// RULE (review round 1 of task 10). ProposalAlreadyLive(by, proposedAt) is
+    /// not a plain "no" — it discloses that an accusation stands against this
+    /// arbiter and who laid it. A stranger must be refused for his role BEFORE
+    /// he learns that, on both role doors: _requireOwnerOrChief before the
+    /// handover and RemovalHandedOver after it. Guarded, not merely intended,
+    /// by test_StrangerLearnsNothingAboutALiveProposal and
+    /// test_StrangerLearnsNothingAboutALiveProposalAfterHandover — moving these
+    /// four lines above the role branch turns both red.
     function proposeRemoval(
         address arbiter,
         Cause   cause,

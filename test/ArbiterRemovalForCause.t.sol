@@ -875,6 +875,44 @@ contract ArbiterRemovalForCauseTest is Test {
         acc.proposeRemoval(chief, ArbiterAccountabilityFacet.Cause.Other, DIGEST, "nothing to see");
     }
 
+    // ── Порядок гейта: «дверь занята» — не для посторонних ──
+    //
+    // Круг правок 1 ревью задачи 10 (18 августа 2026): свойство «посторонний
+    // упирается в роль РАНЬШЕ, чем узнаёт про чужое обвинение» было верным и
+    // не сторожилось ничем — ревьюер перенёс гейт выше проверки роли и получил
+    // 0 красных из 894. Сегодня оно держалось на порядке строк.
+    //
+    // Почему это не педантизм: ProposalAlreadyLive(by, proposedAt) — не «нет»,
+    // а СВЕДЕНИЕ. Оно сообщает постороннему, что против конкретного арбитра
+    // висит обвинение, и кто его подал, — до того как спрашивающий вообще имел
+    // право спрашивать. Роль обязана отказывать первой.
+
+    function test_StrangerLearnsNothingAboutALiveProposal() public {
+        acc.proposeRemoval(arbiter, ArbiterAccountabilityFacet.Cause.Other, DIGEST, "owner's case");
+
+        address stranger = address(0xF00D);
+        vm.prank(stranger);
+        vm.expectRevert(ArbiterAccountabilityFacet.NotOwnerOrChief.selector);
+        acc.proposeRemoval(arbiter, ArbiterAccountabilityFacet.Cause.Collusion, DIGEST, "prying");
+    }
+
+    /// Та же проверка на ВТОРОЙ двери ролей — после передачи права. Там роль
+    /// сторожит не _requireOwnerOrChief, а отдельная ветка RemovalHandedOver,
+    /// и перенос гейта наверх обошёл бы обе разом.
+    function test_StrangerLearnsNothingAboutALiveProposalAfterHandover() public {
+        address dao = address(0xDA0);
+        _setDaoAddress(dao);
+        _activateDAO();
+
+        vm.prank(dao);
+        acc.proposeRemoval(arbiter, ArbiterAccountabilityFacet.Cause.Other, DIGEST, "the successor's case");
+
+        // Прежний владелец здесь — тоже посторонний, и это самая ценная
+        // половина: право уехало, и вместе с ним уехало право узнавать.
+        vm.expectRevert(ArbiterAccountabilityFacet.RemovalHandedOver.selector);
+        acc.proposeRemoval(arbiter, ArbiterAccountabilityFacet.Cause.Collusion, DIGEST, "prying");
+    }
+
     /// Успешный снос очищает предложение — иначе оно пережило бы уже снятого
     /// арбитра и висело бы против него бессмысленным обвинением.
     ///

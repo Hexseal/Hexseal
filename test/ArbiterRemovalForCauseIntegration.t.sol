@@ -405,17 +405,25 @@ contract ArbiterRemovalForCauseIntegrationTest is Test {
         assertFalse(ArbiterRegistryFacet(address(diamond)).isRegisteredArbiter(who));
     }
 
-    /// Задача 10 на боевом даймонде: обвинение НЕЛЬЗЯ обновить, значит залог
-    /// нельзя держать заложником вечно. Сцена стоит здесь, а не на лёгком
-    /// стенде, потому что она — про ШОВ между двумя фасетами на одном
-    /// хранилище: гейт живёт в ArbiterAccountabilityFacet.proposeRemoval, а
-    /// запертая им дверь — ArbiterRegistryFacet.resignAsArbiter. Лёгкий стенд
-    /// разворачивает только один фасет и второй половины не видит вовсе.
+    /// Задача 10 на боевом даймонде: обвинение больше не продлевается НА МЕСТЕ,
+    /// и потому окно, в котором арбитр уходит со своим залогом, наступает.
+    /// Сцена стоит здесь, а не на лёгком стенде, потому что она — про ШОВ
+    /// между двумя фасетами на одном хранилище: гейт живёт в
+    /// ArbiterAccountabilityFacet.proposeRemoval, а запертая им дверь —
+    /// ArbiterRegistryFacet.resignAsArbiter. Лёгкий стенд разворачивает только
+    /// один фасет и второй половины не видит вовсе.
     ///
-    /// Замеряется именно невозможность ПРОДЛИТЬ: до правки обвинитель клал
-    /// второе предложение за секунду до протухания, и окно, в котором человек
-    /// уходит с залогом, не наступало никогда.
-    function test_ProposalCannotBeRenewedToKeepTheBondHostage() public {
+    /// До правки обвинитель клал второе предложение за секунду до протухания,
+    /// одной транзакцией и без следа, — и это окно не наступало никогда.
+    ///
+    /// ⚠️ ЧЕГО ЭТА СЦЕНА НЕ ДОКАЗЫВАЕТ (круг правок 1, 18 августа 2026):
+    /// продление как таковое живо. Держатель права может отозвать и положить
+    /// заново, и тогда резигнация снова заперта — из четырёх замеренных вредов
+    /// перезаписи снято три, а четвёртый стал ГРОМКИМ, а не невозможным:
+    /// каждое продление теперь стоит отдельной транзакции и оставляет в ленте
+    /// RemovalProposalWithdrawn. Ограничителя «не чаще чем раз в N» нет и не
+    /// задумано (замысел, раздел 12).
+    function test_ProposalCannotBeRenewedInPlaceAndTheBondGoesFreeAtTTL() public {
         address who = address(0x5A);
         _addFreshArbiter(who);
         ArbiterAccountabilityFacet(address(diamond)).proposeRemoval(
@@ -436,7 +444,9 @@ contract ArbiterRemovalForCauseIntegrationTest is Test {
             who, ArbiterAccountabilityFacet.Cause.Leak, keccak256("x"), PROPOSAL_WORDS
         );
 
-        // И ровно на границе залог перестаёт быть заложником.
+        // И ровно на границе залог перестаёт быть заложником — при условии, что
+        // обвинитель не отозвал и не положил заново: этот путь жив, просто он
+        // больше не бесшумен (см. ⚠️ в докстринге).
         vm.warp(proposedAt + ttl);
         vm.prank(who);
         ArbiterRegistryFacet(address(diamond)).resignAsArbiter();
