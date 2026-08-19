@@ -774,7 +774,7 @@ contract UpgradeArbiterAccountability is Script {
         // Задача 3: потолок одновременных споров на арбитра
         sels[1] = ArbiterRegistryFacet.getMaxClaimsPerArbiter.selector;
 
-        // Задача 5: порог автоснятия
+        // Задача 5: порог автоматики (с задачи 12 — порог ОБВИНЕНИЯ, не снятия)
         sels[2] = ArbiterRegistryFacet.getMaxArbiterMistakes.selector;
     }
 
@@ -783,7 +783,7 @@ contract UpgradeArbiterAccountability is Script {
     /// означает функцию, которой в даймонде нет, то есть мёртвую кнопку во
     /// фронте.
     function addAccountabilitySelectors() public pure returns (bytes4[] memory sels) {
-        sels = new bytes4[](22);
+        sels = new bytes4[](23);
 
         // Задача 4: приостановка — быстрая, обратимая, протухает сама
         sels[0]  = ArbiterAccountabilityFacet.suspendArbiter.selector;
@@ -830,6 +830,16 @@ contract UpgradeArbiterAccountability is Script {
         // the form asks the chain for the number instead of keeping a copy that
         // drifts and shows the button as live an hour before it works.
         sels[21] = ArbiterAccountabilityFacet.getRemovalDelay.selector;
+
+        // ⚠️ ADD, NOT REPLACE (task 12, 18 August 2026). The quiet door — three
+        // judicial mistakes unseating on the spot — now leads into the common
+        // one: the third mistake suspends and lays an accusation in the chain's
+        // own name, and after the 48 hours anyone may press this. The selector
+        // is NEW: it has never been mounted in the diamond, so it belongs in
+        // this group and nowhere else. A Replace on an unmounted selector
+        // reverts and takes the WHOLE cut down with it, in one live
+        // transaction (docs/PROCESS.md, the fourth way).
+        sels[22] = ArbiterAccountabilityFacet.executeChainRemoval.selector;
     }
 
     /// Ровно один: голая removeArbiter(address). Просто убрать её из исходника

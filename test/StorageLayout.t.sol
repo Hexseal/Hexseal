@@ -119,4 +119,59 @@ contract StorageLayoutTest is Test {
             }
         }
     }
+
+    // ============================================================
+    //  ПОЛЯ ВНУТРИ АРБИТРСКОГО НЕЙМСПЕЙСА (задача 12, 18 августа 2026)
+    //
+    //  Базовый слот неймспейса при дописывании поля не двигается ВООБЩЕ
+    //  НИКОГДА — значит проверки выше зелены по построению и приписать в
+    //  середину struct Data новое поле они не заметят. Ровно тот случай, о
+    //  котором предупреждает script/check-storage-structs.sh: он тоже зелен по
+    //  построению на чистом дописывании в конец.
+    //
+    //  Здесь пиннятся СМЕЩЕНИЯ полей. Ожидаемые числа — литералы, снятые
+    //  замером и записанные человеком, а не выведенные из проверяемой
+    //  структуры (docs/PROCESS.md, четвёртый способ: ожидаемое, выведенное из
+    //  проверяемого, сходится само с собой всегда). Фактические считает
+    //  компилятор. Вставьте поле в середину — и покраснеет всё, что ниже него.
+    //
+    //  Перекрёстная сверка, независимая от этого файла: test/ArbiterSuspension.
+    //  t.sol ищет те же слоты ПЕРЕБОРОМ по живому контракту и держит
+    //  SLOT_BOND = 12. Два разных способа, одно число.
+    // ============================================================
+
+    function testArbiterStorageFieldOffsetsArePinned() public view {
+        ArbiterRegistryStorage.Data storage d = ArbiterRegistryStorage.data();
+        uint256 base = uint256(ArbiterRegistryStorage.POSITION);
+
+        mapping(address => uint256) storage mistakeStreak = d.arbiterMistakeStreak;
+        mapping(address => uint256) storage bond          = d.arbiterBond;
+        mapping(address => ArbiterRegistryStorage.RemovalProposal) storage proposals = d.removalProposals;
+        mapping(address => uint8) storage lastCause       = d.lastRemovalCause;
+        mapping(address => uint8) storage chainPath       = d.chainProposalPath;
+
+        uint256 offStreak;
+        uint256 offBond;
+        uint256 offProposals;
+        uint256 offLastCause;
+        uint256 offChainPath;
+        assembly {
+            offStreak    := mistakeStreak.slot
+            offBond      := bond.slot
+            offProposals := proposals.slot
+            offLastCause := lastCause.slot
+            offChainPath := chainPath.slot
+        }
+
+        assertEq(offStreak - base, 11, unicode"arbiterMistakeStreak сдвинулся");
+        assertEq(offBond - base, 12, unicode"arbiterBond сдвинулся");
+        assertEq(offProposals - base, 29, unicode"removalProposals сдвинулся");
+        assertEq(offLastCause - base, 34, unicode"lastRemovalCause сдвинулся");
+
+        // Новое поле задачи 12. 35 — СЛЕДУЮЩИЙ за прежним последним (34), то
+        // есть дописано в конец и ничего не потеснило. Число здесь литеральное
+        // по той же причине, что и остальные: `offLastCause + 1` сравнивал бы
+        // структуру с самой собой.
+        assertEq(offChainPath - base, 35, unicode"chainProposalPath обязан лежать ЗА прежним последним полем");
+    }
 }

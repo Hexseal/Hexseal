@@ -50,7 +50,7 @@ import "../src/JobReceiptFacet.sol";
 ///   - `buildInitCuts`/`buildRemainingCuts` wire a correct selector set to the
 ///     wrong `FacetCut.facetAddress`
 ///   - the actual `DiamondProxy` this script would produce does not end up with
-///     exactly 12 facets, exactly 201 routed selectors, and consistent
+///     exactly 12 facets, exactly 202 routed selectors, and consistent
 ///     `facetAddress(sel)` <-> `facets()` routing in both directions
 ///     (177 -> 179, 15 Aug 2026: arbiter-accountability task 1 added
 ///     getSeatedBy/getSeatedCountBy to ArbiterRegistryFacet; 179 -> 180,
@@ -141,7 +141,20 @@ import "../src/JobReceiptFacet.sol";
 ///     must ask the chain for the number instead of keeping a copy that drifts.
 ///     Four new errors (NoLiveProposal, RemovalTooEarly, ProposalStale,
 ///     CauseDiffersFromProposal) add no selectors here and no storage fields:
-///     the proposal record `removalProposals` has been in storage since task 7)
+///     the proposal record `removalProposals` has been in storage since task 7;
+///     201 -> 202, 18 Aug 2026, task 12 of the same plan: THE QUIET DOOR NOW
+///     LEADS INTO THE COMMON ONE. Three judicial mistakes used to unseat an
+///     arbiter on the spot — no proposal, no pause, no words, no cause to
+///     match — and that door survived the handover the whole branch exists to
+///     build, since overturnVerdict sits under a modifier that lets the owner
+///     through always. The third mistake now suspends at once and lays an
+///     accusation in the CHAIN'S OWN name, and ArbiterAccountabilityFacet
+///     gained `executeChainRemoval` (+1, 33 -> 34): once the 48 hours have
+///     passed anyone may press it, because the chain proved the cause itself
+///     and pressing carries no discretion. One new storage field
+///     (`chainProposalPath`, appended at the end of ArbiterRegistryStorage.Data)
+///     because the demotion path is known at the mistake and recorded at the
+///     removal, two days apart)
 contract DeployFullSelectorsTest is Test {
     DeployFull internal deploy;
 
@@ -431,7 +444,7 @@ contract DeployFullSelectorsTest is Test {
                 );
             }
         }
-        assertEq(totalRouted, 201, "diamond should route exactly 201 selectors total");
+        assertEq(totalRouted, 202, "diamond should route exactly 202 selectors total");
 
         // Reverse direction: facetAddresses() must report exactly the same set
         // of addresses facets() reported them under.

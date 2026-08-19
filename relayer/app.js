@@ -1848,6 +1848,24 @@ export const FORWARDER_CUSTOM_ERRORS = {
   //     records. Same open seam as RemovalTooEarly above: the table decodes the
   //     name only, so `by` and `proposedAt` reach nobody today.
   '0x21efc74d': 'ProposalAlreadyLive',
+  //   NotAChainProposal — executeChainRemoval was pressed against an accusation
+  //     a PERSON laid. That button exists only for the chain's own record (the
+  //     third judicial mistake suspends and accuses in nobody's name), and a
+  //     human accusation is still executed by the holder of the removal right
+  //     through removeArbiterForCause, with his arguments and his name on it.
+  //     Owner's condition, 18 August 2026: "the main thing is that overriding
+  //     it must not fly". This is also the FIRST refusal the button gives —
+  //     before the clock is looked at — so a stranger pressing on a human
+  //     accusation is not told that one stands and when it ripens.
+  '0xbba75e02': 'NotAChainProposal',
+  //   ChainProposalNeedsTheChainDoor — the mirror of the line above, and the
+  //     pair only works with both halves: removeArbiterForCause was executing
+  //     accusations the CHAIN laid, which rewrote their ORIGIN in the permanent
+  //     record (253 "the chain" became 1 "a person, for cause") and put the
+  //     owner's name in the feed where nobody's belonged. The name says where
+  //     to go: executeChainRemoval, which anyone may press, the removal
+  //     authority included.
+  '0x1d7c2bf0': 'ChainProposalNeedsTheChainDoor',
 };
 
 // Decodes MinimalForwarder.execute()'s `retdata` (the inner call's own revert data)

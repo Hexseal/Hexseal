@@ -698,9 +698,25 @@ contract ArbiterRemovalForCauseTest is Test {
         assertEq(by, owner, "and it is still the owner's");
     }
 
-    /// The right to clear anyone's travels WITH the right to remove, by the
-    /// same predicate. After handover the owner keeps only his own — he gave
-    /// the removal away whole, and the veto over it goes with it.
+    /// The right to clear anyone's travels WITH the right to remove.
+    ///
+    /// ⚠️ THE REFUSAL CHANGED ITS LABEL IN REVIEW ROUND 4 OF TASK 12 (19 August
+    /// 2026), and the property got STRONGER rather than different. It used to
+    /// be NotYourProposal — "this record is not yours" — which was true but
+    /// small: the former owner was refused as a stranger to this particular
+    /// record, and would still have cleared one he had laid himself.
+    ///
+    /// withdrawProposal now has its own handover branch, so he is refused as a
+    /// man who gave the door away: RemovalHandedOver, and it applies to every
+    /// record including his own. Same reasoning proposeRemoval already carried
+    /// — "a proposal he could still lay would be executable by the successor,
+    /// so keeping it would keep him in the loop by the back door" — read on the
+    /// other side: a veto he could still exercise keeps him in the loop just as
+    /// well. The handover is whole or it is theatre.
+    ///
+    /// The larger reason is the one the person should read; that is the same
+    /// rule AlreadyOverturned is ordered by. What is asserted below did not
+    /// move: the record survives him.
     function test_AfterHandoverTheOwnerCannotWithdrawTheChiefsProposal() public {
         _setChief(chief);
         vm.prank(chief);
@@ -712,7 +728,7 @@ contract ArbiterRemovalForCauseTest is Test {
         _setDaoAddress(address(0xDA0));
         _activateDAO();
 
-        vm.expectRevert(ArbiterAccountabilityFacet.NotYourProposal.selector);
+        vm.expectRevert(ArbiterAccountabilityFacet.RemovalHandedOver.selector);
         acc.withdrawProposal(arbiter);
         assertTrue(acc.hasLiveProposal(arbiter), "the chief's record survived the former owner");
     }
@@ -773,17 +789,29 @@ contract ArbiterRemovalForCauseTest is Test {
         assertTrue(acc.hasLiveProposal(arbiter), unicode"проверяемый код не сверяется на этапе предложения");
     }
 
-    /// Владелец предлагает наравне с директором — onlyOwnerOrChief пускает
-    /// обоих, не только директора.
+    /// Владелец предлагает наравне с директором — `_requireOwnerOrChief`
+    /// пускает обоих, не только директора.
+    ///
+    /// ⚠️ «Под модификатором» больше не говорим: `proposeRemoval` его с
+    /// подписи потеряла ещё кругом правок 2 паузы и зовёт проверку явно, в
+    /// ветке «передачи не было». Сегодня модификатор носит одна функция этого
+    /// фасета — `suspendArbiter`. Сцена ДО передачи, и это существенно:
+    /// после неё владельца не пускает никто.
     function test_OwnerCanAlsoPropose() public {
         acc.proposeRemoval(arbiter, ArbiterAccountabilityFacet.Cause.Leak, keccak256("x"), unicode"выложил переписку по спору третьей стороне");
         (, , , address by, ) = acc.getRemovalProposal(arbiter);
         assertEq(by, owner);
     }
 
-    /// Владелец может отозвать предложение, положенное директором — оба
-    /// ходят под одним модификатором, право отзыва не привязано к тому, кто
-    /// именно предложил.
+    /// Владелец может отозвать предложение, положенное директором: право
+    /// отзыва не привязано к тому, кто именно предложил, — чужое чистит
+    /// держатель права сноса.
+    ///
+    /// ⚠️ Здесь стояло «оба ходят под одним модификатором». `withdrawProposal`
+    /// модификатора не носит с круга правок 1 паузы, а с круга правок 4 задачи
+    /// 12 у неё своя ветка передачи. Сцена ДО передачи; после неё отзывает
+    /// только преемник, и владелец получает RemovalHandedOver — см.
+    /// test_AfterHandoverTheOwnerCannotWithdrawTheChiefsProposal ниже.
     function test_OwnerWithdrawsChiefsProposal() public {
         _setChief(chief);
         vm.prank(chief);

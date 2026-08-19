@@ -172,12 +172,20 @@ contract DiamondTest is Test {
         // ArbiterAccountabilityFacet, значит и монтировать их надо на него.
         // Оставить их в списке выше значило бы маршрут на фасет, который их
         // не реализует, — вызов доходит и ревертит.
-        bytes4[] memory accSels = new bytes4[](5);
+        bytes4[] memory accSels = new bytes4[](9);
         accSels[0] = ArbiterAccountabilityFacet.getArbiterDeals.selector;
         accSels[1] = ArbiterAccountabilityFacet.getArbiterReward.selector;
         accSels[2] = ArbiterAccountabilityFacet.getArbiterMistakeStreak.selector;
         accSels[3] = ArbiterAccountabilityFacet.getArbiterBond.selector;
         accSels[4] = ArbiterAccountabilityFacet.getOpenClaimCount.selector;
+        // Задача 12 (18 августа 2026): третья судейская ошибка больше не
+        // снимает — она обвиняет от имени цепи, а снимает общая дверь через 48
+        // часов. Сцены демоушена в этом файле доходят до конца только с этими
+        // четырьмя, и первая из них — сама кнопка.
+        accSels[5] = ArbiterAccountabilityFacet.executeChainRemoval.selector;
+        accSels[6] = ArbiterAccountabilityFacet.getRemovalDelay.selector;
+        accSels[7] = ArbiterAccountabilityFacet.hasLiveProposal.selector;
+        accSels[8] = ArbiterAccountabilityFacet.isSuspended.selector;
 
         // ReputationFacet selectors
         bytes4[] memory reputationSelectors = new bytes4[](8);
@@ -943,8 +951,25 @@ contract DiamondTest is Test {
 
         _disputeAndOverturn(address(uint160(42102)), address(uint160(42202)), flakyArbiter);
 
-        assertFalse(ArbiterRegistryFacet(address(diamond)).isRegisteredArbiter(flakyArbiter));
+        // ⚠️ СЦЕНА ПЕРЕСТРОЕНА ЗАДАЧЕЙ 12 (18 августа 2026). Третья ошибка
+        // больше не снимает — она ПРИОСТАНАВЛИВАЕТ И ОБВИНЯЕТ от имени цепи, а
+        // снос идёт общей дверью через 48 часов. XP режется как прежде (трогаем
+        // место, не очки), а счётчик НАРОЧНО не обнуляется: серия судейских
+        // ошибок не кончилась оттого, что цепь её заметила. Кнопке он при этом
+        // не нужен — она читает ЗАПИСЬ и срабатывает при нуле (решение C-1),
+        // и десять строк ниже она в этой же сцене и нажимается.
+        assertTrue(ArbiterRegistryFacet(address(diamond)).isRegisteredArbiter(flakyArbiter));
         assertEq(ReputationFacet(address(diamond)).getXP(flakyArbiter), 2500);
+        assertEq(ArbiterAccountabilityFacet(address(diamond)).getArbiterMistakeStreak(flakyArbiter), 3);
+        assertTrue(ArbiterAccountabilityFacet(address(diamond)).hasLiveProposal(flakyArbiter));
+        assertTrue(ArbiterAccountabilityFacet(address(diamond)).isSuspended(flakyArbiter));
+
+        // И вторая половина той же сцены: через паузу жмёт кто угодно.
+        vm.warp(vm.getBlockTimestamp() + ArbiterAccountabilityFacet(address(diamond)).getRemovalDelay());
+        vm.prank(address(uint160(42999)));
+        ArbiterAccountabilityFacet(address(diamond)).executeChainRemoval(flakyArbiter);
+
+        assertFalse(ArbiterRegistryFacet(address(diamond)).isRegisteredArbiter(flakyArbiter));
         assertEq(ArbiterAccountabilityFacet(address(diamond)).getArbiterMistakeStreak(flakyArbiter), 0);
     }
 
@@ -1006,6 +1031,17 @@ contract DiamondTest is Test {
         _disputeAndOverturn(address(uint160(45800)), address(uint160(45900)), candidate);
         _disputeAndOverturn(address(uint160(45801)), address(uint160(45901)), candidate);
         _disputeAndOverturn(address(uint160(45802)), address(uint160(45902)), candidate);
+
+        // ⚠️ ЗАДАЧА 12: ЗАЛОГ СГОРАЕТ НА СНОСЕ, А НЕ НА ОБВИНЕНИИ. До паузы
+        // человек ещё арбитр и деньги ещё его — обвинение не наказание.
+        assertEq(
+            ArbiterAccountabilityFacet(address(diamond)).getArbiterBond(candidate), ARBITER_BOND,
+            unicode"обвинение цепи денег не трогает"
+        );
+
+        vm.warp(vm.getBlockTimestamp() + ArbiterAccountabilityFacet(address(diamond)).getRemovalDelay());
+        vm.prank(address(uint160(45999)));
+        ArbiterAccountabilityFacet(address(diamond)).executeChainRemoval(candidate);
 
         assertFalse(ArbiterRegistryFacet(address(diamond)).isRegisteredArbiter(candidate));
         assertEq(ArbiterAccountabilityFacet(address(diamond)).getArbiterBond(candidate), 0);
@@ -1391,8 +1427,19 @@ contract DiamondTest is Test {
         _disputeAndArbiterTimeout(address(uint160(51101)), address(uint160(51201)), flakyArbiter, 20_000_000);
         _disputeAndArbiterTimeout(address(uint160(51102)), address(uint160(51202)), flakyArbiter, 30_000_000);
 
-        assertFalse(ArbiterRegistryFacet(address(diamond)).isRegisteredArbiter(flakyArbiter));
+        // ⚠️ ЗАДАЧА 12: третий таймаут обвиняет, снимает общая дверь.
+        // Отдельно ценно, что путь таймаута вообще ДОЕХАЛ: Agreement зовёт
+        // notifyArbiterTimeout внутри ПУСТОГО try/catch, и ревёрт в новой ветке
+        // был бы проглочен молча — «не наказали» выглядело бы как «наказали».
+        assertTrue(ArbiterRegistryFacet(address(diamond)).isRegisteredArbiter(flakyArbiter));
+        assertTrue(ArbiterAccountabilityFacet(address(diamond)).hasLiveProposal(flakyArbiter));
         assertEq(ReputationFacet(address(diamond)).getXP(flakyArbiter), 2500);
+
+        vm.warp(vm.getBlockTimestamp() + ArbiterAccountabilityFacet(address(diamond)).getRemovalDelay());
+        vm.prank(address(uint160(51999)));
+        ArbiterAccountabilityFacet(address(diamond)).executeChainRemoval(flakyArbiter);
+
+        assertFalse(ArbiterRegistryFacet(address(diamond)).isRegisteredArbiter(flakyArbiter));
     }
 
     function testAgreementRevertIfNotClientFund() public {
@@ -2859,19 +2906,35 @@ contract DiamondTest is Test {
             "setup: two mistakes booked"
         );
 
-        // Third dispute, third mistake — the streak resets to zero and the
-        // demotion fires on this very call.
+        // Third dispute, third mistake.
+        //
+        // ⚠️ THE SCENE WAS REBUILT BY TASK 12 (18 August 2026) AND THE STATE IT
+        // NEEDS IS NOW REACHED ONE STEP LATER. The threshold used to reset the
+        // streak and unseat the man in this very call; it now suspends him and
+        // lays an accusation in the chain's own name, deliberately KEEPING the
+        // counter. Not because the button needs it — since C-1 the button reads
+        // the RECORD and opens at streak 0 — but because the row of mistakes
+        // did not end just by being noticed, and the manual door still proves
+        // its cause by that number.
+        //
+        // The property under test is unchanged and still reachable: it is the
+        // REMOVAL that zeroes the streak (_performRemoval), so pressing the
+        // button produces exactly the state the underflow needs — a booked hand
+        // overturn with nothing left in the counter to take back.
         address agr = _disputeToVerdict(address(0x7205), address(0x7206), true);
         ArbiterRegistryFacet(address(diamond)).overturnVerdict(agr, false);
         assertEq(
-            ArbiterAccountabilityFacet(address(diamond)).getArbiterMistakeStreak(arbiter), 0,
-            "setup: the threshold reset the streak"
-        );
-        assertFalse(
-            ArbiterRegistryFacet(address(diamond)).isRegisteredArbiter(arbiter),
-            "setup: the third mistake unseated him"
+            ArbiterAccountabilityFacet(address(diamond)).getArbiterMistakeStreak(arbiter), 3,
+            "setup: the threshold keeps the streak; being noticed did not end the row"
         );
 
+        // ⚠️ THE APPEAL IS RAISED BEFORE THE BUTTON, AND IT HAS TO BE. Its
+        // window is FINALIZE_DELAY — 24 hours from the VERDICT — while the
+        // pause before removal is 48. So "removed, then appealed" is not a
+        // reachable order at all; the only way into the state under test is
+        // "appealed, then removed, then the panel finishes". Worth stating,
+        // because the naive reading of task 12 suggests otherwise.
+        //
         // The hand flipped clientWins to false, so the client is the loser.
         address cli = address(0x7205);
         usdc.mint(cli, 100 * 10**6);
@@ -2879,6 +2942,18 @@ contract DiamondTest is Test {
         usdc.approve(address(diamond), 20 * 10**6);
         vm.prank(cli);
         ArbiterRegistryFacet(address(diamond)).raiseAppeal(agr);
+
+        vm.warp(vm.getBlockTimestamp() + ArbiterAccountabilityFacet(address(diamond)).getRemovalDelay());
+        vm.prank(address(0x7299));
+        ArbiterAccountabilityFacet(address(diamond)).executeChainRemoval(arbiter);
+        assertEq(
+            ArbiterAccountabilityFacet(address(diamond)).getArbiterMistakeStreak(arbiter), 0,
+            "setup: the removal spent the evidence it was built on"
+        );
+        assertFalse(
+            ArbiterRegistryFacet(address(diamond)).isRegisteredArbiter(arbiter),
+            "setup: the chain's own accusation, executed, unseated him"
+        );
 
         vm.prank(a2);
         ArbiterRegistryFacet(address(diamond)).voteOnAppeal(agr, true);

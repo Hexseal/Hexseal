@@ -238,7 +238,7 @@ contract ArbiterAccountabilityUpgradeTest is Test, ArbiterChainCensus {
         regSigs[1] = "getMaxClaimsPerArbiter()";
         regSigs[2] = "getMaxArbiterMistakes()";
 
-        string[] memory accSigs = new string[](22);
+        string[] memory accSigs = new string[](23);
         accSigs[0]  = "suspendArbiter(address)";
         accSigs[1]  = "liftSuspension(address)";
         accSigs[2]  = "isSuspended(address)";
@@ -270,6 +270,13 @@ contract ArbiterAccountabilityUpgradeTest is Test, ArbiterChainCensus {
         // purpose — deriving it from the facet type would compare the script
         // with itself.
         accSigs[21] = "getRemovalDelay()";
+        // The quiet door leads into the common one (task 12, 18 August 2026):
+        // the button anyone may press once the chain's own accusation has sat.
+        // ONE argument, and the literal here says so — a second parameter would
+        // change the selector, and this line is the only place that would
+        // notice before the frontend called a function the diamond does not
+        // have.
+        accSigs[22] = "executeChainRemoval(address)";
 
         bytes4[] memory declaredReg = upgrade.addRegistrySelectors();
         assertEq(declaredReg.length, regSigs.length, unicode"Add-реестр: число селекторов разошлось с числом подписей");
@@ -424,7 +431,7 @@ contract ArbiterAccountabilityUpgradeTest is Test, ArbiterChainCensus {
 
         assertTrue(cuts[3].action == IDiamondCut.FacetCutAction.Add, unicode"cuts[3] должен быть Add");
         assertEq(cuts[3].facetAddress, acc, unicode"Add-ответственность: адрес обязан быть новым фасетом");
-        assertEq(cuts[3].functionSelectors.length, 22, unicode"Add-ответственность: ожидались ровно 22 селектора");
+        assertEq(cuts[3].functionSelectors.length, 23, unicode"Add-ответственность: ожидались ровно 23 селектора");
 
         // Remove — последним и с нулевым адресом: DiamondCutLib.removeFunctions
         // требует ровно этого ("Diamond: remove needs zero address"), а

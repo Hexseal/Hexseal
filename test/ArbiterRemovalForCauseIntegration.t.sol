@@ -112,6 +112,21 @@ contract ArbiterRemovalForCauseIntegrationTest is Test {
     uint8 constant AUTO_TIMEOUT  = 254;
     uint8 constant AUTO_APPEAL   = 255;
 
+    /// ArbiterRegistryStorage.POSITION — тот же неймспейс, что читает
+    /// test/ArbiterSuspension.t.sol (ARB_BASE там же), и слот залога 12 добыт
+    /// там же перебором. Здесь нужен ровно для того, чтобы «залог сгорает НА
+    /// СНОСЕ, а не на обвинении» проверялось на ненулевом залоге: базового
+    /// арбитра стенд сажает рукой (addArbiter), а ручная посадка залога не
+    /// берёт вовсе — см. test_HandSeatedArbiterHasNoBondToBurn.
+    bytes32 constant ARB_BASE = 0xaae71de0594cbcb5434f0ab7f7501c1be178552bf788b418a1c2624ba9718d00;
+    uint256 constant SLOT_ARBITER_BOND = 12;
+
+    /// Посторонний: никакой роли, ни арбитр, ни директор, ни владелец.
+    address constant STRANGER = address(0x5A);
+    /// Директор. Тот же адрес, что уже используют сцены ниже.
+    address constant CHIEF = address(0xC4);
+    bytes32 constant DIGEST = keccak256("the evidence, attested not verified");
+
     function setUp() public {
         owner = address(this);
         feeRecipient = address(0x4);
@@ -213,10 +228,17 @@ contract ArbiterRemovalForCauseIntegrationTest is Test {
     /// ⚠️ vm.getBlockTimestamp(), not block.timestamp: under via_ir solc treats
     /// TIMESTAMP as constant within a call (docs/OPEN-ITEMS.md, item 57).
     ///
-    /// ⚠️ Laid down by the OWNER even where the removal is executed by the
-    /// named successor: proposeRemoval runs under onlyOwnerOrChief, which lets
-    /// the owner through whether or not governance is active — only the
-    /// EXECUTION moves to daoAddress.
+    /// ⚠️ LAID DOWN BY THE OWNER, AND THAT WORKS ONLY BEFORE THE HANDOVER.
+    /// This paragraph used to say the opposite of what the branch is for: "the
+    /// owner goes through whether or not governance is active — only the
+    /// EXECUTION moves to daoAddress". Both halves are wrong since review round
+    /// 2 of the pause (17 August 2026): the accusation door travelled with the
+    /// right to act on it, and proposeRemoval answers the former owner with
+    /// RemovalHandedOver.
+    ///
+    /// So this helper is a BEFORE-HANDOVER helper and nothing else. Past the
+    /// handover use `_proposeAndWaitAs(successor, ...)`, which exists for
+    /// exactly that and is what every scene past a handover already calls.
     function _proposeAndWait(address who, ArbiterAccountabilityFacet.Cause cause, bytes32 digest)
         internal
     {
@@ -237,6 +259,35 @@ contract ArbiterRemovalForCauseIntegrationTest is Test {
         vm.prank(caller);
         ArbiterAccountabilityFacet(address(diamond)).proposeRemoval(who, cause, digest, PROPOSAL_WORDS);
         vm.warp(vm.getBlockTimestamp() + ArbiterAccountabilityFacet(address(diamond)).getRemovalDelay());
+    }
+
+    /// ТРИ РАЗНЫХ СПОРА, не один трижды. Задача 11 (`AlreadyOverturned`)
+    /// запретила бить один и тот же вердикт повторно, и это ровно та цена,
+    /// ради которой она делалась: до неё автоматический путь стоил ОДНОГО
+    /// поданного вердикта и трёх вызовов в одном блоке.
+    function _threeOverturnsOnDistinctDisputes(address judged) internal {
+        require(judged == arbiter, "stand builds disputes for the seated arbiter only");
+        _disputeAndOverturn(address(0x9A1), address(0x9A2));
+        _disputeAndOverturn(address(0x9A3), address(0x9A4));
+        _disputeAndOverturn(address(0x9A5), address(0x9A6));
+    }
+
+    /// Право сноса уезжает названному преемнику — заработанным порогом, как в
+    /// жизни, а не ручным activateDAO(). После этого владелец не предлагает и
+    /// не сносит: храповик, ради которого вся ветка.
+    function _handOverRemovalRight(address dao) internal {
+        _setUniqueActiveUsers(ArbiterRegistryFacet(address(diamond)).getDaoThreshold());
+        ArbiterRegistryFacet(address(diamond)).setDAOAddress(dao);
+    }
+
+    /// Кладёт арбитру залог прямо в хранилище. Через applyAsArbiter не выйдет:
+    /// та требует активной ДАО, а активная ДАО закрывает половину сцен ниже.
+    function _giveBond(address who, uint256 amount) internal {
+        vm.store(
+            address(diamond),
+            keccak256(abi.encode(who, uint256(ARB_BASE) + SLOT_ARBITER_BOND)),
+            bytes32(amount)
+        );
     }
 
 
@@ -499,31 +550,40 @@ contract ArbiterRemovalForCauseIntegrationTest is Test {
         assertEq(proposedAtAfter, 0, unicode"resignAsArbiter обязан стереть запись, не только пережить протухание");
     }
 
-    /// Important 1, дверь №3 (автодемоушен): три РЕАЛЬНЫХ переворота сносят
-    /// арбитра автоматикой _recordArbiterMistake, минуя removeArbiterForCause
-    /// целиком — и предложение обязано пропасть тем же путём, через clearSeat.
-    function test_AutoDemotionClearsTheProposal() public {
-        ArbiterAccountabilityFacet(address(diamond)).proposeRemoval(
-            arbiter, ArbiterAccountabilityFacet.Cause.Leak, keccak256("x"),
-            unicode"выложил переписку по спору третьей стороне"
-        );
+    /// Important 1, дверь №3: автоматический путь обязан стереть предложение
+    /// той же дорогой, что и ручной снос, — через clearSeat.
+    ///
+    /// ⚠️ СЦЕНА ПЕРЕСТРОЕНА ЗАДАЧЕЙ 12 (18 августа 2026). Прежняя клала
+    /// человеческое предложение и ждала, что три переворота сотрут его вместе с
+    /// креслом. Теперь так НЕ БЫВАЕТ: живое человеческое обвинение — занятая
+    /// дверь, цепь молча уступает ей (иначе ревёрт был бы проглочен пустым
+    /// try/catch в Agreement), и тот случай проверяет отдельная сцена
+    /// test_ChainYieldsToALiveHumanProposalWithoutReverting.
+    ///
+    /// Проверяемое свойство осталось прежним и переехало на дверь, которая
+    /// теперь и есть третья: обвинение цепи гасится СНОСОМ, а не висит после
+    /// него — иначе hasLiveProposal отвечал бы true до двух недель против
+    /// человека, которого в реестре уже нет и который снять запись о себе не
+    /// может.
+    function test_ChainRemovalClearsTheProposal() public {
+        _threeOverturnsOnDistinctDisputes(arbiter);
         assertTrue(
             ArbiterAccountabilityFacet(address(diamond)).hasLiveProposal(arbiter),
-            unicode"сетап: предложение живо"
+            unicode"сетап: обвинение цепи живо"
         );
 
-        _disputeAndOverturn(address(0x401), address(0x402));
-        _disputeAndOverturn(address(0x403), address(0x404));
-        _disputeAndOverturn(address(0x405), address(0x406)); // третий — демоушен
+        vm.warp(vm.getBlockTimestamp() + ArbiterAccountabilityFacet(address(diamond)).getRemovalDelay());
+        vm.prank(STRANGER);
+        ArbiterAccountabilityFacet(address(diamond)).executeChainRemoval(arbiter);
 
         assertFalse(
             ArbiterRegistryFacet(address(diamond)).isRegisteredArbiter(arbiter),
-            unicode"сетап: автодемоушен сработал"
+            unicode"сетап: снос состоялся"
         );
 
         (, , uint256 proposedAtAfter, , ) =
             ArbiterAccountabilityFacet(address(diamond)).getRemovalProposal(arbiter);
-        assertEq(proposedAtAfter, 0, unicode"автодемоушен обязан стереть предложение той же дорогой, что и снос");
+        assertEq(proposedAtAfter, 0, unicode"снос обязан стереть предложение той же дорогой, что и ручной");
     }
 
     // ============================================================
@@ -596,22 +656,30 @@ contract ArbiterRemovalForCauseIntegrationTest is Test {
     }
 
     // ============================================================
-    //  Minor 2 круга правок 1: автодемоушен тоже даёт право ответа
+    //  Minor 2 круга правок 1: автоматический путь тоже даёт право ответа
     //
     //  Решение владельца: правило звучит одной фразой — «сняли, значит
-    //  можешь ответить» — вне зависимости от того, человек нажал кнопку или
-    //  сработала автоматика _recordArbiterMistake. Публичная запись
+    //  можешь ответить» — вне зависимости от того, кто нажал. Публичная запись
     //  ArbiterDemoted вечна ровно так же, как ArbiterRemovedForCause.
+    //
+    //  ⚠️ ЗАДАЧА 12: право открывает СНОС, а не третья ошибка. `removedAt`
+    //  ставит общее тело сноса, и до нажатия кнопки его нет — человек ещё в
+    //  корпусе, и отвечать ему пока не на что.
     // ============================================================
 
     function test_AutoDemotedArbiterCanAnswer() public {
-        _disputeAndOverturn(address(0x501), address(0x502));
-        _disputeAndOverturn(address(0x503), address(0x504));
-        _disputeAndOverturn(address(0x505), address(0x506)); // третий — демоушен
+        _threeOverturnsOnDistinctDisputes(arbiter);
+
+        // ⚠️ ЗАДАЧА 12: право ответа открывается СНОСОМ, а не третьей ошибкой.
+        // Отметку removedAt ставит снос, и до нажатия кнопки её нет — до неё
+        // человек не снят, а обвинён, и отвечать ему пока не на что.
+        vm.warp(vm.getBlockTimestamp() + ArbiterAccountabilityFacet(address(diamond)).getRemovalDelay());
+        vm.prank(STRANGER);
+        ArbiterAccountabilityFacet(address(diamond)).executeChainRemoval(arbiter);
 
         assertFalse(
             ArbiterRegistryFacet(address(diamond)).isRegisteredArbiter(arbiter),
-            unicode"сетап: автодемоушен сработал"
+            unicode"сетап: обвинение цепи дошло до сноса"
         );
 
         bytes32 reply = keccak256(unicode"меня разжаловали автоматом, вот моя версия");
@@ -621,15 +689,16 @@ contract ArbiterRemovalForCauseIntegrationTest is Test {
         assertEq(
             ArbiterAccountabilityFacet(address(diamond)).getRemovalReply(arbiter),
             reply,
-            unicode"автодемоушен тоже даёт право ответа — та же публичная запись, тот же ответ"
+            unicode"автоматический путь тоже даёт право ответа — та же публичная запись, тот же ответ"
         );
     }
 
     /// п. 66, следствие второе: тем же вызовом глушился АВТОМАТ.
     ///
-    /// Автодемоушен ставит ту же приостановку из того же объявления
-    /// (ArbiterRegistryStorage.SUSPENSION_WINDOW) и ту же отметку removedAt,
-    /// что ручной снос, — и делает это БЕЗ ЧЕЛОВЕКА. Директор, снимавший
+    /// Автоматический путь ставит ту же приостановку из того же объявления
+    /// (ArbiterRegistryStorage.SUSPENSION_WINDOW) и — задачей 12, уже на самом
+    /// сносе — ту же отметку removedAt, что ручной снос, и делает это БЕЗ
+    /// ЧЕЛОВЕКА на всём протяжении. Директор, снимавший
     /// приостановку без единой проверки, выключал механизм, который специально
     /// сделали работающим сам по себе; стоило это ноль газа сверх вызова и не
     /// оставляло в записи никакого «почему».
@@ -637,11 +706,19 @@ contract ArbiterRemovalForCauseIntegrationTest is Test {
         address chief = address(0xC4);
         ArbiterRegistryFacet(address(diamond)).setChiefArbiter(chief);
 
-        // Три РЕАЛЬНЫХ переворота по трём разным сделкам — автодемоушен
-        // срабатывает на третьем (MAX_ARBITER_MISTAKES = 3).
-        _disputeAndOverturn(address(0x661), address(0x662));
-        _disputeAndOverturn(address(0x663), address(0x664));
-        _disputeAndOverturn(address(0x665), address(0x666));
+        // Три РЕАЛЬНЫХ переворота по трём разным сделкам, а затем кнопка.
+        //
+        // ⚠️ ЗАДАЧА 12: снос уехал на двое суток вперёд, и сцена ждёт его.
+        // Проверяемое свойство прежнее и лежит на прежней половине
+        // различителя — `removedAt != 0`. Вторую половину, «висит обвинение
+        // ЦЕПИ, снос ещё не состоялся», сторожит отдельная сцена
+        // test_ChiefCannotLiftTheChainSuspensionWhileTheAccusationStands: без
+        // неё директор глушил бы быстрый рычаг одной транзакцией — ровно тот
+        // обход, который закрывал п. 66.
+        _threeOverturnsOnDistinctDisputes(arbiter);
+        vm.warp(vm.getBlockTimestamp() + ArbiterAccountabilityFacet(address(diamond)).getRemovalDelay());
+        vm.prank(STRANGER);
+        ArbiterAccountabilityFacet(address(diamond)).executeChainRemoval(arbiter);
 
         assertFalse(
             ArbiterRegistryFacet(address(diamond)).isRegisteredArbiter(arbiter),
@@ -1411,30 +1488,45 @@ contract ArbiterRemovalForCauseIntegrationTest is Test {
     //  изменилась только цена.
     // ============================================================
 
-    /// Путь первый: владелец переворачивает вердикт. Нажавший есть, и он
-    /// назван. Три переворота — ровно тот сценарий, ради которого правка
-    /// делалась.
+    /// Путь первый: владелец переворачивает вердикт.
     ///
-    /// ⚠️ Три РАЗНЫХ спора (задача 11): раньше сцена трижды переворачивала
-    /// ОДИН агримент, и то была не экономия на сетапе, а сама дыра —
-    /// перевёрнутый вердикт теперь отказывает AlreadyOverturned. Проверяемое
-    /// свойство прежнее: событие называет нажавшего.
-    function test_ArbiterDemotedNamesOwnerOnTheOverturnPath() public {
+    /// ⚠️ СЦЕНА ПЕРЕСТРОЕНА ЗАДАЧЕЙ 12 (18 августа 2026), и вместе с ней
+    /// перевернулось проверяемое свойство. Раньше третий переворот СНИМАЛ
+    /// арбитра и `ArbiterDemoted` обязано было НАЗВАТЬ нажавшего — тест
+    /// сторожил, что запись не свалит вину на владельца, когда нажал не он.
+    /// Теперь третий переворот не снимает: он приостанавливает и открывает
+    /// обвинение ОТ ИМЕНИ ЦЕПИ, и обвинителя у него нет вовсе — поле `by` в
+    /// записи нулевое, а в событии такого поля нет по устройству.
+    ///
+    /// Свойство стало сильнее, а не слабее: прежнее держалось на том, что в
+    /// событие кладут правильный адрес (подмена давала 0 красных из 840, пока
+    /// не написали сцену с ДАО ниже), нынешнее — на том, что класть некуда.
+    ///
+    /// ⚠️ Три РАЗНЫХ спора (задача 11): перевёрнутый вердикт отказывает
+    /// AlreadyOverturned.
+    function test_TheChainsAccusationNamesNobodyOnTheOverturnPath() public {
         _disputeAndOverturn(address(0x651), address(0x652));
         _disputeAndOverturn(address(0x653), address(0x654));
 
         address agr = _disputeAndSubmit(address(0x655), address(0x656));
 
         vm.expectEmit(true, true, true, true, address(diamond));
-        emit ArbiterRegistryFacet.ArbiterDemoted(
-            arbiter, owner, ArbiterRegistryFacet.DemotionPath.OwnerOverturn, agr
+        emit ArbiterRegistryFacet.RemovalProposedByChain(
+            arbiter,
+            uint8(ArbiterRegistryFacet.DemotionPath.OwnerOverturn),
+            agr,
+            vm.getBlockTimestamp()
         );
         ArbiterRegistryFacet(address(diamond)).overturnVerdict(agr, false);
 
-        assertFalse(
+        assertTrue(
             ArbiterRegistryFacet(address(diamond)).isRegisteredArbiter(arbiter),
-            unicode"третий переворот снял арбитра"
+            unicode"третий переворот больше НЕ снимает — он обвиняет"
         );
+        (, , , address by, bool live) =
+            ArbiterAccountabilityFacet(address(diamond)).getRemovalProposal(arbiter);
+        assertTrue(live, unicode"обвинение живо");
+        assertEq(by, address(0), unicode"и ничьё: нажал человек, а обвиняет цепь");
     }
 
     /// Тот же путь первый, но НАЖИМАЕТ НЕ ВЛАДЕЛЕЦ (круг правок 1, 16 августа
@@ -1462,7 +1554,7 @@ contract ArbiterRemovalForCauseIntegrationTest is Test {
     /// поменять поведение незаметно. Сам разбор храповика (владелец
     /// переназначает адрес свободно до isDaoActive(), а после — уже нет) лежит
     /// в OPEN-ITEMS.
-    function test_ArbiterDemotedNamesTheDaoNotTheOwner() public {
+    function test_TheChainsAccusationNamesNobodyEvenWhenTheDaoPressed() public {
         address dao = address(0x6D40);
         ArbiterRegistryFacet(address(diamond)).setDAOAddress(dao);
         assertFalse(
@@ -1471,8 +1563,15 @@ contract ArbiterRemovalForCauseIntegrationTest is Test {
         );
         assertTrue(dao != owner, unicode"сетап: нажимающий и владелец — РАЗНЫЕ адреса");
 
-        // Первые две ошибки нажимает владелец, третью — управление. Именно
-        // третья попадает в запись, и она обязана назвать управление.
+        // Первые две ошибки нажимает владелец, третью — управление.
+        //
+        // ⚠️ Задача 12 перестроила сцену вместе с соседней: раньше здесь
+        // сторожилось «запись называет НАЖАВШЕГО, а не владельца по умолчанию»
+        // (замер: 0 красных из 840 без этой сцены). Теперь запись не называет
+        // НИКОГО, и эта сцена сторожит, что «никого» означает именно никого —
+        // а не «того, чей адрес случайно оказался под рукой». Нажимает адрес,
+        // ОТЛИЧНЫЙ от владельца; появись в обвинении чьё-нибудь имя, оно было
+        // бы видно здесь.
         //
         // ⚠️ Три РАЗНЫХ спора (задача 11), см. сцену выше.
         _disputeAndOverturn(address(0x65B), address(0x65C));
@@ -1481,16 +1580,19 @@ contract ArbiterRemovalForCauseIntegrationTest is Test {
         address agr = _disputeAndSubmit(address(0x65F), address(0x660));
 
         vm.expectEmit(true, true, true, true, address(diamond));
-        emit ArbiterRegistryFacet.ArbiterDemoted(
-            arbiter, dao, ArbiterRegistryFacet.DemotionPath.OwnerOverturn, agr
+        emit ArbiterRegistryFacet.RemovalProposedByChain(
+            arbiter,
+            uint8(ArbiterRegistryFacet.DemotionPath.OwnerOverturn),
+            agr,
+            vm.getBlockTimestamp()
         );
         vm.prank(dao);
         ArbiterRegistryFacet(address(diamond)).overturnVerdict(agr, false);
 
-        assertFalse(
-            ArbiterRegistryFacet(address(diamond)).isRegisteredArbiter(arbiter),
-            unicode"третий переворот снял арбитра"
-        );
+        (, , , address by, ) =
+            ArbiterAccountabilityFacet(address(diamond)).getRemovalProposal(arbiter);
+        assertEq(by, address(0), unicode"нажало управление — а обвинения ничьи");
+        assertTrue(by != dao, unicode"и уж точно не его имя");
     }
 
     /// Нулевое значение перечисления — не путь и не обвинение (круг правок 1).
@@ -1515,7 +1617,7 @@ contract ArbiterRemovalForCauseIntegrationTest is Test {
     /// Нажавшего нет вовсе — msg.sender здесь это САМ АГРИМЕНТ, и записывать
     /// его как «кто нажал» значило бы врать. Поэтому `by` нулевой, а сделка
     /// названа отдельным полем.
-    function test_ArbiterDemotedNamesNobodyOnTheTimeoutPath() public {
+    function test_TheChainsAccusationNamesNobodyOnTheTimeoutPath() public {
         _disputeAndOverturn(address(0x653), address(0x654));
         _disputeAndOverturn(address(0x655), address(0x656));
 
@@ -1543,16 +1645,25 @@ contract ArbiterRemovalForCauseIntegrationTest is Test {
         vm.warp(vm.getBlockTimestamp() + 4 days + 1);
 
         vm.expectEmit(true, true, true, true, address(diamond));
-        emit ArbiterRegistryFacet.ArbiterDemoted(
-            arbiter, address(0), ArbiterRegistryFacet.DemotionPath.AgreementTimeout, agr
+        emit ArbiterRegistryFacet.RemovalProposedByChain(
+            arbiter,
+            uint8(ArbiterRegistryFacet.DemotionPath.AgreementTimeout),
+            agr,
+            vm.getBlockTimestamp()
         );
         vm.prank(cli);
         Agreement(agr).triggerArbiterTimeout();
 
-        assertFalse(
+        // ⚠️ И ГЛАВНОЕ ЗДЕСЬ — ЧТО ОНО ВООБЩЕ СЛУЧИЛОСЬ. Этот путь Agreement
+        // исполняет внутри ПУСТОГО try/catch: ревёрт был бы проглочен молча, и
+        // «не наказали вовсе» выглядело бы снаружи точно так же, как
+        // «наказали». Задача 12 добавила в эту ветку запись предложения —
+        // безревёртную по построению, и вот доказательство, что она доехала.
+        assertTrue(
             ArbiterRegistryFacet(address(diamond)).isRegisteredArbiter(arbiter),
-            unicode"третья ошибка подряд — таймаутом, и она тоже снимает"
+            unicode"третья ошибка таймаутом больше не снимает — она обвиняет"
         );
+        assertTrue(ArbiterAccountabilityFacet(address(diamond)).hasLiveProposal(arbiter));
     }
 
     /// Путь третий: апелляция. Нажавшего тоже нет — resolveAppeal звать может
@@ -1560,7 +1671,7 @@ contract ArbiterRemovalForCauseIntegrationTest is Test {
     /// возможных неправд: решают ГОЛОСА, а не тот, кто нажал «подвести итог».
     /// `by` нулевой, голосовавшие читаются из AppealVoteCast по тому же
     /// агрименту.
-    function test_ArbiterDemotedNamesNobodyOnTheAppealPath() public {
+    function test_TheChainsAccusationNamesNobodyOnTheAppealPath() public {
         _disputeAndOverturn(address(0x659), address(0x65A));
         _disputeAndOverturn(address(0x65B), address(0x65C));
 
@@ -1590,15 +1701,22 @@ contract ArbiterRemovalForCauseIntegrationTest is Test {
         ArbiterRegistryFacet(address(diamond)).voteOnAppeal(agr, false);  // оставить
 
         vm.expectEmit(true, true, true, true, address(diamond));
-        emit ArbiterRegistryFacet.ArbiterDemoted(
-            arbiter, address(0), ArbiterRegistryFacet.DemotionPath.AppealVote, agr
+        emit ArbiterRegistryFacet.RemovalProposedByChain(
+            arbiter,
+            uint8(ArbiterRegistryFacet.DemotionPath.AppealVote),
+            agr,
+            vm.getBlockTimestamp()
         );
         ArbiterRegistryFacet(address(diamond)).resolveAppeal(agr);
 
-        assertFalse(
+        assertTrue(
             ArbiterRegistryFacet(address(diamond)).isRegisteredArbiter(arbiter),
-            unicode"голоса перевернули вердикт — и это третья ошибка подряд"
+            unicode"голоса перевернули вердикт — третья ошибка подряд, и она обвиняет, а не снимает"
         );
+        (, , , address by, bool live) =
+            ArbiterAccountabilityFacet(address(diamond)).getRemovalProposal(arbiter);
+        assertTrue(live);
+        assertEq(by, address(0), unicode"решали ГОЛОСА — назвать нажавшего «подвести итог» было бы худшей неправдой");
     }
 
     // ============================================================
@@ -1665,12 +1783,20 @@ contract ArbiterRemovalForCauseIntegrationTest is Test {
         _disputeAndOverturn(address(0x723), address(0x724));
         _disputeAndOverturn(address(0x725), address(0x726));
 
+        // ⚠️ ЗАДАЧА 12 (18 августа 2026): третья ошибка обвиняет, а снимает
+        // общая дверь через двое суток. Карточка обязана назвать путь
+        // по-прежнему — ради этого и заведено chainProposalPath: путь известен
+        // в момент ошибки, а записывается в момент сноса.
+        vm.warp(vm.getBlockTimestamp() + ArbiterAccountabilityFacet(address(diamond)).getRemovalDelay());
+        vm.prank(STRANGER);
+        ArbiterAccountabilityFacet(address(diamond)).executeChainRemoval(arbiter);
+
         assertFalse(ArbiterRegistryFacet(address(diamond)).isRegisteredArbiter(arbiter));
 
         (, , , , , , , , , , uint256 count, uint256 lastAt, uint8 cause)
             = ArbiterAccountabilityFacet(address(diamond)).getArbiterStanding(arbiter);
         assertEq(count, 1, unicode"автомат снял — счётчик вырос так же, как от руки");
-        assertEq(lastAt, vm.getBlockTimestamp(), unicode"момент автоснятия записан");
+        assertEq(lastAt, vm.getBlockTimestamp(), unicode"момент автоснятия записан — момент СНОСА, не момент ошибки");
         assertEq(cause, AUTO_OVERTURN,
             unicode"карточка называет путь: снял ПЕРЕВОРОТ, а не таймаут и не голоса");
         assertTrue(cause != AUTO_TIMEOUT,
@@ -1710,6 +1836,14 @@ contract ArbiterRemovalForCauseIntegrationTest is Test {
         vm.warp(vm.getBlockTimestamp() + 4 days + 1);
         vm.prank(cli);
         Agreement(agr).triggerArbiterTimeout();
+
+        // ⚠️ ЗАДАЧА 12 (18 августа 2026): третья ошибка обвиняет, а снимает
+        // общая дверь через двое суток. Карточка обязана назвать путь
+        // по-прежнему — ради этого и заведено chainProposalPath: путь известен
+        // в момент ошибки, а записывается в момент сноса.
+        vm.warp(vm.getBlockTimestamp() + ArbiterAccountabilityFacet(address(diamond)).getRemovalDelay());
+        vm.prank(STRANGER);
+        ArbiterAccountabilityFacet(address(diamond)).executeChainRemoval(arbiter);
 
         assertFalse(ArbiterRegistryFacet(address(diamond)).isRegisteredArbiter(arbiter));
 
@@ -1753,6 +1887,14 @@ contract ArbiterRemovalForCauseIntegrationTest is Test {
         ArbiterRegistryFacet(address(diamond)).voteOnAppeal(agr, false);
 
         ArbiterRegistryFacet(address(diamond)).resolveAppeal(agr);
+
+        // ⚠️ ЗАДАЧА 12 (18 августа 2026): третья ошибка обвиняет, а снимает
+        // общая дверь через двое суток. Карточка обязана назвать путь
+        // по-прежнему — ради этого и заведено chainProposalPath: путь известен
+        // в момент ошибки, а записывается в момент сноса.
+        vm.warp(vm.getBlockTimestamp() + ArbiterAccountabilityFacet(address(diamond)).getRemovalDelay());
+        vm.prank(STRANGER);
+        ArbiterAccountabilityFacet(address(diamond)).executeChainRemoval(arbiter);
 
         assertFalse(ArbiterRegistryFacet(address(diamond)).isRegisteredArbiter(arbiter));
 
@@ -1841,6 +1983,1136 @@ contract ArbiterRemovalForCauseIntegrationTest is Test {
         assertEq(
             ArbiterRegistryFacet(address(diamond)).getVaultBalance(), vaultBefore,
             unicode"сжигать нечего — банк арбитров не вырос ни на цент"
+        );
+    }
+
+    // ============================================================
+    //  ЗАДАЧА 12 (18 августа 2026): ТИХАЯ ДВЕРЬ ЗАВОДИТСЯ В ОБЩУЮ
+    //
+    //  Третья судейская ошибка снимала арбитра на месте: ни предложения, ни
+    //  паузы, ни слов, ни совпадения повода. Задача 2 сделала честную дверь
+    //  дорогой (48 часов и объяснение), а эта осталась бесплатной — и, что
+    //  решило дело, ПЕРЕЖИВАЛА ПЕРЕДАЧУ ПРАВА: overturnVerdict стоит под
+    //  onlyOwnerOrDAO, а тот пускает владельца всегда.
+    //
+    //  Стало: третья ошибка приостанавливает и открывает предложение ОТ ИМЕНИ
+    //  ЦЕПИ. Снос идёт общей дверью, и через 48 часов нажать может кто угодно.
+    // ============================================================
+
+    /// Ядро задачи: кресло переживает автоматический путь, а человек
+    /// останавливается немедленно и оказывается обвинён.
+    function test_ThirdMistakeSuspendsAndAccuses_ButDoesNotUnseat() public {
+        address judged = arbiter;
+        _giveBond(judged, ARBITER_BOND);
+        _threeOverturnsOnDistinctDisputes(judged);
+
+        assertTrue(
+            ArbiterRegistryFacet(address(diamond)).isRegisteredArbiter(judged),
+            unicode"кресло переживает автоматический путь"
+        );
+        assertTrue(
+            ArbiterAccountabilityFacet(address(diamond)).isSuspended(judged),
+            unicode"но остановлен он прямо сейчас — приостановка и есть быстрый путь"
+        );
+        assertTrue(
+            ArbiterAccountabilityFacet(address(diamond)).hasLiveProposal(judged),
+            unicode"и цепь его обвинила"
+        );
+
+        (uint8 cause, bytes32 digest, uint256 proposedAt, address by, ) =
+            ArbiterAccountabilityFacet(address(diamond)).getRemovalProposal(judged);
+        assertEq(by, address(0), unicode"обвинитель — цепь, ничьё имя не названо");
+        assertEq(digest, bytes32(0), unicode"отпечатка нет: улика — состояние самой цепи");
+        assertEq(proposedAt, vm.getBlockTimestamp(), unicode"часы пошли с этой секунды");
+        assertEq(
+            ArbiterAccountabilityFacet(address(diamond)).getArbiterBond(judged), ARBITER_BOND,
+            unicode"залог ещё не сгорел — обвинение не снос"
+        );
+        assertEq(
+            ArbiterAccountabilityFacet(address(diamond)).getArbiterMistakeStreak(judged), 3,
+            unicode"счётчик СТОИТ: серия не кончилась оттого, что цепь её заметила"
+        );
+
+        // ⚠️ Ожидаемое взято из ЧУЖОГО файла — перечисления
+        // ArbiterAccountabilityFacet.Cause, — а фактическое прочитано с цепи.
+        // Это и есть сторож зеркала CAUSE_*_MIRROR в реестре: переставьте
+        // перечисление, и сравнение разойдётся (docs/PROCESS.md, четвёртый
+        // способ — ожидаемое не должно выводиться из проверяемого).
+        assertEq(
+            cause, uint8(ArbiterAccountabilityFacet.Cause.OverturnedVerdicts),
+            unicode"путь переворота обязан лечь поводом OverturnedVerdicts"
+        );
+    }
+
+    /// Через 48 часов жмёт кто угодно. Права РЕШАТЬ он не получает — всё
+    /// решено до него; он получает право нажать.
+    function test_AnyoneMayPressAfterThePause() public {
+        address judged = arbiter;
+        _giveBond(judged, ARBITER_BOND);
+        _threeOverturnsOnDistinctDisputes(judged);
+        uint256 vaultBefore = ArbiterRegistryFacet(address(diamond)).getVaultBalance();
+
+        vm.warp(vm.getBlockTimestamp() + ArbiterAccountabilityFacet(address(diamond)).getRemovalDelay());
+
+        vm.prank(STRANGER);
+        ArbiterAccountabilityFacet(address(diamond)).executeChainRemoval(judged);
+
+        assertFalse(
+            ArbiterRegistryFacet(address(diamond)).isRegisteredArbiter(judged),
+            unicode"кресла нет"
+        );
+        assertEq(
+            ArbiterAccountabilityFacet(address(diamond)).getArbiterBond(judged), 0,
+            unicode"залог сгорает НА СНОСЕ, а не на обвинении"
+        );
+        assertEq(
+            ArbiterRegistryFacet(address(diamond)).getVaultBalance(), vaultBefore + ARBITER_BOND,
+            unicode"и уходит в банк арбитров, как у ручной двери"
+        );
+        assertEq(
+            ArbiterAccountabilityFacet(address(diamond)).getArbiterMistakeStreak(judged), 0,
+            unicode"счётчик обнуляется НА СНОСЕ: улика потрачена тем сносом, который на ней построен"
+        );
+        // Момент сноса отмечен — иначе отвечать было бы не на что. Читается
+        // через карточку: отдельного геттера removedAt в фасете нет.
+        (, , , , , , , , uint256 removedAt, , , , ) =
+            ArbiterAccountabilityFacet(address(diamond)).getArbiterStanding(judged);
+        assertGt(removedAt, 0, unicode"момент сноса отмечен");
+        assertFalse(
+            ArbiterAccountabilityFacet(address(diamond)).hasLiveProposal(judged),
+            unicode"предложение потрачено"
+        );
+    }
+
+    /// ⚠️ ЧТО ДЕЛАЕТ ВЕТКА ПОРОГА СО СЧЁТЧИКОМ — И ПОЧЕМУ ЭТО ВАЖНО ПОСЛЕ C-1.
+    ///
+    /// Имя и тело этой сцены переписаны кругом правок 2. Она называлась
+    /// «обвинение цепи всё ещё доказуемо, когда нажимают кнопку» и нажимала
+    /// кнопку — но с решения C-1 кнопка повод не перепроверяет вовсе и
+    /// срабатывает при счётчике 0, так что имя обещало неправду, а нажатие
+    /// ничего про счётчик не доказывало. Замер ревью показал это числом:
+    /// обнулить счётчик на пороге — пять красных, и НИ ОДНОЙ про нажатие.
+    ///
+    /// Что охраняется теперь — настоящее последствие сохранения счётчика:
+    /// серия судейских ошибок не кончилась оттого, что цепь её заметила, и
+    /// РУЧНАЯ дверь обязана суметь ею воспользоваться. Сцена проходит этот
+    /// путь целиком: обвинение цепи никто не нажал, оно протухло за
+    /// PROPOSAL_TTL — и держатель права сносит по той же, никуда не девшейся
+    /// улике.
+    function test_TheThresholdKeepsTheStreakForTheManualDoor() public {
+        _threeOverturnsOnDistinctDisputes(arbiter);
+        assertEq(
+            ArbiterAccountabilityFacet(address(diamond)).getArbiterMistakeStreak(arbiter), 3,
+            unicode"серия не кончилась оттого, что цепь её заметила"
+        );
+
+        // Кнопку не нажал никто, обвинение цепи протухло само.
+        vm.warp(vm.getBlockTimestamp() + ArbiterAccountabilityFacet(address(diamond)).getProposalTTL());
+        assertFalse(
+            ArbiterAccountabilityFacet(address(diamond)).hasLiveProposal(arbiter),
+            unicode"сетап: дверь снова свободна"
+        );
+        assertTrue(ArbiterRegistryFacet(address(diamond)).isRegisteredArbiter(arbiter));
+
+        // И улика по-прежнему годится: держатель права доказывает ею повод.
+        _proposeAndWait(arbiter, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0));
+        ArbiterAccountabilityFacet(address(diamond)).removeArbiterForCause(
+            arbiter, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0), address(0), ""
+        );
+
+        assertFalse(
+            ArbiterRegistryFacet(address(diamond)).isRegisteredArbiter(arbiter),
+            unicode"счётчик, переживший обвинение, доказал повод человеку"
+        );
+    }
+
+    function test_TheButtonRefusesBeforeThePause() public {
+        _threeOverturnsOnDistinctDisputes(arbiter);
+        (, , uint256 proposedAt, , ) =
+            ArbiterAccountabilityFacet(address(diamond)).getRemovalProposal(arbiter);
+
+        vm.prank(STRANGER);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                ArbiterAccountabilityFacet.RemovalTooEarly.selector,
+                proposedAt + ArbiterAccountabilityFacet(address(diamond)).getRemovalDelay()
+            )
+        );
+        ArbiterAccountabilityFacet(address(diamond)).executeChainRemoval(arbiter);
+
+        assertTrue(
+            ArbiterRegistryFacet(address(diamond)).isRegisteredArbiter(arbiter),
+            unicode"и за отказом ничего не произошло"
+        );
+    }
+
+    /// Верхняя граница окна — та же, что у общей двери: протухшее предложение
+    /// не исполняет никто, включая кнопку.
+    function test_TheButtonRefusesAfterTheProposalGoesStale() public {
+        _threeOverturnsOnDistinctDisputes(arbiter);
+        (, , uint256 proposedAt, , ) =
+            ArbiterAccountabilityFacet(address(diamond)).getRemovalProposal(arbiter);
+
+        vm.warp(proposedAt + ArbiterAccountabilityFacet(address(diamond)).getProposalTTL());
+        vm.prank(STRANGER);
+        vm.expectRevert(
+            abi.encodeWithSelector(ArbiterAccountabilityFacet.ProposalStale.selector, proposedAt)
+        );
+        ArbiterAccountabilityFacet(address(diamond)).executeChainRemoval(arbiter);
+    }
+
+    /// Перебить нечем: посторонний не исполняет ЧЕЛОВЕЧЕСКОЕ обвинение.
+    /// Условие владельца «главное чтобы её перебить не канало».
+    function test_StrangerCannotPressAHumanAccusation() public {
+        ArbiterAccountabilityFacet(address(diamond)).proposeRemoval(
+            arbiter, ArbiterAccountabilityFacet.Cause.Collusion, DIGEST,
+            unicode"трижды забирал споры одного контрагента и трижды решал в его пользу"
+        );
+        vm.warp(vm.getBlockTimestamp() + ArbiterAccountabilityFacet(address(diamond)).getRemovalDelay());
+
+        vm.prank(STRANGER);
+        vm.expectRevert(ArbiterAccountabilityFacet.NotAChainProposal.selector);
+        ArbiterAccountabilityFacet(address(diamond)).executeChainRemoval(arbiter);
+
+        assertTrue(
+            ArbiterRegistryFacet(address(diamond)).isRegisteredArbiter(arbiter),
+            unicode"человеческое обвинение исполняет держатель права, и только он"
+        );
+    }
+
+    /// ⚠️ ПОРЯДОК ДВУХ ПЕРВЫХ ОТКАЗОВ — НЕСУЩЕЕ СВОЙСТВО, а не оформление.
+    /// Предложение СВЕЖЕЕ и человеческое: если бы проверка «чья дверь» стояла
+    /// НИЖЕ часов, посторонний получил бы RemovalTooEarly(момент) — то есть
+    /// узнал бы, что против арбитра висит обвинение и когда оно созреет.
+    /// Ровно эту утечку задача 10 сторожила на proposeRemoval
+    /// (test_StrangerLearnsNothingAboutALiveProposal); переставьте две строки
+    /// в executeChainRemoval — и покраснеет здесь.
+    function test_TheButtonRefusesTheWrongDoorBeforeItMentionsTheClock() public {
+        ArbiterAccountabilityFacet(address(diamond)).proposeRemoval(
+            arbiter, ArbiterAccountabilityFacet.Cause.Collusion, DIGEST,
+            unicode"трижды забирал споры одного контрагента и трижды решал в его пользу"
+        );
+
+        // Часы ещё идут: до конца паузы далеко.
+        vm.prank(STRANGER);
+        vm.expectRevert(ArbiterAccountabilityFacet.NotAChainProposal.selector);
+        ArbiterAccountabilityFacet(address(diamond)).executeChainRemoval(arbiter);
+    }
+
+    /// Пустая запись отвечает «обвинения нет», а не «дверь не та»: посторонний
+    /// не должен по ярлыку ошибки отличать «против него ничего» от «против
+    /// него человеческое».
+    function test_TheButtonSaysNothingStandsWhenNothingStands() public {
+        vm.prank(STRANGER);
+        vm.expectRevert(ArbiterAccountabilityFacet.NoLiveProposal.selector);
+        ArbiterAccountabilityFacet(address(diamond)).executeChainRemoval(arbiter);
+    }
+
+    /// ⚠️ ЦЕПЬ МОЛЧА УСТУПАЕТ. `_recordArbiterMistake` приходит из
+    /// notifyArbiterTimeout, а ту Agreement исполняет внутри ПУСТОГО
+    /// try/catch: ревёрт был бы проглочен молча, и арбитр остался бы
+    /// ненаказанным без единого следа. Значит чужие часы не сбрасываются,
+    /// чужой обвинитель не затирается, и ничего не ревертит.
+    function test_ChainYieldsToALiveHumanProposalWithoutReverting() public {
+        ArbiterAccountabilityFacet(address(diamond)).proposeRemoval(
+            arbiter, ArbiterAccountabilityFacet.Cause.Collusion, DIGEST,
+            unicode"трижды забирал споры одного контрагента и трижды решал в его пользу"
+        );
+        (uint8 cause0, bytes32 digest0, uint256 before, address by0, ) =
+            ArbiterAccountabilityFacet(address(diamond)).getRemovalProposal(arbiter);
+
+        vm.warp(vm.getBlockTimestamp() + 1 hours);
+        _threeOverturnsOnDistinctDisputes(arbiter); // обязано не ревертить
+
+        (uint8 cause1, bytes32 digest1, uint256 afterTs, address by1, ) =
+            ArbiterAccountabilityFacet(address(diamond)).getRemovalProposal(arbiter);
+        assertEq(afterTs, before, unicode"человеческие часы не тронуты");
+        assertEq(by1, by0, unicode"человеческий обвинитель не тронут");
+        assertEq(cause1, cause0, unicode"и повод его же");
+        assertEq(digest1, digest0, unicode"и отпечаток его же");
+        assertTrue(
+            ArbiterAccountabilityFacet(address(diamond)).isSuspended(arbiter),
+            unicode"а приостановка всё равно легла: быстрый рычаг безусловен"
+        );
+        assertGe(
+            ArbiterAccountabilityFacet(address(diamond)).getArbiterMistakeStreak(arbiter), 3,
+            unicode"улика сохранена для следующей попытки — счётчик не обнулён"
+        );
+    }
+
+    /// Отзыв предложения цепи возвращает человека в строй ПОЛНОСТЬЮ: иначе
+    /// оправданный остаётся навсегда в одном перевороте от нового обвинения.
+    function test_WithdrawingTheChainAccusationClearsTheStreak() public {
+        ArbiterRegistryFacet(address(diamond)).setChiefArbiter(CHIEF);
+        _threeOverturnsOnDistinctDisputes(arbiter);
+
+        vm.prank(CHIEF);
+        ArbiterAccountabilityFacet(address(diamond)).withdrawProposal(arbiter);
+
+        assertEq(
+            ArbiterAccountabilityFacet(address(diamond)).getArbiterMistakeStreak(arbiter), 0,
+            unicode"один переворот не должен снова обвинять"
+        );
+        assertFalse(ArbiterAccountabilityFacet(address(diamond)).hasLiveProposal(arbiter));
+        assertTrue(
+            ArbiterRegistryFacet(address(diamond)).isRegisteredArbiter(arbiter),
+            unicode"он и не переставал быть арбитром"
+        );
+    }
+
+    /// Обратная сторона: отзыв ЧЕЛОВЕЧЕСКОГО обвинения счётчик НЕ трогает —
+    /// иначе пара «предложил-отозвал» отмывала бы настоящую серию ошибок.
+    function test_WithdrawingAHumanProposalLeavesTheStreakAlone() public {
+        _disputeAndOverturn(address(0x9B1), address(0x9B2));
+        _disputeAndOverturn(address(0x9B3), address(0x9B4));
+        assertEq(ArbiterAccountabilityFacet(address(diamond)).getArbiterMistakeStreak(arbiter), 2);
+
+        ArbiterAccountabilityFacet(address(diamond)).proposeRemoval(
+            arbiter, ArbiterAccountabilityFacet.Cause.Collusion, DIGEST,
+            unicode"трижды забирал споры одного контрагента и трижды решал в его пользу"
+        );
+        ArbiterAccountabilityFacet(address(diamond)).withdrawProposal(arbiter);
+
+        assertEq(
+            ArbiterAccountabilityFacet(address(diamond)).getArbiterMistakeStreak(arbiter), 2,
+            unicode"ошибки арбитра никуда не делись оттого, что обвинитель передумал"
+        );
+    }
+
+    /// Директор отзывает обвинение цепи — названо вслух и принято: он получает
+    /// возможность прикрыть своего, но только с именем в цепи. Ключевое здесь
+    /// то, что `by == address(0)` не отказывает ему по NotYourProposal.
+    function test_ChiefMayWithdrawTheChainAccusationHeDidNotLay() public {
+        ArbiterRegistryFacet(address(diamond)).setChiefArbiter(CHIEF);
+        _threeOverturnsOnDistinctDisputes(arbiter);
+
+        vm.expectEmit(true, true, false, false, address(diamond));
+        emit ArbiterAccountabilityFacet.RemovalProposalWithdrawn(arbiter, CHIEF);
+        vm.prank(CHIEF);
+        ArbiterAccountabilityFacet(address(diamond)).withdrawProposal(arbiter);
+    }
+
+    /// А посторонний — не отзывает. Ноль в `by` не означает «отзывай кто
+    /// хочет»: ветка требует владельца или директора.
+    function test_StrangerCannotWithdrawTheChainAccusation() public {
+        _threeOverturnsOnDistinctDisputes(arbiter);
+
+        vm.prank(STRANGER);
+        vm.expectRevert(ArbiterAccountabilityFacet.NotOwnerOrChief.selector);
+        ArbiterAccountabilityFacet(address(diamond)).withdrawProposal(arbiter);
+
+        assertTrue(ArbiterAccountabilityFacet(address(diamond)).hasLiveProposal(arbiter));
+    }
+
+    /// ⚠️ ХРАПОВИК: ПОСЛЕ ПЕРЕДАЧИ ПРАВА ТИХАЯ ДВЕРЬ ТОЖЕ ЗАКРЫТА.
+    /// Это довод, который решил дело: overturnVerdict стоит под onlyOwnerOrDAO,
+    /// а тот пускает владельца ВСЕГДА — значит до задачи 12 бывший владелец
+    /// снимал того же арбитра тремя переворотами, и храповик передачи,
+    /// ради которого строилась вся ветка, обходился за одну транзакцию.
+    function test_QuietDoorDoesNotSurviveHandover() public {
+        _handOverRemovalRight(address(0xDA0));
+        _threeOverturnsOnDistinctDisputes(arbiter);
+
+        assertTrue(
+            ArbiterRegistryFacet(address(diamond)).isRegisteredArbiter(arbiter),
+            unicode"без двери сноса нет"
+        );
+        assertTrue(
+            ArbiterAccountabilityFacet(address(diamond)).hasLiveProposal(arbiter),
+            unicode"обвинение цепи легло — оно ничьё и передачи не знает"
+        );
+    }
+
+    /// ...и оно исполняется — тем же посторонним, после паузы. Дверь не
+    /// заперта передачей: цепь предъявила сама, решать некому и нечего.
+    function test_AfterHandoverTheChainsAccusationStillRipens() public {
+        _handOverRemovalRight(address(0xDA0));
+        _threeOverturnsOnDistinctDisputes(arbiter);
+
+        vm.warp(vm.getBlockTimestamp() + ArbiterAccountabilityFacet(address(diamond)).getRemovalDelay());
+        vm.prank(STRANGER);
+        ArbiterAccountabilityFacet(address(diamond)).executeChainRemoval(arbiter);
+
+        assertFalse(ArbiterRegistryFacet(address(diamond)).isRegisteredArbiter(arbiter));
+    }
+
+    /// Путь таймаута кладёт ДРУГОЙ повод — Timeouts, не OverturnedVerdicts.
+    /// Второй сторож зеркала кодов: ожидаемое снова из чужого перечисления.
+    function test_TheTimeoutPathAccusesWithTimeouts() public {
+        _disputeAndOverturn(address(0x9C1), address(0x9C2));
+        _disputeAndOverturn(address(0x9C3), address(0x9C4));
+
+        address agr = _fundedDisputeClaimedBy(address(0x9C5), address(0x9C6));
+        vm.warp(vm.getBlockTimestamp() + 4 days + 1);
+        vm.prank(address(0x9C5));
+        Agreement(agr).triggerArbiterTimeout();
+
+        (uint8 cause, , , address by, bool live) =
+            ArbiterAccountabilityFacet(address(diamond)).getRemovalProposal(arbiter);
+        assertTrue(live, unicode"таймаут тоже обвиняет");
+        assertEq(by, address(0), unicode"и тоже ничьим именем");
+        assertEq(
+            cause, uint8(ArbiterAccountabilityFacet.Cause.Timeouts),
+            unicode"путь таймаута обязан лечь поводом Timeouts, а не переворотами"
+        );
+        assertTrue(
+            ArbiterRegistryFacet(address(diamond)).isRegisteredArbiter(arbiter),
+            unicode"и кресло тоже переживает — путь тут ни при чём"
+        );
+    }
+
+    /// Общий кусок для сцен таймаута: сделка доведена до забранного спора.
+    function _fundedDisputeClaimedBy(address cli, address exec) internal returns (address agr) {
+        usdc.mint(cli, 1_000_000 * 10 ** 6);
+        vm.prank(cli);
+        usdc.approve(address(diamond), 10 * 10 ** 6);
+        vm.prank(cli);
+        agr = FactoryFacet(address(diamond)).deployAgreement(cli, exec, arbiter, AMOUNT, DEADLINE, TERMS, 0);
+        vm.prank(cli);
+        usdc.approve(agr, AMOUNT);
+        vm.prank(cli);
+        Agreement(agr).fund();
+        vm.prank(exec);
+        Agreement(agr).activate();
+        vm.prank(cli);
+        Agreement(agr).raiseDispute();
+        _claimDisputeAs(agr, arbiter);
+    }
+
+    /// ⚠️ ЛОВУШКА 5: ОПРАВДАНИЕ КОЛЛЕГИЕЙ ГАСИТ ОБВИНЕНИЕ ЦЕПИ.
+    ///
+    /// Разобрано ревью, не предположение. Три ошибки → приостановка и
+    /// обвинение, счётчик 3. Коллегия оправдывает арбитра по одному из споров
+    /// (resolveAppeal поверх РУЧНОГО переворота переворачивает обратно к
+    /// вердикту самого арбитра) → задача 11 снимает единицу, 3 → 2. А
+    /// MISTAKE_THRESHOLD равен ДВУМ — значит обвинение осталось бы исполнимым,
+    /// и через 48 часов посторонний снял бы человека, которого коллегия
+    /// признала правым. Дверь при этом ничья: спросить не с кого.
+    function test_PanelVindicationQuenchesTheChainAccusation() public {
+        address v1 = address(0x7B1);
+        address v2 = address(0x7B2);
+        address v3 = address(0x7B3);
+        ArbiterRegistryFacet(address(diamond)).addArbiter(v1);
+        ArbiterRegistryFacet(address(diamond)).addArbiter(v2);
+        ArbiterRegistryFacet(address(diamond)).addArbiter(v3);
+
+        // Две ошибки по двум спорам, третья — по спору, который и обжалуют.
+        _disputeAndOverturn(address(0x9D1), address(0x9D2));
+        _disputeAndOverturn(address(0x9D3), address(0x9D4));
+        address agr = _disputeAndOverturn(address(0x9D5), address(0x9D6));
+
+        assertTrue(
+            ArbiterAccountabilityFacet(address(diamond)).hasLiveProposal(arbiter),
+            unicode"сетап: цепь обвинила"
+        );
+        assertTrue(ArbiterAccountabilityFacet(address(diamond)).isSuspended(arbiter));
+
+        // Проигравшая сторона обжалует РУЧНОЙ переворот. Коллегия голосует за
+        // переворот — и возвращает вердикт самого арбитра.
+        // Апеллирует ПРОИГРАВШАЯ сторона. _disputeAndOverturn подаёт вердикт
+        // в пользу клиента и переворачивает рукой в пользу исполнителя —
+        // значит проиграл клиент, и апелляция его.
+        usdc.mint(address(0x9D5), 100 * 10 ** 6);
+        vm.prank(address(0x9D5));
+        usdc.approve(address(diamond), 20 * 10 ** 6);
+        vm.prank(address(0x9D5));
+        ArbiterRegistryFacet(address(diamond)).raiseAppeal(agr);
+        vm.prank(v1);
+        ArbiterRegistryFacet(address(diamond)).voteOnAppeal(agr, true);
+        vm.prank(v2);
+        ArbiterRegistryFacet(address(diamond)).voteOnAppeal(agr, true);
+        vm.prank(v3);
+        ArbiterRegistryFacet(address(diamond)).voteOnAppeal(agr, false);
+
+        vm.expectEmit(true, true, false, false, address(diamond));
+        emit ArbiterRegistryFacet.ChainAccusationCleared(arbiter, agr);
+        ArbiterRegistryFacet(address(diamond)).resolveAppeal(agr);
+
+        assertFalse(
+            ArbiterAccountabilityFacet(address(diamond)).hasLiveProposal(arbiter),
+            unicode"обвинение цепи погашено — цепь забрала своё же слово"
+        );
+        assertEq(
+            ArbiterAccountabilityFacet(address(diamond)).getArbiterMistakeStreak(arbiter), 0,
+            unicode"и счётчик обнулён: иначе один переворот снова обвинял бы"
+        );
+        assertFalse(
+            ArbiterAccountabilityFacet(address(diamond)).isSuspended(arbiter),
+            unicode"и приостановка снята — оправданный не сидит взаперти"
+        );
+        assertTrue(ArbiterRegistryFacet(address(diamond)).isRegisteredArbiter(arbiter));
+
+        // И кнопку нажать больше нечем.
+        vm.warp(vm.getBlockTimestamp() + ArbiterAccountabilityFacet(address(diamond)).getRemovalDelay());
+        vm.prank(STRANGER);
+        vm.expectRevert(ArbiterAccountabilityFacet.NoLiveProposal.selector);
+        ArbiterAccountabilityFacet(address(diamond)).executeChainRemoval(arbiter);
+    }
+
+    /// Обратная половина той же ловушки: ЧЕЛОВЕЧЕСКОЕ обвинение коллегия не
+    /// гасит. Она сказала своё слово про один спор, а не про сговор, который
+    /// предъявил кто-то другой; иначе всякий обвинённый чистил бы запись
+    /// апелляцией по постороннему вердикту.
+    function test_PanelVindicationLeavesAHumanAccusationStanding() public {
+        address v1 = address(0x7C1);
+        address v2 = address(0x7C2);
+        address v3 = address(0x7C3);
+        ArbiterRegistryFacet(address(diamond)).addArbiter(v1);
+        ArbiterRegistryFacet(address(diamond)).addArbiter(v2);
+        ArbiterRegistryFacet(address(diamond)).addArbiter(v3);
+
+        address agr = _disputeAndOverturn(address(0x9E1), address(0x9E2));
+
+        ArbiterAccountabilityFacet(address(diamond)).proposeRemoval(
+            arbiter, ArbiterAccountabilityFacet.Cause.Collusion, DIGEST,
+            unicode"трижды забирал споры одного контрагента и трижды решал в его пользу"
+        );
+        (, , uint256 before, address by0, ) =
+            ArbiterAccountabilityFacet(address(diamond)).getRemovalProposal(arbiter);
+
+        usdc.mint(address(0x9E1), 100 * 10 ** 6);
+        vm.prank(address(0x9E1));
+        usdc.approve(address(diamond), 20 * 10 ** 6);
+        vm.prank(address(0x9E1));
+        ArbiterRegistryFacet(address(diamond)).raiseAppeal(agr);
+        vm.prank(v1);
+        ArbiterRegistryFacet(address(diamond)).voteOnAppeal(agr, true);
+        vm.prank(v2);
+        ArbiterRegistryFacet(address(diamond)).voteOnAppeal(agr, true);
+        vm.prank(v3);
+        ArbiterRegistryFacet(address(diamond)).voteOnAppeal(agr, false);
+        ArbiterRegistryFacet(address(diamond)).resolveAppeal(agr);
+
+        (, , uint256 afterTs, address by1, bool live) =
+            ArbiterAccountabilityFacet(address(diamond)).getRemovalProposal(arbiter);
+        assertTrue(live, unicode"обвинение человека живо");
+        assertEq(afterTs, before, unicode"часы его не тронуты");
+        assertEq(by1, by0, unicode"и обвинитель его");
+        assertEq(
+            ArbiterAccountabilityFacet(address(diamond)).getArbiterMistakeStreak(arbiter), 0,
+            unicode"единственная ошибка снята вычитанием задачи 11 — но это ВСЁ, что сделано"
+        );
+    }
+
+    /// Директор не глушит быстрый рычаг автоматического пути ОДНОЙ
+    /// транзакцией. До задачи 12 это держалось на `removedAt != 0`; снятие
+    /// уехало на двое суток вперёд, и различитель получил вторую половину —
+    /// «против него висит обвинение ЦЕПИ».
+    function test_ChiefCannotLiftTheChainSuspensionWhileTheAccusationStands() public {
+        ArbiterRegistryFacet(address(diamond)).setChiefArbiter(CHIEF);
+        _threeOverturnsOnDistinctDisputes(arbiter);
+
+        vm.prank(CHIEF);
+        vm.expectRevert(ArbiterAccountabilityFacet.RemovalSuspensionIsRemovalAuthorityOnly.selector);
+        ArbiterAccountabilityFacet(address(diamond)).liftSuspension(arbiter);
+
+        assertTrue(ArbiterAccountabilityFacet(address(diamond)).isSuspended(arbiter));
+    }
+
+    /// ...но и не заперт: отозвав обвинение своим именем, он снимает
+    /// приостановку обычным порядком. Две транзакции вместо одной молчаливой.
+    function test_ChiefLiftsTheSuspensionAfterWithdrawingTheAccusation() public {
+        ArbiterRegistryFacet(address(diamond)).setChiefArbiter(CHIEF);
+        _threeOverturnsOnDistinctDisputes(arbiter);
+
+        vm.prank(CHIEF);
+        ArbiterAccountabilityFacet(address(diamond)).withdrawProposal(arbiter);
+        vm.prank(CHIEF);
+        ArbiterAccountabilityFacet(address(diamond)).liftSuspension(arbiter);
+
+        assertFalse(ArbiterAccountabilityFacet(address(diamond)).isSuspended(arbiter));
+    }
+
+    /// ⚠️ РУЧНАЯ ДВЕРЬ ТОЖЕ ТРАТИТ УЛИКУ — новое поведение задачи 12, и без
+    /// этой сцены оно было бы изменено МОЛЧА (замер: снятие обнуления в
+    /// `_performRemoval` давало три красных, и все три на пути ЦЕПИ).
+    ///
+    /// Что чинится. `_requireProven` доказывает OverturnedVerdicts чтением
+    /// `arbiterMistakeStreak`, а прежде счётчик переживал ручной снос — это
+    /// стояло записанным в его же докстринге как известный дефект: владелец,
+    /// вернувший ошибочно снятого через addArbiter, возвращал его ВМЕСТЕ со
+    /// счётчиком на пороге, и тот же самый признак оправдывал снос повторно,
+    /// без единой новой ошибки. Теперь обе двери обнуляют его одной строкой
+    /// общего тела сноса.
+    function test_RemovalForCauseSpendsTheEvidenceItWasBuiltOn() public {
+        _disputeAndOverturn(address(0x9F1), address(0x9F2));
+        _disputeAndOverturn(address(0x9F3), address(0x9F4));
+        assertEq(
+            ArbiterAccountabilityFacet(address(diamond)).getArbiterMistakeStreak(arbiter), 2,
+            unicode"сетап: два реальных переворота — ровно порог РУЧНОГО сноса"
+        );
+
+        _proposeAndWait(arbiter, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0));
+        ArbiterAccountabilityFacet(address(diamond)).removeArbiterForCause(
+            arbiter, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0), address(0), ""
+        );
+
+        assertEq(
+            ArbiterAccountabilityFacet(address(diamond)).getArbiterMistakeStreak(arbiter), 0,
+            unicode"улика потрачена тем сносом, который на ней построен"
+        );
+
+        // И вторая половина, ради которой всё: возвращённый владельцем больше
+        // НЕ стоит в одном шаге от повторного сноса по ТОЙ ЖЕ улике. Отказ
+        // приходит на исполнении, а не на предложении: доказывает повод
+        // `_requireProven`, и зовут её из removeArbiterForCause — предложение
+        // проверяет только форму (отпечаток и слова для незаверяемых кодов).
+        ArbiterRegistryFacet(address(diamond)).addArbiter(arbiter);
+        _proposeAndWait(arbiter, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0));
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                ArbiterAccountabilityFacet.CauseNotProven.selector,
+                uint8(ArbiterAccountabilityFacet.Cause.OverturnedVerdicts)
+            )
+        );
+        ArbiterAccountabilityFacet(address(diamond)).removeArbiterForCause(
+            arbiter, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0), address(0), ""
+        );
+    }
+
+    // ============================================================
+    //  КРУГ ПРАВОК 1 РЕВЬЮ ЗАДАЧИ 12 (18 августа 2026)
+    //
+    //  Четыре находки, и все четыре — про то, что построенное НЕ СТОРОЖИЛОСЬ:
+    //  событие сноса (снять emit — 0 красных из 924), молчаливое снятие
+    //  приостановки, протухшее обвинение, запирающее навсегда, и ошибка в
+    //  предложенном коде отзыва, которую никто бы не заметил.
+    // ============================================================
+
+    /// ⚠️ СОБЫТИЕ СНОСА НА НОВОМ МЕСТЕ И С НОВЫМИ ПОЛЯМИ. Замер ревью: снять
+    /// `emit ArbiterDemoted` из `executeChainRemoval` целиком — НОЛЬ красных из
+    /// 924. Событие переехало на другой момент и сменило все три поля, и ни
+    /// одна сцена этого не видела.
+    ///
+    /// Проверяются все три:
+    ///   • `by == address(0)` — нажавшего не называем, обвинитель здесь цепь;
+    ///   • `path` — СОХРАНЁННЫЙ `chainProposalPath`, ради которого заведено
+    ///     поле хранилища (в момент сноса путь взять больше неоткуда);
+    ///   • `agreement == address(0)` — сделки, «на которой сняли», к этому
+    ///     моменту нет: повод — серия. Ту, что перевесила, назвал
+    ///     `RemovalProposedByChain` двумя сутками раньше.
+    function test_ChainRemovalAnnouncesTheDemotionNamingNobody() public {
+        _threeOverturnsOnDistinctDisputes(arbiter);
+        vm.warp(vm.getBlockTimestamp() + ArbiterAccountabilityFacet(address(diamond)).getRemovalDelay());
+
+        vm.expectEmit(true, true, true, true, address(diamond));
+        emit ArbiterRegistryFacet.ArbiterDemoted(
+            arbiter,
+            address(0),
+            ArbiterRegistryFacet.DemotionPath.OwnerOverturn,
+            address(0)
+        );
+        vm.prank(STRANGER);
+        ArbiterAccountabilityFacet(address(diamond)).executeChainRemoval(arbiter);
+    }
+
+    /// Вторая половина того же замка, и она про ОДНО поле: `path` обязан
+    /// приезжать из хранилища, а не быть прибитым к одному значению. Сцена
+    /// отличается от соседней ровно путём — таймаут вместо переворота, — и
+    /// прибитый `OwnerOverturn` покраснеет здесь, оставаясь зелёным там.
+    function test_TheSavedPathSurvivesTheTwoDaysToTheRemoval() public {
+        _disputeAndOverturn(address(0xAB1), address(0xAB2));
+        _disputeAndOverturn(address(0xAB3), address(0xAB4));
+
+        address agr = _fundedDisputeClaimedBy(address(0xAB5), address(0xAB6));
+        vm.warp(vm.getBlockTimestamp() + 4 days + 1);
+        vm.prank(address(0xAB5));
+        Agreement(agr).triggerArbiterTimeout();
+
+        vm.warp(vm.getBlockTimestamp() + ArbiterAccountabilityFacet(address(diamond)).getRemovalDelay());
+
+        vm.expectEmit(true, true, true, true, address(diamond));
+        emit ArbiterRegistryFacet.ArbiterDemoted(
+            arbiter,
+            address(0),
+            ArbiterRegistryFacet.DemotionPath.AgreementTimeout,
+            address(0)
+        );
+        vm.prank(STRANGER);
+        ArbiterAccountabilityFacet(address(diamond)).executeChainRemoval(arbiter);
+    }
+
+    /// ⚠️ СНЯТИЕ ПРИОСТАНОВКИ ОБЪЯВЛЯЕТСЯ. Ветка оправдания стирала
+    /// `suspendedUntil` молча, и в ленте приостановка выглядела никогда не
+    /// кончившейся: все остальные её концы видны — `liftSuspension` шлёт
+    /// событие, а истечение 72 часов читается по сроку, который лежал в логе с
+    /// момента наложения.
+    ///
+    /// `by` нулевой: решила КОЛЛЕГИЯ, руки здесь нет.
+    function test_VindicationAnnouncesTheLiftedSuspension() public {
+        address v1 = address(0xAC1);
+        address v2 = address(0xAC2);
+        address v3 = address(0xAC3);
+        ArbiterRegistryFacet(address(diamond)).addArbiter(v1);
+        ArbiterRegistryFacet(address(diamond)).addArbiter(v2);
+        ArbiterRegistryFacet(address(diamond)).addArbiter(v3);
+
+        _disputeAndOverturn(address(0xAD1), address(0xAD2));
+        _disputeAndOverturn(address(0xAD3), address(0xAD4));
+        address agr = _disputeAndOverturn(address(0xAD5), address(0xAD6));
+        assertTrue(
+            ArbiterAccountabilityFacet(address(diamond)).isSuspended(arbiter),
+            unicode"сетап: приостановка стоит"
+        );
+
+        usdc.mint(address(0xAD5), 100 * 10 ** 6);
+        vm.prank(address(0xAD5));
+        usdc.approve(address(diamond), 20 * 10 ** 6);
+        vm.prank(address(0xAD5));
+        ArbiterRegistryFacet(address(diamond)).raiseAppeal(agr);
+        vm.prank(v1);
+        ArbiterRegistryFacet(address(diamond)).voteOnAppeal(agr, true);
+        vm.prank(v2);
+        ArbiterRegistryFacet(address(diamond)).voteOnAppeal(agr, true);
+        vm.prank(v3);
+        ArbiterRegistryFacet(address(diamond)).voteOnAppeal(agr, false);
+
+        vm.expectEmit(true, true, false, true, address(diamond));
+        emit ArbiterAccountabilityFacet.ArbiterSuspensionLifted(arbiter, address(0));
+        ArbiterRegistryFacet(address(diamond)).resolveAppeal(agr);
+
+        assertFalse(ArbiterAccountabilityFacet(address(diamond)).isSuspended(arbiter));
+    }
+
+    /// ⚠️ C-2: ПРОТУХШЕЕ ОБВИНЕНИЕ НЕ ЗАПИРАЕТ НИЧЕГО.
+    ///
+    /// Предикат «против него висит обвинение цепи» был единственным из четырёх
+    /// в фасете, который не смотрел на `PROPOSAL_TTL`. Цена: обвинение, которое
+    /// никто не исполнил, протухает за 14 суток и висеть перестаёт — но
+    /// директор навсегда терял право снять с этого человека ОБЫЧНУЮ
+    /// приостановку, наложенную им же и по совершенно другому поводу.
+    function test_AStaleChainAccusationLocksNothing() public {
+        ArbiterRegistryFacet(address(diamond)).setChiefArbiter(CHIEF);
+        _threeOverturnsOnDistinctDisputes(arbiter);
+
+        // Обвинение протухло само, кнопку никто не нажал.
+        vm.warp(vm.getBlockTimestamp() + ArbiterAccountabilityFacet(address(diamond)).getProposalTTL());
+        assertFalse(
+            ArbiterAccountabilityFacet(address(diamond)).hasLiveProposal(arbiter),
+            unicode"сетап: обвинение больше не живо"
+        );
+        assertFalse(
+            ArbiterAccountabilityFacet(address(diamond)).isSuspended(arbiter),
+            unicode"сетап: и приостановка автоматики давно истекла сама"
+        );
+
+        // Обычная приостановка, по своему поводу, рукой директора.
+        vm.prank(CHIEF);
+        ArbiterAccountabilityFacet(address(diamond)).suspendArbiter(arbiter);
+        assertTrue(ArbiterAccountabilityFacet(address(diamond)).isSuspended(arbiter));
+
+        // И он же обязан суметь её снять: это его работа, лёгкая мера.
+        vm.prank(CHIEF);
+        ArbiterAccountabilityFacet(address(diamond)).liftSuspension(arbiter);
+        assertFalse(
+            ArbiterAccountabilityFacet(address(diamond)).isSuspended(arbiter),
+            unicode"мёртвая запись не вправе отнимать у директора его обычную дверь"
+        );
+    }
+
+    /// ⚠️ ЗАМОК НА ОШИБКУ, КОТОРУЮ ЧУТЬ НЕ ВЗЯЛИ ИЗ ЗАДАНИЯ. Предложенное
+    /// условие отзыва было `p.by != address(0) && msg.sender != p.by` — и у
+    /// ПУСТОЙ записи `by` тоже нулевой, так что директор против человека, на
+    /// которого никто ничего не клал, ПРОШЁЛ бы вместо отказа. Замер ревью:
+    /// подставить ту строку дословно — НОЛЬ красных из 924.
+    ///
+    /// Отказ здесь не про роль (её директор прошёл), а про то, что отзывать
+    /// нечего и запись не его. Ветка отзыва обвинения цепи требует
+    /// `proposedAt != 0` именно поэтому.
+    function test_ChiefCannotWithdrawAgainstAnEmptyRecord() public {
+        ArbiterRegistryFacet(address(diamond)).setChiefArbiter(CHIEF);
+        assertFalse(
+            ArbiterAccountabilityFacet(address(diamond)).hasLiveProposal(arbiter),
+            unicode"сетап: против него ничего не лежит"
+        );
+
+        vm.prank(CHIEF);
+        vm.expectRevert(ArbiterAccountabilityFacet.NotYourProposal.selector);
+        ArbiterAccountabilityFacet(address(diamond)).withdrawProposal(arbiter);
+    }
+
+    /// Обратная половина: пустая запись не отказывает ДЕРЖАТЕЛЮ ПРАВА — он
+    /// проходит выше по ветке и тихо ничего не делает, без события в ленте
+    /// (Minor 3 круга правок 1 задачи 7: пустой отзыв читался бы как «против
+    /// него что-то было»).
+    function test_AuthorityWithdrawingNothingIsSilentNotRefused() public {
+        vm.recordLogs();
+        ArbiterAccountabilityFacet(address(diamond)).withdrawProposal(arbiter);
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        for (uint256 i = 0; i < logs.length; i++) {
+            assertTrue(
+                logs[i].topics[0] != ArbiterAccountabilityFacet.RemovalProposalWithdrawn.selector,
+                unicode"пустой отзыв не смеет оставлять в ленте след"
+            );
+        }
+    }
+
+    // ============================================================
+    //  C-1: ОБВИНЕНИЕ ОТМЕНЯЕТСЯ ДОКАЗАТЕЛЬСТВОМ ОШИБКИ, А НЕ ХОРОШЕЙ
+    //  РАБОТОЙ ПОСЛЕ (решение владельца, 18 августа 2026)
+    //
+    //  Кнопка спрашивала счётчик ЗАНОВО, а `finalizeVerdict` его обнуляет на
+    //  чистом вердикте. Значит арбитр, против которого цепь уже завела дело,
+    //  отсиживал приостановку, брал любой спор, доводил его чисто — и кнопка
+    //  отвечала CauseNotProven. Дело при этом не гасло: висело 14 суток, запирая
+    //  резигнацию. Не снят и не свободен — худшее из двух.
+    //
+    //  Стало: запись, которую цепь положила, И ЕСТЬ доказательство. Она сделана
+    //  в момент, когда факты случились. Отменяют её ровно четыре вещи, и обе
+    //  сцены ниже — про границу между ними.
+    // ============================================================
+
+    /// Первая: хорошая работа ПОСЛЕ обвинения его не отменяет.
+    function test_CleanWorkAfterTheChargeDoesNotCancelIt() public {
+        _threeOverturnsOnDistinctDisputes(arbiter);
+        assertTrue(ArbiterAccountabilityFacet(address(diamond)).hasLiveProposal(arbiter));
+
+        // Приостановка истекает сама — 72 часа. Обвинение живо: у него 14 суток.
+        vm.warp(vm.getBlockTimestamp() + ArbiterAccountabilityFacet(address(diamond)).getSuspensionWindow());
+        assertFalse(ArbiterAccountabilityFacet(address(diamond)).isSuspended(arbiter));
+
+        // И он берёт спор и доводит его ЧИСТО. finalizeVerdict обнуляет счётчик
+        // судейских ошибок — тот самый, которым доказывался повод.
+        address agr = _disputeAndSubmit(address(0xB01), address(0xB02));
+        vm.warp(vm.getBlockTimestamp() + 24 hours);
+        ArbiterRegistryFacet(address(diamond)).finalizeVerdict(agr);
+        assertEq(
+            ArbiterAccountabilityFacet(address(diamond)).getArbiterMistakeStreak(arbiter), 0,
+            unicode"сетап: чистый вердикт обнулил счётчик — прежняя улика больше не читается"
+        );
+
+        // Кнопка обязана сработать всё равно: доказательством было ПРЕДЛОЖЕНИЕ,
+        // записанное цепью тогда, а не состояние счётчика сегодня.
+        vm.prank(STRANGER);
+        ArbiterAccountabilityFacet(address(diamond)).executeChainRemoval(arbiter);
+
+        assertFalse(
+            ArbiterRegistryFacet(address(diamond)).isRegisteredArbiter(arbiter),
+            unicode"сделал — отвечай: хорошая работа после не отменяет обвинения"
+        );
+    }
+
+    /// Вторая, и она важнее первой: правка не должна была превратить «дело не
+    /// истекает само» в «дело не отменить ничем». Оправдание коллегией гасит
+    /// обвинение целиком, и нажимать после этого нечего.
+    ///
+    /// Отличается от test_PanelVindicationQuenchesTheChainAccusation тем, что
+    /// проверяет не состояние, а ПОСЛЕДСТВИЕ для кнопки после того, как
+    /// перепроверка повода из неё убрана: если бы гашение сломалось, кнопка
+    /// теперь сработала бы на оправданном человеке молча.
+    function test_ThePanelStillDisarmsTheButtonAfterTheProofCheckIsGone() public {
+        address v1 = address(0xB11);
+        address v2 = address(0xB12);
+        address v3 = address(0xB13);
+        ArbiterRegistryFacet(address(diamond)).addArbiter(v1);
+        ArbiterRegistryFacet(address(diamond)).addArbiter(v2);
+        ArbiterRegistryFacet(address(diamond)).addArbiter(v3);
+
+        _disputeAndOverturn(address(0xB21), address(0xB22));
+        _disputeAndOverturn(address(0xB23), address(0xB24));
+        address agr = _disputeAndOverturn(address(0xB25), address(0xB26));
+        assertTrue(ArbiterAccountabilityFacet(address(diamond)).hasLiveProposal(arbiter));
+
+        usdc.mint(address(0xB25), 100 * 10 ** 6);
+        vm.prank(address(0xB25));
+        usdc.approve(address(diamond), 20 * 10 ** 6);
+        vm.prank(address(0xB25));
+        ArbiterRegistryFacet(address(diamond)).raiseAppeal(agr);
+        vm.prank(v1);
+        ArbiterRegistryFacet(address(diamond)).voteOnAppeal(agr, true);
+        vm.prank(v2);
+        ArbiterRegistryFacet(address(diamond)).voteOnAppeal(agr, true);
+        vm.prank(v3);
+        ArbiterRegistryFacet(address(diamond)).voteOnAppeal(agr, false);
+        ArbiterRegistryFacet(address(diamond)).resolveAppeal(agr);
+
+        vm.warp(vm.getBlockTimestamp() + ArbiterAccountabilityFacet(address(diamond)).getRemovalDelay());
+        vm.prank(STRANGER);
+        vm.expectRevert(ArbiterAccountabilityFacet.NoLiveProposal.selector);
+        ArbiterAccountabilityFacet(address(diamond)).executeChainRemoval(arbiter);
+
+        assertTrue(
+            ArbiterRegistryFacet(address(diamond)).isRegisteredArbiter(arbiter),
+            unicode"коллегия сказала «прав» — и кнопки против него больше нет"
+        );
+    }
+
+    /// И третья граница того же решения: отзыв владельцем/директором тоже
+    /// обезоруживает кнопку. Вместе с протуханием и исполнением это все четыре
+    /// способа погасить обвинение, перечисленные в докстринге кнопки.
+    function test_WithdrawalDisarmsTheButtonToo() public {
+        ArbiterRegistryFacet(address(diamond)).setChiefArbiter(CHIEF);
+        _threeOverturnsOnDistinctDisputes(arbiter);
+
+        vm.prank(CHIEF);
+        ArbiterAccountabilityFacet(address(diamond)).withdrawProposal(arbiter);
+
+        vm.warp(vm.getBlockTimestamp() + ArbiterAccountabilityFacet(address(diamond)).getRemovalDelay());
+        vm.prank(STRANGER);
+        vm.expectRevert(ArbiterAccountabilityFacet.NoLiveProposal.selector);
+        ArbiterAccountabilityFacet(address(diamond)).executeChainRemoval(arbiter);
+    }
+
+    // ============================================================
+    //  КРУГ ПРАВОК 2 (18 августа 2026)
+    //
+    //  Пятый выход и мёртвое обвинение. Оба найдены пробой на живом даймонде,
+    //  оба стирали то, ради чего в задаче потрачены поля хранилища.
+    // ============================================================
+
+    /// ⚠️ ПЯТЫЙ ВЫХОД: держатель права исполнял обвинение ЦЕПИ своей дверью.
+    /// `removeArbiterForCause` читала запись и на `by` не смотрела вовсе —
+    /// обратной защиты к `NotAChainProposal` не было. Снос проходил, и вечная
+    /// запись МЕНЯЛА ПРОИСХОЖДЕНИЕ: `lastRemovalCause` 253 («цепь, по
+    /// переворотам») превращался в 1 («человек, по поводу»), а в ленте вместо
+    /// `ArbiterDemoted(by = 0)` вставал `ArbiterRemovedForCause(by = владелец)`.
+    ///
+    /// Два поля хранилища — `chainProposalPath` и `lastRemovalCause` — заведены
+    /// ровно ради этого различия, и один вызов его стирал.
+    function test_TheAuthorityCannotExecuteTheChainsAccusationHimself() public {
+        _threeOverturnsOnDistinctDisputes(arbiter);
+        vm.warp(vm.getBlockTimestamp() + ArbiterAccountabilityFacet(address(diamond)).getRemovalDelay());
+
+        vm.expectRevert(ArbiterAccountabilityFacet.ChainProposalNeedsTheChainDoor.selector);
+        ArbiterAccountabilityFacet(address(diamond)).removeArbiterForCause(
+            arbiter, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0), address(0), ""
+        );
+
+        assertTrue(
+            ArbiterRegistryFacet(address(diamond)).isRegisteredArbiter(arbiter),
+            unicode"и за отказом ничего не произошло"
+        );
+
+        // Ничего не потеряно: кнопку цепи он может нажать сам, как и любой
+        // другой, — и тогда запись скажет правду о происхождении.
+        ArbiterAccountabilityFacet(address(diamond)).executeChainRemoval(arbiter);
+        (, , , , , , , , , , , , uint8 cause) =
+            ArbiterAccountabilityFacet(address(diamond)).getArbiterStanding(arbiter);
+        assertEq(cause, AUTO_OVERTURN, unicode"происхождение сохранено: сняла ЦЕПЬ, а не он");
+    }
+
+    /// Обратная сторона той же пары: ЧЕЛОВЕЧЕСКОЕ обвинение по-прежнему идёт
+    /// своей дверью и никакой новой проверкой не задето.
+    function test_TheAuthorityStillExecutesAHumanAccusation() public {
+        _proposeAndWait(arbiter, ArbiterAccountabilityFacet.Cause.Collusion, DIGEST);
+        ArbiterAccountabilityFacet(address(diamond)).removeArbiterForCause(
+            arbiter, ArbiterAccountabilityFacet.Cause.Collusion, DIGEST, address(0),
+            unicode"трижды забирал споры одного контрагента и трижды решал в его пользу"
+        );
+        assertFalse(ArbiterRegistryFacet(address(diamond)).isRegisteredArbiter(arbiter));
+    }
+
+    /// ⚠️ МЁРТВОЕ ОБВИНЕНИЕ НИЧЕГО НЕ ГАСИТ. Ветка оправдания смотрела на
+    /// `proposedAt != 0` без `PROPOSAL_TTL` — тот же дефект, что C-2, одной
+    /// строкой ниже. Цена: обвинение, протухшее две недели назад и исполнимое
+    /// никем, стирало счётчик ЦЕЛИКОМ вопреки правилу «снимается ровно одна
+    /// ошибка» семью строками выше, сносило саму запись и слало
+    /// `ChainAccusationCleared` про давно умершее.
+    ///
+    /// Сцена строится так, чтобы мёртвая запись ОСТАЛАСЬ мёртвой и её никто не
+    /// перекрыл живой: после протухания счётчик сбрасывается чистым вердиктом,
+    /// и следующие две ошибки до порога автоматики не доходят.
+    function test_ADeadChainAccusationDoesNotSwallowTheWholeStreak() public {
+        address v1 = address(0xC01);
+        address v2 = address(0xC02);
+        address v3 = address(0xC03);
+        ArbiterRegistryFacet(address(diamond)).addArbiter(v1);
+        ArbiterRegistryFacet(address(diamond)).addArbiter(v2);
+        ArbiterRegistryFacet(address(diamond)).addArbiter(v3);
+
+        _threeOverturnsOnDistinctDisputes(arbiter);
+        (, , uint256 deadAt, , ) =
+            ArbiterAccountabilityFacet(address(diamond)).getRemovalProposal(arbiter);
+        assertGt(deadAt, 0, unicode"сетап: обвинение цепи положено");
+
+        // Никто не нажал — обвинение умерло от старости, но ЗАПИСЬ ОСТАЛАСЬ:
+        // протухшее не стирает само себя.
+        vm.warp(vm.getBlockTimestamp() + ArbiterAccountabilityFacet(address(diamond)).getProposalTTL());
+        assertFalse(ArbiterAccountabilityFacet(address(diamond)).hasLiveProposal(arbiter));
+
+        // Чистый вердикт обнуляет серию — теперь до порога автоматики далеко,
+        // и новое обвинение цепи не ляжет поверх мёртвого.
+        address clean = _disputeAndSubmit(address(0xC21), address(0xC22));
+        vm.warp(vm.getBlockTimestamp() + 24 hours);
+        ArbiterRegistryFacet(address(diamond)).finalizeVerdict(clean);
+        assertEq(ArbiterAccountabilityFacet(address(diamond)).getArbiterMistakeStreak(arbiter), 0);
+
+        // Две ручные ошибки: серия равна двум, порог автоматики не достигнут.
+        _disputeAndOverturn(address(0xC31), address(0xC32));
+        address agr = _disputeAndOverturn(address(0xC33), address(0xC34));
+        assertEq(
+            ArbiterAccountabilityFacet(address(diamond)).getArbiterMistakeStreak(arbiter), 2,
+            unicode"сетап: две ошибки, обвинения цепи нового нет"
+        );
+        assertFalse(ArbiterAccountabilityFacet(address(diamond)).hasLiveProposal(arbiter));
+
+        // Коллегия оправдывает по второй — снимается РОВНО ОДНА.
+        usdc.mint(address(0xC33), 100 * 10 ** 6);
+        vm.prank(address(0xC33));
+        usdc.approve(address(diamond), 20 * 10 ** 6);
+        vm.prank(address(0xC33));
+        ArbiterRegistryFacet(address(diamond)).raiseAppeal(agr);
+        vm.prank(v1);
+        ArbiterRegistryFacet(address(diamond)).voteOnAppeal(agr, true);
+        vm.prank(v2);
+        ArbiterRegistryFacet(address(diamond)).voteOnAppeal(agr, true);
+        vm.prank(v3);
+        ArbiterRegistryFacet(address(diamond)).voteOnAppeal(agr, false);
+        ArbiterRegistryFacet(address(diamond)).resolveAppeal(agr);
+
+        assertEq(
+            ArbiterAccountabilityFacet(address(diamond)).getArbiterMistakeStreak(arbiter), 1,
+            unicode"снимается РОВНО ОДНА ошибка: мёртвая запись гасить ничего не вправе"
+        );
+
+        (, , uint256 stillDeadAt, , ) =
+            ArbiterAccountabilityFacet(address(diamond)).getRemovalProposal(arbiter);
+        assertEq(
+            stillDeadAt, deadAt,
+            unicode"и самой мёртвой записи оправдание не касается — гасить нечего"
+        );
+    }
+
+    // ============================================================
+    //  КРУГ ПРАВОК 4 (19 августа 2026): ХРАПОВИК ДОХОДИТ ДО ДВЕРИ ОТЗЫВА
+    //
+    //  Круг 3 написал в докстринге, что после передачи отзывать может только
+    //  преемник. Кодом это не держалось: `_requireOwnerOrChief` гейтит
+    //  ДИРЕКТОРА, а владельца пропускает ВСЕГДА, и ветка `chainLaid` до
+    //  `NotYourProposal` не доходит. То есть бывший владелец бесконечно гасил
+    //  автоматические обвинения против любого арбитра — ровно тот остаток
+    //  власти, ради устранения которого строился храповик, да ещё и
+    //  несимметрично: директор эту дверь при активном ДАО уже терял.
+    //
+    //  Решение владельца — чинить кодом. Форма взята у proposeRemoval.
+    // ============================================================
+
+    /// ⚠️ ПРЯМАЯ: после передачи бывший владелец обвинение цепи НЕ гасит.
+    function test_OwnerCannotWithdrawTheChainAccusationAfterHandover() public {
+        address dao = address(0xDA0);
+        ArbiterRegistryFacet(address(diamond)).setChiefArbiter(CHIEF);
+        _threeOverturnsOnDistinctDisputes(arbiter);
+        _handOverRemovalRight(dao);
+
+        vm.expectRevert(ArbiterAccountabilityFacet.RemovalHandedOver.selector);
+        ArbiterAccountabilityFacet(address(diamond)).withdrawProposal(arbiter);
+
+        // И директор — тоже нет: после передачи дверь принадлежит одному.
+        vm.prank(CHIEF);
+        vm.expectRevert(ArbiterAccountabilityFacet.RemovalHandedOver.selector);
+        ArbiterAccountabilityFacet(address(diamond)).withdrawProposal(arbiter);
+
+        assertTrue(
+            ArbiterAccountabilityFacet(address(diamond)).hasLiveProposal(arbiter),
+            unicode"обвинение цепи на месте — гасить его больше некому, кроме преемника"
+        );
+
+        // А преемник — да, и это не дверь без открывающего.
+        vm.prank(dao);
+        ArbiterAccountabilityFacet(address(diamond)).withdrawProposal(arbiter);
+        assertFalse(ArbiterAccountabilityFacet(address(diamond)).hasLiveProposal(arbiter));
+    }
+
+    /// ⚠️ ВСТРЕЧНАЯ: ДО передачи ничего не изменилось. Без неё правка могла бы
+    /// чинить храповик, ломая сегодняшний день, — а сегодня передачи нет, и
+    /// гасить подтасованные перевороты обязаны мочь оба.
+    function test_BeforeHandoverOwnerAndChiefWithdrawAsBefore() public {
+        ArbiterRegistryFacet(address(diamond)).setChiefArbiter(CHIEF);
+
+        // Владелец.
+        _threeOverturnsOnDistinctDisputes(arbiter);
+        ArbiterAccountabilityFacet(address(diamond)).withdrawProposal(arbiter);
+        assertFalse(
+            ArbiterAccountabilityFacet(address(diamond)).hasLiveProposal(arbiter),
+            unicode"владелец до передачи гасит, как и гасил"
+        );
+
+        // Директор, на свежем обвинении против ТОГО ЖЕ арбитра. Повод
+        // Collusion — цепь его не проверяет, счётчик судейских ошибок к нему
+        // отношения не имеет, и второй арбитр сцене не нужен.
+        vm.prank(CHIEF);
+        ArbiterAccountabilityFacet(address(diamond)).proposeRemoval(
+            arbiter, ArbiterAccountabilityFacet.Cause.Collusion, DIGEST,
+            unicode"трижды забирал споры одного контрагента и трижды решал в его пользу"
+        );
+        vm.prank(CHIEF);
+        ArbiterAccountabilityFacet(address(diamond)).withdrawProposal(arbiter);
+        assertFalse(
+            ArbiterAccountabilityFacet(address(diamond)).hasLiveProposal(arbiter),
+            unicode"директор до передачи отзывает своё, как и отзывал"
+        );
+    }
+
+    /// ⚠️ ЧТО ОСТАЁТСЯ У ВЛАДЕЛЬЦА ПОСЛЕ ПЕРЕДАЧИ — сцена заведена кругом
+    /// правок 5, потому что докстринг `_requireOwnerOrChief` это ЧИСЛОМ
+    /// утверждает, а сторожа у числа не было ни одного. Счёт менялся уже
+    /// дважды (четыре → три уборкой 7а, три → два кругом правок 4), и оба раза
+    /// молча.
+    ///
+    /// Сегодня из четырёх дверей, ходивших под `onlyOwnerOrChief`, владелец
+    /// после передачи сохраняет ДВЕ, и обе лёгкие:
+    ///   • `suspendArbiter` — обратима, протухает сама;
+    ///   • ЛЁГКАЯ ветка `liftSuspension` — снять обычную приостановку.
+    /// И теряет две тяжёлые: `proposeRemoval` и `withdrawProposal`, обе через
+    /// `RemovalHandedOver`.
+    function test_AfterHandoverTheOwnerKeepsExactlyTheTwoLightDoors() public {
+        address dao = address(0xDA1);
+        address subject = address(0xD21);
+        ArbiterRegistryFacet(address(diamond)).addArbiter(subject);
+        _handOverRemovalRight(dao);
+
+        // ── Сохраняет: приостановить ──
+        ArbiterAccountabilityFacet(address(diamond)).suspendArbiter(subject);
+        assertTrue(
+            ArbiterAccountabilityFacet(address(diamond)).isSuspended(subject),
+            unicode"лёгкая мера остаётся у владельца и после передачи"
+        );
+
+        // ── Сохраняет: снять ОБЫЧНУЮ приостановку (сноса на человеке нет,
+        //    обвинения цепи тоже) ──
+        ArbiterAccountabilityFacet(address(diamond)).liftSuspension(subject);
+        assertFalse(
+            ArbiterAccountabilityFacet(address(diamond)).isSuspended(subject),
+            unicode"и снять её тоже — это его работа, она не про снос"
+        );
+
+        // ── Теряет: предложить снос ──
+        vm.expectRevert(ArbiterAccountabilityFacet.RemovalHandedOver.selector);
+        ArbiterAccountabilityFacet(address(diamond)).proposeRemoval(
+            subject, ArbiterAccountabilityFacet.Cause.Collusion, DIGEST,
+            unicode"трижды забирал споры одного контрагента и трижды решал в его пользу"
+        );
+
+        // ── Теряет: отозвать (круг правок 4) ──
+        vm.prank(dao);
+        ArbiterAccountabilityFacet(address(diamond)).proposeRemoval(
+            subject, ArbiterAccountabilityFacet.Cause.Collusion, DIGEST,
+            unicode"трижды забирал споры одного контрагента и трижды решал в его пользу"
+        );
+        vm.expectRevert(ArbiterAccountabilityFacet.RemovalHandedOver.selector);
+        ArbiterAccountabilityFacet(address(diamond)).withdrawProposal(subject);
+
+        assertTrue(
+            ArbiterAccountabilityFacet(address(diamond)).hasLiveProposal(subject),
+            unicode"и запись преемника его переживает"
+        );
+
+        // ── А ЧТО У ПРЕЕМНИКА: он отзывает своё и чужое ──
+        vm.prank(dao);
+        ArbiterAccountabilityFacet(address(diamond)).withdrawProposal(subject);
+        assertFalse(ArbiterAccountabilityFacet(address(diamond)).hasLiveProposal(subject));
+
+        // ── ⚠️ И ЧЕГО У НЕГО НЕТ, ради пункта 70 списка долгов: снять
+        //    ОБЫЧНУЮ приостановку он не может. Лёгкая ветка liftSuspension
+        //    ходит под _requireOwnerOrChief, а тот при активной ДАО не видит
+        //    ни директора, ни самого управления — только владельца.
+        ArbiterAccountabilityFacet(address(diamond)).suspendArbiter(subject);
+        vm.prank(dao);
+        vm.expectRevert(ArbiterAccountabilityFacet.NotOwnerOrChief.selector);
+        ArbiterAccountabilityFacet(address(diamond)).liftSuspension(subject);
+        assertTrue(
+            ArbiterAccountabilityFacet(address(diamond)).isSuspended(subject),
+            unicode"остаток пункта 70: владелец морозит, управление не размораживает"
         );
     }
 }

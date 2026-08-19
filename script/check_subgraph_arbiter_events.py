@@ -86,12 +86,23 @@ MAPPING_PATH = "subgraph/src/arbiter.ts"   # where the handler bodies live
 # facet is enforced.
 ACCOUNTABILITY = {
     "ArbiterSuspended": "handleArbiterSuspended",
-    "ArbiterSuspensionLifted": "handleArbiterSuspensionLifted",
+    "ArbiterSuspensionLifted": "handleArbiterSuspensionLifted",  # also in REGISTRY, see below
     "ArbiterRemovedForCause": "handleArbiterRemovedForCause",
     "RemovalProposed": "handleRemovalProposed",
     "RemovalProposalWithdrawn": "handleRemovalProposalWithdrawn",
     "RemovalProposalConsumed": "handleRemovalProposalConsumed",
     "RemovalAnswered": "handleRemovalAnswered",
+    # ⚠️ DECLARED IN ArbiterRegistryFacet, EMITTED FROM THIS ONE since task 12
+    # (18 August 2026). The third judicial mistake stopped unseating anyone —
+    # it suspends and accuses — so "demoted" became true two days later, inside
+    # executeChainRemoval, which lives here. solc puts the event into BOTH
+    # facets' ABIs, so it shows up in this facet's coverage as well.
+    #
+    # Listed in both ACCOUNTABILITY and REGISTRY on purpose: the comparison in
+    # section 2 then runs TWICE, once per facet, against the same subgraph copy
+    # — which is exactly the check a cross-contract emit needs. Let the two
+    # declarations drift apart and one of the two runs goes red.
+    "ArbiterDemoted": "handleArbiterDemoted",
 }
 
 # An accountability event that is deliberately not indexed goes here with the
@@ -120,7 +131,35 @@ REGISTRY = {
     "ArbiterSeated": "handleArbiterSeated",
     "ArbiterResigned": "handleArbiterResigned",
     "ArbiterDemoted": "handleArbiterDemoted",
+    # ⚠️ DECLARED IN ArbiterAccountabilityFacet, EMITTED FROM THE REGISTRY TOO
+    # since task 12 review round 2 (18 August 2026): the vindication branch in
+    # resolveAppeal lifts the suspension it cancels, and a lift that leaves no
+    # log reads in the feed as a suspension that never ended. solc therefore
+    # puts the event into BOTH facets' ABIs.
+    #
+    # Listed on both sides for the same reason ArbiterDemoted is: the parameter
+    # comparison then runs once per facet against the same subgraph copy, which
+    # is the check a cross-contract emit needs. Let the declarations drift and
+    # one of the two runs goes red.
+    "ArbiterSuspensionLifted": "handleArbiterSuspensionLifted",
 }
+
+# ⚠️ NOT HERE YET, AND SAID OUT LOUD (task 12, 18 August 2026). The registry
+# gained two events this gate is silent about, because coverage over that facet
+# is not enforced — see the module docstring:
+#
+#   RemovalProposedByChain(arbiter, path, agreement, proposedAt)
+#       the chain accusing in its own name on the third judicial mistake. It
+#       carries the demotion path and the deal that tipped him over, which are
+#       known here and nowhere later.
+#   ChainAccusationCleared(arbiter, agreement)
+#       the panel vindicating the arbiter, so the chain withdraws its own
+#       accusation: proposal gone, streak zeroed, suspension lifted.
+#
+# Both are feed work, not contract work, and the subgraph is not in this task's
+# file list — the same call made for RemovalReasonGiven/RemovalReplyGiven above.
+# Until they are indexed, an arbiter under a chain accusation reads in the feed
+# as an arbiter with nothing against him.
 
 # The arbiter handlers ride the data source that already indexes the boards.
 # This handler is the anchor for "that one": it has been indexing the live

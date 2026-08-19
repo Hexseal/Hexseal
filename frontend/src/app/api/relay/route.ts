@@ -743,6 +743,20 @@ export async function POST(req: NextRequest) {
           //     RemovalTooEarly above: this table decodes the name only, so the
           //     two values do not reach the person today.
           '0x21efc74d': 'ProposalAlreadyLive',
+          //   NotAChainProposal — executeChainRemoval was pressed against an
+          //     accusation a PERSON laid. The button exists only for the
+          //     chain's own record; a human accusation is still the removal
+          //     authority's to execute through removeArbiterForCause. It is
+          //     also the FIRST refusal the button gives, ahead of the clock, so
+          //     a stranger is not told that an accusation stands and when it
+          //     ripens.
+          '0xbba75e02': 'NotAChainProposal',
+          //   ChainProposalNeedsTheChainDoor — the mirror of the line above.
+          //     removeArbiterForCause refuses an accusation the CHAIN laid:
+          //     executing it there rewrote the origin in the permanent record
+          //     and named a person where nobody belonged. The name says where
+          //     to go — executeChainRemoval, which anyone may press.
+          '0x1d7c2bf0': 'ChainProposalNeedsTheChainDoor',
         };
 
         let reason = 'Inner call reverted';

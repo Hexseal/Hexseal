@@ -601,7 +601,7 @@ contract DeployFull is Script {
     // (86.4%), запаса не хватало. Делит тот же ArbiterRegistryStorage
     // namespace — переноса данных нет.
     function arbiterAccountabilityFacetSelectors() public pure returns (bytes4[] memory sels) {
-        sels = new bytes4[](33);
+        sels = new bytes4[](34);
         sels[0] = ArbiterAccountabilityFacet.suspendArbiter.selector;
         sels[1] = ArbiterAccountabilityFacet.liftSuspension.selector;
         sels[2] = ArbiterAccountabilityFacet.isSuspended.selector;
@@ -714,6 +714,15 @@ contract DeployFull is Script {
         // button as live at the same second the chain does. A copy of the
         // number in the frontend would drift in silence.
         sels[32] = ArbiterAccountabilityFacet.getRemovalDelay.selector;
+
+        // ── The quiet door leads into the common one (task 12, 18 August 2026) ──
+        // The third judicial mistake no longer unseats. It suspends at once and
+        // lays a removal proposal in the CHAIN'S OWN NAME; once the 48 hours
+        // have passed, anyone may press this — the chain proved the cause
+        // itself, so pressing carries no discretion. One argument, and it
+        // refuses any accusation a human laid: that one is still the removal
+        // authority's to execute through removeArbiterForCause.
+        sels[33] = ArbiterAccountabilityFacet.executeChainRemoval.selector;
     }
 
     // DealMetadataFacet — 1 селектор
