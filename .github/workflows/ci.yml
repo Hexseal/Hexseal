@@ -241,48 +241,80 @@ jobs:
         working-directory: frontend
         run: npm run type-check
 
-  # Публикация образов в ghcr — НЕ на pull_request, и это не осторожность, а
-  # арифметика: у PR из форка `GITHUB_TOKEN` только на чтение, `packages: write`
-  # ему не выдаётся ни при каких настройках, и шаг «Login to GHCR» упал бы у
-  # каждого стороннего участника. Он увидел бы красный CI за то, чего не делал,
-  # а образ из непроверенной ветки в реестр не попал бы всё равно.
-  # Триггер именно `pull_request`, а не `pull_request_target`: код форка
-  # исполняется без доступа к секретам репозитория. Менять на `_target` нельзя.
+  # ─── СОБИРАЕМ, НО НЕ ПУБЛИКУЕМ (решение владельца, 20 августа 2026) ───────
+  #
+  # Этот job строит оба образа и выбрасывает их. Сборка остаётся, и это не
+  # обряд: она ЕДИНСТВЕННОЕ место, где вообще проверяются оба Dockerfile.
+  # Сломанный `frontend/Dockerfile` иначе обнаружился бы только на выкатке,
+  # руками, в самый неподходящий момент.
+  #
+  # Публикация в ghcr убрана, и довод не технический. Выкатка через реестр
+  # однажды подсунула владельцу не ту сборку: собиралось не из той ветки, и
+  # время ушло на поиск причины. Такое лечится ОТСУТСТВИЕМ МЕХАНИЗМА, а не
+  # доверием к нему.
+  #
+  # Второй довод, проверенный до решения: реестр сегодня НЕ КОРМИТ НИЧЕГО.
+  # `deploy-local.sh` собирает образ локально, переливает его на сервер через
+  # `docker save | ssh docker load` и только ПЕРЕИМЕНОВЫВАЕТ его в
+  # `ghcr.io/hexseal/*:latest` (строки 117, 125, 166) — чтобы
+  # `docker-compose.yml` нашёл его по этому имени. Из ghcr.io не тянет никто.
+  #
+  # Третий: прав всё равно нет. Прогон 32383937504 (20 августа) — `denied:
+  # permission_denied: read_package`. Сборка там прошла целиком, упала ровно
+  # отправка, и красным был именно этот шаг.
+  #
+  # ⚠️ ВЕРНУТЬ ПУБЛИКАЦИЮ — ОДНА СТРОКА ПЛЮС ВЫДАЧА ПРАВ. Строка: `push: false`
+  # → `push: true` в обоих шагах ниже. Права: вернуть шаг «Login to GHCR» и
+  # `packages: write` в `permissions`, и выдать пакетам `hexseal/relayer` и
+  # `hexseal/frontend` доступ ЭТОГО репозитория с правом записи (Packages →
+  # Package settings → Manage Actions access) — без этого `GITHUB_TOKEN` с
+  # `packages: write` всё равно получит `read_package`, что и произошло.
+  # Подробности и порядок — docs/OPEN-ITEMS.md, пункт 100.
+  #
+  # `if:` СОХРАНЁН, но причина у него теперь ДРУГАЯ, и старую нельзя оставлять
+  # написанной: она перестала быть правдой. Прежняя — «у форка нет
+  # `packages: write`, шаг входа в реестр упал бы» — исчезла вместе с
+  # публикацией. Новая: `frontend` собирается с `build-args` из секретов, а PR
+  # из форка получает их пустыми, и `config/contracts.ts` бросает на загрузке
+  # модуля. Сторонний участник увидел бы красный CI за то, чего не делал.
+  # Триггер остаётся `pull_request`, а не `pull_request_target`: код форка не
+  # должен видеть секреты. Менять нельзя.
+  # ──────────────────────────────────────────────────────────────────────────
   build:
     needs: [contracts, web]
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      packages: write
+      # `packages: write` убран вместе с отправкой. Пока его нет, ни один шаг
+      # этого job'а не может записать в реестр даже по ошибке.
 
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
-      - name: Login to GitHub Container Registry
-        uses: docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0 # v4.4.0
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+      # Шага «Login to GitHub Container Registry» здесь больше нет: он был
+      # нужен только для отправки. Публиковать нечего — значит и входить некуда.
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
 
-      - name: Build and push relayer
+      # `tags:` оставлены намеренно, хотя при `push: false` образ никуда не
+      # уезжает. Они называют то, чем образ БЫЛ БЫ, и держат возврат к
+      # публикации однострочным. Кэш `type=gha` работает без реестра.
+      - name: Build relayer image (built, not published)
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
         with:
           context: ./relayer
-          push: true
+          push: false
           tags: ghcr.io/hexseal/relayer:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Build and push frontend
+      - name: Build frontend image (built, not published)
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
         with:
           context: ./frontend
-          push: true
+          push: false
           tags: ghcr.io/hexseal/frontend:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
@@ -300,21 +332,52 @@ jobs:
             NEXT_PUBLIC_IPFS_GATEWAY=${{ secrets.NEXT_PUBLIC_IPFS_GATEWAY }}
             SUBGRAPH_URL=${{ secrets.SUBGRAPH_URL }}
 
+  # ⚠️ ЭТА КНОПКА ОБЕЗВРЕЖЕНА — И ЭТО САМОЕ ВАЖНОЕ МЕСТО ФАЙЛА.
+  #
+  # Мина была такая. Пока `build` публиковал образы, `deploy` их оттуда тянул.
+  # Если убрать публикацию и оставить выкатку как была, кнопка бы НЕ сломалась
+  # — она бы продолжила работать и поставила на VPS ПОСЛЕДНИЙ УДАЧНО ЗАЛИТЫЙ
+  # образ: неизвестной давности, собранный неизвестно из какого коммита, никак
+  # не связанный с тем, что стоит в репозитории сейчас. То есть ровно тот
+  # случай, ради которого публикацию и убрали, только теперь гарантированный.
+  #
+  # Поэтому здесь не осталось НИ ОДНОГО шага, умеющего ходить наружу: нет
+  # `appleboy/ssh-action`, нет `docker login`, нет `docker compose pull`, нет
+  # обращения к `secrets.GHCR_TOKEN` и `secrets.VPS_SSH_KEY`. Нажать и получить
+  # старый образ нечем — не потому, что что-то это запрещает, а потому, что
+  # тянуть образ физически некому.
+  #
+  # Job при этом НЕ «пропускается» молча: молчаливый пропуск оставил бы
+  # нажавшего в уверенности, что выкатка прошла. Он падает названной строкой.
+  #
+  # ⚠️ УБРАНО, А НЕ ОТМЕНЕНО НАВСЕГДА. Владелец не против реестра в принципе —
+  # он против него сегодня. Прежний шаг (ssh-action + `docker login ghcr.io`
+  # секретом `GHCR_TOKEN` + `docker compose pull frontend relayer`) цел в
+  # истории: `git show 1c2fe41f:.github/workflows/ci.yml`. Что нужно сделать,
+  # чтобы вернуть кнопку, перечислено в docs/OPEN-ITEMS.md, пункт 100.
   deploy:
     needs: build
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.deploy == true }}
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
 
     steps:
-      - name: Deploy to VPS
-        uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2 # v1.2.5
-        with:
-          host: ${{ secrets.VPS_IP }}
-          username: root
-          key: ${{ secrets.VPS_SSH_KEY }}
-          script: |
-            echo "${{ secrets.GHCR_TOKEN }}" | docker login ghcr.io -u hexseal --password-stdin
-            cd /opt/hexseal/app
-            docker compose pull frontend relayer
-            docker compose up -d frontend relayer
-            docker image prune -f
+      - name: Refuse — image publishing is off, so there is nothing to deploy
+        run: |
+          echo "Deploying from the registry is switched off, on purpose."
+          echo
+          echo "The build job above builds both images but no longer pushes them, so"
+          echo "ghcr.io/hexseal/relayer:latest and ghcr.io/hexseal/frontend:latest are"
+          echo "NOT a picture of this commit. The newest tag in the registry is whatever"
+          echo "last uploaded successfully, of unknown age and unknown branch. Pulling it"
+          echo "would put an unknown build on the VPS -- which is the exact accident this"
+          echo "was switched off to prevent: a registry deploy once served an image built"
+          echo "from a different branch, and the time went into finding out why."
+          echo
+          echo "Deploy with ./deploy-local.sh instead. It builds the images locally,"
+          echo "streams them to the VPS over SSH, and never touches ghcr.io."
+          echo
+          echo "To bring this button back: docs/OPEN-ITEMS.md, item 100."
+          echo "::error title=Deploy is switched off::Image publishing is off, so there is no image to deploy from. Use ./deploy-local.sh. To restore: docs/OPEN-ITEMS.md item 100."
+          exit 1
