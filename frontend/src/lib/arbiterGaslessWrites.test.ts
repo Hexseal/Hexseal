@@ -44,7 +44,7 @@ const EXPECTED_ABI = parseAbi([
   'function submitVerdict(address agreement, bool clientWins)',
   'function finalizeVerdict(address agreement)',
   'function withdrawArbiterReward()',
-  'function respondToRemoval(bytes32 replyDigest)',
+  'function respondToRemoval(bytes32 replyDigest, string reply)',
 ]);
 
 /** Ожидаемые потолки — руками, не из `GAS_DEFAULTS`. */
@@ -52,10 +52,11 @@ const CEILINGS = {
   submitVerdict:         160_000n,
   finalizeVerdict:       780_000n,
   withdrawArbiterReward: 100_000n,
-  // Поднят с 80 000 19 августа 2026: цепь стала принимать ответ во время
-  // паузы, и на этой ветке добавился один холодный слот (+2 324, замерено).
+  // Поднят вторично 20 августа 2026, с 90 000: фронтовое ABI догнало цепь, и
+  // вызов стал возить `string` до 512 байт. База — холодная сцена на полных
+  // 512 байтах, ПРОКСИ: 72 174 × 1.19 × 1.2 ≈ 103 064 → 110 000.
   // Число здесь ставится РУКАМИ и не импортируется — в этом весь смысл замка.
-  respondToRemoval:       90_000n,
+  respondToRemoval:      110_000n,
 } as const;
 
 type Call = Record<string, unknown>;
@@ -232,17 +233,24 @@ describe('получение награды идёт через релеер', (
   });
 });
 
+/**
+ * Слова возражения. Непустые НАМЕРЕННО: с пустой строкой калдата совпала бы с
+ * той, что собирает обёртка, потерявшая аргумент по дороге, — и замок на швах
+ * ниже краснеть перестал бы.
+ */
+const REPLY = 'все три спора вёл по инструкции, вот логи';
+
 describe('ответ обвинённого арбитра идёт через релеер', () => {
   it('R10 relay up — запрос ушёл на /api/relay нужной калдатой', async () => {
     const { wallet, node, sent } = stand('0x0000000000000000000000000000000000000110');
     relayUp();
-    await respondToRemovalGasless(wallet, node, DIGEST);
+    await respondToRemovalGasless(wallet, node, DIGEST, REPLY);
 
     expect(sent.length).toBe(0);
     const { body } = lastPost();
     expect(body.to).toBe(CONTRACTS.diamond);
     expect(body.data).toBe(encodeFunctionData({
-      abi: EXPECTED_ABI, functionName: 'respondToRemoval', args: [DIGEST],
+      abi: EXPECTED_ABI, functionName: 'respondToRemoval', args: [DIGEST, REPLY],
     }));
   });
 
@@ -257,7 +265,7 @@ describe('ответ обвинённого арбитра идёт через �
     // счётчик форвардера.
     const { wallet, node, reads } = stand('0x0000000000000000000000000000000000000111');
     relayUp();
-    await respondToRemovalGasless(wallet, node, DIGEST);
+    await respondToRemovalGasless(wallet, node, DIGEST, REPLY);
 
     expect(reads.map((r) => r.functionName)).toEqual(['getNonce']);
     expect(reads[0].address).toBe(CONTRACTS.forwarder);
@@ -266,27 +274,101 @@ describe('ответ обвинённого арбитра идёт через �
   it('R12 relay down — прямая транзакция ТОЙ ЖЕ калдатой и с потолком таблицы', async () => {
     const { wallet, node, sent } = stand('0x0000000000000000000000000000000000000112', 'throw');
     relayDown();
-    const out = await respondToRemovalGasless(wallet, node, DIGEST);
+    const out = await respondToRemovalGasless(wallet, node, DIGEST, REPLY);
     expect(out.fallbackUsed).toBe(true);
     expect(sent[0].to).toBe(CONTRACTS.diamond);
     expect(sent[0].data).toBe(encodeFunctionData({
-      abi: EXPECTED_ABI, functionName: 'respondToRemoval', args: [DIGEST],
+      abi: EXPECTED_ABI, functionName: 'respondToRemoval', args: [DIGEST, REPLY],
     }));
     expect(sent[0].gas).toBe(CEILINGS.respondToRemoval);
-    expect(CEILINGS.respondToRemoval).toBe(90_000n);
+    expect(CEILINGS.respondToRemoval).toBe(110_000n);
   });
 
   it('R13 отпечаток доезжает целиком — другой отпечаток даёт другие байты', async () => {
     const other = ('0x' + '1c'.repeat(32)) as `0x${string}`;
     const { wallet, node } = stand('0x0000000000000000000000000000000000000113');
     relayUp();
-    await respondToRemovalGasless(wallet, node, other);
+    await respondToRemovalGasless(wallet, node, other, REPLY);
     expect(lastPost().body.data).toBe(encodeFunctionData({
-      abi: EXPECTED_ABI, functionName: 'respondToRemoval', args: [other],
+      abi: EXPECTED_ABI, functionName: 'respondToRemoval', args: [other, REPLY],
     }));
     expect(lastPost().body.data).not.toBe(encodeFunctionData({
-      abi: EXPECTED_ABI, functionName: 'respondToRemoval', args: [DIGEST],
+      abi: EXPECTED_ABI, functionName: 'respondToRemoval', args: [DIGEST, REPLY],
     }));
+  });
+
+  /* ═════════════════════════════════════════════════════════════════════════
+   *  R14-R16: ВТОРОЙ АРГУМЕНТ. Не «ABI совпал», а «слова уехали в цепь».
+   *
+   *  Шов здесь между ДВУМЯ вещами, и совпадение одной ничего не говорит о
+   *  второй: `config/contracts.ts` может знать `respondToRemoval(bytes32,
+   *  string)` полностью верно, а обёртка — собирать `args: [replyDigest]` или
+   *  подставлять пустую строку. Первое падает громко (viem не докодирует),
+   *  второе не падает НИКАК: калдата законна, транзакция проходит, человек
+   *  видит «возражение отправлено», а в цепи лежит голый отпечаток и ни одного
+   *  события `RemovalReplyGiven`. Ровно то, ради чего эта работа делалась.
+   *
+   *  Поэтому ожидаемые байты собираются здесь СВОЕЙ `parseAbi`-строкой (см.
+   *  EXPECTED_ABI) и с НЕПУСТЫМ текстом: пустой сравнялся бы с калдатой
+   *  потерявшей аргумент обёртки, и замок смотрелся бы в зеркало.
+   * ═════════════════════════════════════════════════════════════════════════ */
+
+  it('R14 слова доезжают — калдата НЕ равна калдате с пустым ответом', async () => {
+    const { wallet, node } = stand('0x0000000000000000000000000000000000000114');
+    relayUp();
+    await respondToRemovalGasless(wallet, node, DIGEST, REPLY);
+
+    const withWords = encodeFunctionData({
+      abi: EXPECTED_ABI, functionName: 'respondToRemoval', args: [DIGEST, REPLY],
+    });
+    const silent = encodeFunctionData({
+      abi: EXPECTED_ABI, functionName: 'respondToRemoval', args: [DIGEST, ''],
+    });
+    expect(withWords).not.toBe(silent);
+    expect(lastPost().body.data).toBe(withWords);
+  });
+
+  it('R15 другой текст — другие байты, а не тот же хвост', async () => {
+    const { wallet, node } = stand('0x0000000000000000000000000000000000000115');
+    relayUp();
+    await respondToRemovalGasless(wallet, node, DIGEST, 'совсем другое возражение');
+    expect(lastPost().body.data).toBe(encodeFunctionData({
+      abi: EXPECTED_ABI, functionName: 'respondToRemoval',
+      args: [DIGEST, 'совсем другое возражение'],
+    }));
+    expect(lastPost().body.data).not.toBe(encodeFunctionData({
+      abi: EXPECTED_ABI, functionName: 'respondToRemoval', args: [DIGEST, REPLY],
+    }));
+  });
+
+  it('R16 молчание — законный выбор, и оно тоже доезжает', async () => {
+    // Ответ — ПРАВО, а не обязанность: цепь принимает пустую строку и просто
+    // не порождает RemovalReplyGiven. Обёртка не имеет права ни отказать, ни
+    // подставить что-то от себя.
+    const { wallet, node } = stand('0x0000000000000000000000000000000000000116');
+    relayUp();
+    await respondToRemovalGasless(wallet, node, DIGEST, '');
+    expect(lastPost().body.data).toBe(encodeFunctionData({
+      abi: EXPECTED_ABI, functionName: 'respondToRemoval', args: [DIGEST, ''],
+    }));
+  });
+
+  it('R17 длинный ответ на 512 байт собирается и уезжает целиком', async () => {
+    // Худший законный случай — тот самый, по которому посчитан потолок газа
+    // 110 000. Длина считается В БАЙТАХ: 512 латинских символов это ровно
+    // потолок, и обрезать их обёртка не должна ничем.
+    const long = 'x'.repeat(512);
+    const { wallet, node } = stand('0x0000000000000000000000000000000000000117');
+    relayUp();
+    await respondToRemovalGasless(wallet, node, DIGEST, long);
+    const data = lastPost().body.data;
+    expect(data).toBe(encodeFunctionData({
+      abi: EXPECTED_ABI, functionName: 'respondToRemoval', args: [DIGEST, long],
+    }));
+    // 4 селектор + 32 отпечаток + 32 смещение + 32 длина + 512 текст = 612 байт,
+    // то есть 1224 знака хекса после `0x`. Число здесь ЛИТЕРАЛОМ, а не
+    // `data.length`: выведенное из проверяемого сошлось бы само с собой.
+    expect(data.length).toBe(2 + 1224);
   });
 });
 
@@ -462,7 +544,8 @@ describe('кошелёк без адреса не проходит ни один
     await expect(submitVerdictGasless(empty, node, AGREEMENT, true)).rejects.toThrow(/not connected/i);
     await expect(finalizeVerdictGasless(empty, node, AGREEMENT)).rejects.toThrow(/not connected/i);
     await expect(withdrawArbiterRewardGasless(empty, node)).rejects.toThrow(/not connected/i);
-    await expect(respondToRemovalGasless(empty, node, DIGEST)).rejects.toThrow(/not connected/i);
+    await expect(respondToRemovalGasless(empty, node, DIGEST, REPLY))
+      .rejects.toThrow(/not connected/i);
     expect(posted.length).toBe(0);
   });
 });

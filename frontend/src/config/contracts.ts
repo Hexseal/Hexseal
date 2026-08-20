@@ -2125,7 +2125,7 @@ export const ARBITER_REGISTRY_ABI = [
  * двум спискам не даёт замок `lib/arbiterAccountabilityAbi.test.ts` — оба
  * сверяются с исходником, а не друг с другом.
  *
- * Состав — 31 функция и 7 событий, сверяется с
+ * Состав — 34 функции и 9 событий, сверяется с
  * `src/facets/ArbiterAccountabilityFacet.sol` тем же замком: типы, ИМЕНА
  * аргументов и возвратов, изменчивость и флаги `indexed`.
  *
@@ -2180,6 +2180,12 @@ export const ARBITER_ACCOUNTABILITY_ABI = [
       { internalType: 'enum ArbiterAccountabilityFacet.Cause', name: 'cause', type: 'uint8' },
       { internalType: 'bytes32', name: 'evidenceDigest', type: 'bytes32' },
       { internalType: 'address', name: 'disputeRef', type: 'address' },
+      // Слова обвинителя. ОБЯЗАТЕЛЬНЫ ровно там, где цепь молчит: коды 3-5
+      // (Collusion/Leak/Other) она не проверяет, а только заверяет отпечатком,
+      // и пустой `reason` там отвергается (`ReasonRequired`). Потолок — 512
+      // БАЙТ, не символов, и спрашивается у цепи через `getMaxReasonBytes()`:
+      // счётчик «осталось N символов» соврёт вчетверо на первом же эмодзи.
+      { internalType: 'string', name: 'reason', type: 'string' },
     ],
     name: 'removeArbiterForCause',
     outputs: [],
@@ -2213,6 +2219,9 @@ export const ARBITER_ACCOUNTABILITY_ABI = [
       { internalType: 'address', name: 'arbiter', type: 'address' },
       { internalType: 'enum ArbiterAccountabilityFacet.Cause', name: 'cause', type: 'uint8' },
       { internalType: 'bytes32', name: 'evidenceDigest', type: 'bytes32' },
+      // То же правило и тот же потолок, что у removeArbiterForCause выше:
+      // обвинение, которое цепь не проверяет сама, обязано объясняться словами.
+      { internalType: 'string', name: 'reason', type: 'string' },
     ],
     name: 'proposeRemoval',
     outputs: [],
@@ -2274,18 +2283,46 @@ export const ARBITER_ACCOUNTABILITY_ABI = [
     stateMutability: 'pure',
     type: 'function',
   },
+  {
+    // Пауза между обвинением и сносом, 48 часов. Спрашивается у цепи, а не
+    // считается дома: копия этого числа во фронте разошлась бы молча и
+    // показала бы кнопку живой за час до того, как она заработает.
+    inputs: [],
+    name: 'getRemovalDelay',
+    outputs: [{ internalType: 'uint256', name: '', type: 'uint256' }],
+    stateMutability: 'pure',
+    type: 'function',
+  },
+  {
+    // Потолок слов в БАЙТАХ. Форма обязана показывать остаток по этому числу,
+    // а не по своему: разойдясь, они дадут человеку отказ транзакции вместо
+    // подсказки в поле.
+    inputs: [],
+    name: 'getMaxReasonBytes',
+    outputs: [{ internalType: 'uint256', name: '', type: 'uint256' }],
+    stateMutability: 'pure',
+    type: 'function',
+  },
   // ── Право ответа обвинённого ─────────────────────────────────────────────
   //
   // ⚠️ Не «снятого»: с 19 августа 2026 цепь принимает возражение ещё ВО ВРЕМЯ
   // 48-часовой паузы, то есть зовёт эту функцию чаще всего ДЕЙСТВУЮЩИЙ арбитр
   // под живым обвинением.
   //
-  // ⚠️ И подпись ниже отстала от цепи: там `respondToRemoval(bytes32,string)`
-  // с задачи 2, здесь по-прежнему один аргумент. Это долг задач 2 и 8, он же
-  // те тринадцать красных в `lib/arbiterAccountabilityAbi.test.ts`; чинить его
-  // придётся вместе с потолком газа в `lib/relay.ts` (см. docs/OPEN-ITEMS.md).
+  // ⚠️ АРГУМЕНТА ДВА, И ВТОРОЙ ДОБАВЛЕН 20 августа 2026 (долг задач 2 и 8).
+  // `reply` — ПРАВО, а не обязанность: пустая строка законна и события не
+  // порождает. Отпечаток остаётся обязательным — он и есть ответ, а слова его
+  // краткое изложение для ленты. Потолок тот же, 512 байт на обе стороны.
+  //
+  // ⚠️ Прибавка аргумента подняла потолок газа `respondToRemoval` в
+  // `lib/relay.ts` с 90 000 до 110 000: замеренное исполнение на полных 512
+  // байтах — 72 174 (холодные слоты, строка ПРОКСИ), транзакция целиком
+  // ≈ 102 234. Менять одно без другого нельзя — см. docs/OPEN-ITEMS.md, п. 91.
   {
-    inputs: [{ internalType: 'bytes32', name: 'replyDigest', type: 'bytes32' }],
+    inputs: [
+      { internalType: 'bytes32', name: 'replyDigest', type: 'bytes32' },
+      { internalType: 'string',  name: 'reply',       type: 'string' },
+    ],
     name: 'respondToRemoval',
     outputs: [],
     stateMutability: 'nonpayable',
@@ -2524,6 +2561,37 @@ export const ARBITER_ACCOUNTABILITY_ABI = [
       { indexed: false, internalType: 'uint256', name: 'proposedAt',     type: 'uint256' },
     ],
     name: 'RemovalProposalConsumed',
+    type: 'event',
+  },
+  {
+    // Слова обвинителя — ОТДЕЛЬНЫМ событием, а не полем в RemovalProposed /
+    // ArbiterRemovedForCause: те индексируются живым сабграфом, и смена их
+    // подписи остановила бы ленту молча. `stage` различает предложение (0) и
+    // снос (1) и уезжает indexed-топиком, чтобы «покажи все обвинения» можно
+    // было спросить отдельно от «покажи все сносы».
+    //
+    // Молчит, если слов нет: пустая строка в ленте стирала бы разницу между
+    // «объяснил» и «промолчал».
+    anonymous: false,
+    inputs: [
+      { indexed: true,  internalType: 'address', name: 'arbiter', type: 'address' },
+      { indexed: true,  internalType: 'address', name: 'by',      type: 'address' },
+      { indexed: true,  internalType: 'uint8',   name: 'stage',   type: 'uint8' },
+      { indexed: false, internalType: 'string',  name: 'reason',  type: 'string' },
+    ],
+    name: 'RemovalReasonGiven',
+    type: 'event',
+  },
+  {
+    // Слова обвиняемого. Симметрия с RemovalReasonGiven, но модальность другая:
+    // у обвинителя это обязанность, у обвиняемого — право. Поэтому и полей
+    // меньше: этапа у ответа нет, отвечают один раз.
+    anonymous: false,
+    inputs: [
+      { indexed: true,  internalType: 'address', name: 'arbiter', type: 'address' },
+      { indexed: false, internalType: 'string',  name: 'reply',   type: 'string' },
+    ],
+    name: 'RemovalReplyGiven',
     type: 'event',
   },
 ] as const;
