@@ -117,11 +117,47 @@ jobs:
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
+      # ─── TWO NODE VERSIONS IN THIS JOB, ON PURPOSE ─────────────────────────
+      #
+      # node 22 — the SHIPPED runtime. Both images are `node:22-alpine`
+      #   (relayer/Dockerfile, frontend/Dockerfile), so the relayer tests, the
+      #   `next build` and the type-check keep running on the same major that
+      #   actually serves traffic. Pinned in `/.nvmrc`.
+      #
+      # node 24 — the BROWSER STAND-IN. Used by the `Frontend tests` step and by
+      #   nothing else. Pinned in `/frontend/.nvmrc`.
+      #
+      # Why the frontend tests cannot run on 22: several stands measure two
+      # browser TABS contending for one lock, and they do it with the real
+      # `navigator.locks` (Web Locks), which is process-wide — exactly what it
+      # is for two tabs of one origin. Node ships it from v24 on; node 22 has a
+      # `navigator`, but no `.locks` on it at all:
+      #
+      #     node v22.23.2 -> typeof globalThis.navigator.locks === 'undefined'
+      #     node v24.12.0 -> typeof globalThis.navigator.locks === 'object'
+      #
+      # Faking the lock is not an option: a fake would make those stands measure
+      # themselves instead of the production code. So on node 22 those thirteen
+      # tests were not checking behaviour, they were checking the absence of a
+      # browser API — and they said so with a scatter of `expected 1 to be 2`
+      # that named no cause. That is what kept this workflow red for eighteen
+      # consecutive runs, 15-20 August 2026.
+      #
+      # Both versions are READ FROM `.nvmrc` FILES rather than written here, so
+      # a developer's `nvm use` and this workflow cannot drift apart in silence.
+      # Silence is precisely how the gap survived: `.nvmrc` did not exist and no
+      # `engines` was set, so nothing in the repository ever stated which node
+      # the frontend suite needs, and the difference was invisible from both
+      # ends. Change the version in the file, not in this workflow.
+      #
+      # `frontend/src/lib/__stand__/requireWebLocks.ts` is the backstop for the
+      # case where someone runs the suite on the wrong node anyway: the affected
+      # stands refuse to run and name the reason once, instead of failing
+      # thirteen times without naming it at all.
+      # ───────────────────────────────────────────────────────────────────────
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          # Как в обоих Dockerfile (node:22-alpine) — CI проверяет ту же
-          # мажорную версию, на которой всё в итоге и крутится.
-          node-version: '22'
+          node-version-file: .nvmrc
           cache: npm
           cache-dependency-path: |
             relayer/package-lock.json
@@ -149,9 +185,25 @@ jobs:
         working-directory: relayer
         run: npm test
 
+      # Switch to the browser stand-in, for the frontend suite and nothing else
+      # — reasons in the block above the first `setup-node`. No `cache:` key
+      # here on purpose: the npm cache was already restored by that first step
+      # and will be saved by it; asking a second time only earns duplicate-key
+      # warnings. This step swaps the node binary, nothing more.
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: frontend/.nvmrc
+
       - name: Frontend tests
         working-directory: frontend
         run: npm test
+
+      # Back to the shipped runtime immediately. Every step below this line
+      # builds or checks what the Docker images will actually run, so it has to
+      # be measured on the major they use (node:22-alpine), not on the stand-in.
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
 
       # Гейт правила хуков — единственная часть линта, которая в этом репозитории
       # вообще работает. Конфиг грузит только eslint-plugin-react-hooks:

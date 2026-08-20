@@ -46,6 +46,17 @@ import {
   type Actor, type ForgedFrame,
 } from '@/lib/__stand__/presentationFixtures';
 import { installFakeChatDisk, type FakeChatDisk, type FakeDiskControl } from '@/lib/__stand__/fakeChatDisk';
+import { requireWebLocks } from '@/lib/__stand__/requireWebLocks';
+
+// ⚠️ THIS STAND NEEDS A REAL WEB LOCK, AND SAYS SO BEFORE MEASURING ANYTHING.
+// `navigator.locks` is how two tabs of one origin queue for one resource, and
+// node ships it only from v24 on. Without this line node 22 does not fail here
+// — the production code degrades gracefully, and the two-tab expectations below
+// quietly turn into `expected 1 to be 2` diffs that name no cause at all. That
+// cost eighteen red CI runs in August 2026. Fail once, by name, instead.
+// Called at module level on purpose: the throw lands during collection, so no
+// misleading assertion is ever reported. See `__stand__/requireWebLocks.ts`.
+requireWebLocks('presentationCircumstances.test.ts ("3. Два процесса разом: две вкладки")');
 
 /** Адреса агриментов — как везде в проекте: адрес контракта, не bytes32. */
 const DEAL = '0x2e7a7A0515bfDC0006A812EBb3E55d32800Bc660' as const;

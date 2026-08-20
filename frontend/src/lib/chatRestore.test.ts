@@ -24,6 +24,17 @@ import {
   restoreErrorKey,
   unknownWordPosition,
 } from './chatRecovery';
+import { requireWebLocks } from './__stand__/requireWebLocks';
+
+// ⚠️ THIS STAND NEEDS A REAL WEB LOCK, AND SAYS SO BEFORE MEASURING ANYTHING.
+// `navigator.locks` is how two tabs of one origin queue for one resource, and
+// node ships it only from v24 on. Without this line node 22 does not fail here
+// — the production code degrades gracefully, and the two-tab expectations below
+// quietly turn into `expected 1 to be 2` diffs that name no cause at all. That
+// cost eighteen red CI runs in August 2026. Fail once, by name, instead.
+// Called at module level on purpose: the throw lands during collection, so no
+// misleading assertion is ever reported. See `__stand__/requireWebLocks.ts`.
+requireWebLocks('chatRestore.test.ts ("обстоятельство 3: две вкладки восстанавливают разом")');
 
 const MESSAGES_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../messages');
 const RU = JSON.parse(fs.readFileSync(path.join(MESSAGES_DIR, 'ru.json'), 'utf8')) as Record<string, unknown>;

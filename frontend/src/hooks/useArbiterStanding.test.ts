@@ -216,6 +216,16 @@ describe('признак «проверила ли цепь сама» доез�
   const withCause = (raw: number) => {
     answerStanding([...POSITIONAL.slice(0, 12), raw]);
     answerReply(ZERO_DIGEST);
+    // There is no React here. This whole file calls the hook as a PLAIN
+    // FUNCTION: `wagmi` and `useCallback` are mocked above precisely because
+    // the environment is `node` with no jsdom and nothing to render into. The
+    // rule cannot see that, so it reads `withCause` as an ordinary lowercase
+    // function calling a hook — which in real component code WOULD be the bug
+    // the rule is named for. Hence one narrow exemption on the call itself,
+    // not `eslint-disable` for the file: the gate stays armed everywhere else,
+    // including the rest of this file. The sibling suites above get away with
+    // the same call only because their callers are anonymous `it()` arrows.
+    // eslint-disable-next-line react-hooks/rules-of-hooks
     return useArbiterStanding(ARBITER).standing!.lastRemovalCause;
   };
 
