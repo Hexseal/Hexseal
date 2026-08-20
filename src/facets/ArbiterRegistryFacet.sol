@@ -335,18 +335,59 @@ library ArbiterRegistryStorage {
         /// который мы же и опубликовали.
         mapping(address => RemovalProposal) removalProposals;
 
-        // ── Право ответа снятого (задача 8, 15 августа 2026) ────────────────
+        // ── Право ответа обвинённого (задача 8, 15 августа 2026; с 19 августа
+        //    ответ принимается ещё ВО ВРЕМЯ паузы) ────────────────────────────
         //
         // ⚠️ ДОПИСАНО В КОНЕЦ. Порядок и типы полей выше не трогать: раскладка
         // append-only, гейт script/check-storage-structs.sh.
 
-        /// Отпечаток ответа снятого арбитра. Один на человека: ответ, а не
-        /// переписка.
+        /// Отпечаток ответа обвинённого арбитра. Один на ОБВИНЕНИЕ, а не на
+        /// человека и не на всю его жизнь: «отвечал ли он на то, что висит
+        /// против него сейчас».
+        ///
+        /// ⚠️ Стирается теперь ЧЕТЫРЬМЯ дверями, а не одной (задача 3,
+        /// 19 августа 2026), и делятся они на две пары:
+        ///
+        ///   • обвинение ПОЯВИЛОСЬ — `ArbiterAccountabilityFacet.proposeRemoval`
+        ///     (человек обвинил) и `_recordArbiterMistake` ниже (обвинила цепь,
+        ///     прямой записью мимо той двери);
+        ///   • обвинение ЗАБРАЛИ — `ArbiterAccountabilityFacet.withdrawProposal`
+        ///     (отзыв) и ветка оправдания в `resolveAppeal` ниже (коллегия
+        ///     признала арбитра правым).
+        ///
+        /// Пятая, `clearRemovalRecord` при посадке, стирала это поле и раньше и
+        /// стирает сейчас — там речь о признаках ПРОШЛОГО сноса.
+        ///
+        /// Причина, по которой одной перестало хватать: ответ стал возможен у
+        /// СИДЯЩЕГО арбитра (замысел 17 августа, решение 3), а он через двери
+        /// посадки не проходит — он никуда не уходил. Без новых очисток он
+        /// терял бы право ответить навсегда, ни разу не будучи снесённым.
+        ///
+        /// ⚠️ СНОС ЭТО ПОЛЕ НЕ ТРОГАЕТ, и это не пропуск: `clearSeat` стирает
+        /// предложение, но не ответ на него — приговор обязан лечь ПОВЕРХ
+        /// возражения, а не вместо него
+        /// (test_AnswerGivenBeforeRemovalSurvivesIt).
+        ///
+        /// Слова при этом не пропадают нигде: они в логах
+        /// `RemovalAnswered`/`RemovalReplyGiven`, а хранилище отвечает только
+        /// на вопрос про ТЕКУЩЕЕ обвинение.
         mapping(address => bytes32) removalReply;
 
-        /// Момент сноса. Нужен, чтобы отличить «сняли и он молчит» от «его
-        /// никогда не снимали»: без этого поля любой посторонний мог бы
-        /// «ответить» на несуществующее обвинение.
+        /// Момент сноса. ОДНА ИЗ ДВУХ дверей ответа, а не единственная
+        /// (задача 3, 19 августа 2026): `respondToRemoval` пускает либо по
+        /// этой отметке, либо по живому предложению. Здесь — половина «его
+        /// уже сняли, предложения больше нет (его убрал `clearSeat`) — а
+        /// сказать он всё ещё вправе».
+        ///
+        /// Прежде здесь стояло «без этого поля любой посторонний мог бы
+        /// ответить на несуществующее обвинение». Одного поля для этого уже
+        /// мало: границу держат обе половины вместе — ноль здесь И отсутствие
+        /// живого предложения (`test_StrangerWithNoAccusationStillCannotAnswer`).
+        ///
+        /// ⚠️ Пишет это поле ровно ОДНО место — `_performRemoval` в
+        /// `ArbiterAccountabilityFacet`; стирает тоже одно —
+        /// `clearRemovalRecord` ниже. В отличие от `removalReply` выше,
+        /// дверей обвинения оно не знает вовсе.
         mapping(address => uint256) removedAt;
 
         // ── Вечная запись о сносах, 16 августа 2026 (п. 72) ─────────────────
@@ -355,9 +396,20 @@ library ArbiterRegistryStorage {
         // append-only, гейт script/check-storage-structs.sh.
         //
         // Три поля ниже — единственные в этой структуре, которые не стирает
-        // НИЧТО, и это не небрежность, а требование. removedAt/removalReply
-        // выше живут ровно до следующей посадки, и для них это верно: они
-        // отвечают на вопрос «отвечал ли он на ТЕКУЩЕЕ обвинение». На вопрос
+        // НИЧТО, и это не небрежность, а требование. Два поля выше стираемы
+        // оба, но ПО-РАЗНОМУ, и одной фразой их описывать нельзя:
+        //
+        //   • removalReply живёт не дольше ТЕКУЩЕГО ОБВИНЕНИЯ — его стирает и
+        //     посадка, и всякое новое обвинение, и всякий его отзыв;
+        //   • removedAt живёт до СЛЕДУЮЩЕЙ ПОСАДКИ — стирает его только
+        //     clearRemovalRecord, дверей обвинения он не знает вовсе.
+        //
+        // ⚠️ Здесь стояло «removedAt/removalReply живут ровно до следующей
+        // посадки» — задача 3 (19 августа 2026) сделала это неправдой для
+        // первого. Круг правок 1 той же задачи починил её общей фразой «не
+        // дольше текущего обвинения», и она стала неправдой для ВТОРОГО:
+        // одно правило на два поля с разным сроком жизни неверно в любую
+        // сторону. Отсюда разделение выше. На вопрос
         // «сколько раз его сносили» стираемое поле отвечать не может —
         // стирающая дверь принадлежит обвинителю (addArbiter), а после
         // включения ДАО и самому обвиняемому (applyAsArbiter).
@@ -547,8 +599,11 @@ library ArbiterRegistryStorage {
     ///
     /// Живёт в БИБЛИОТЕКЕ и зовётся из ОБЕИХ дверей входа —
     /// ArbiterRegistryFacet.addArbiter (ручная посадка) и .applyAsArbiter
-    /// (самозапись после активации ДАО) — чтобы не разойтись копиями, как
-    /// clearSeat выше зовётся из всех трёх дверей выхода.
+    /// (самозапись после активации ДАО) — чтобы не разойтись копиями, ровно
+    /// как `clearSeat` выше централизует двери выхода. Сколько именно тех
+    /// дверей, здесь не пишем: число менялось (задача 12 свела три к двум),
+    /// и список в чужом докстринге протухал молча — актуальный держит сама
+    /// `clearSeat`.
     ///
     /// ⚠️ Историю это НЕ трёт: события ArbiterRemovedForCause/RemovalAnswered
     /// лежат в цепи навсегда, читатель по-прежнему видит обе стороны каждого
@@ -589,7 +644,15 @@ library ArbiterRegistryStorage {
     ///
     /// Признаки самого сноса (`removedAt`, `removalReply`) стираются в ОБОИХ
     /// случаях: они про запись о ПРОШЛОМ сносе и не должны мешать ответить на
-    /// будущий (см. два абзаца выше). Разделено параметром, а не второй копией
+    /// будущий (см. два абзаца выше).
+    ///
+    /// ⚠️ И ЭТА ФУНКЦИЯ БОЛЬШЕ НЕ ЕДИНСТВЕННАЯ, КТО СТИРАЕТ `removalReply`
+    /// (задача 3, 19 августа 2026). Ответ стал возможен у СИДЯЩЕГО арбитра, а
+    /// сидящий через двери посадки не проходит — поэтому слот чистят ещё и
+    /// четыре двери самого обвинения. Перечень и довод — в докстринге поля
+    /// `removalReply` выше; здесь важно другое: `removedAt` по-прежнему
+    /// стирается ТОЛЬКО отсюда, и вторая половина инварианта
+    /// «`isArbiter` ⇒ `removedAt == 0`» держится на этом. Разделено параметром, а не второй копией
     /// функции: копий по-прежнему нет, а разница между дверями видна В МЕСТЕ
     /// ВЫЗОВА, а не спрятана в теле.
     function clearRemovalRecord(Data storage d, address arbiterAddr, bool liftSuspension) internal {
@@ -2132,6 +2195,27 @@ contract ArbiterRegistryFacet {
             // turn into a proposal by itself — another overturn is needed. The
             // streak is kept for exactly that, so the next one tries again.
             if (!_hasLiveProposalHere(d, arbiterAddr)) {
+                // ⚠️ A NEW ACCUSATION IS A NEW RIGHT TO ANSWER, AND THE CHAIN
+                // LAYS ITS OWN PAST proposeRemoval (task 3, 19 August 2026).
+                // The human door clears this flag for the same reason and says
+                // so at length; this branch writes the record directly, so it
+                // must obey the same rule without the door that enforces it.
+                //
+                // Reachable, not theoretical: an accusation nobody presses goes
+                // stale after PROPOSAL_TTL, the arbiter stays seated and the
+                // streak stays standing, so the next overturn lands here and
+                // writes a fresh accusation. Without this line his answer to the
+                // stale one would meet him as AlreadyAnswered — and the chain's
+                // accusation is the one he can neither withdraw nor walk away
+                // from. Guarded by
+                // test_ANewChainAccusationReopensTheRightToAnswer.
+                //
+                // Inside the `if`, deliberately: when a live accusation is being
+                // yielded to, nothing new is laid and the answer to what stands
+                // must not be touched. And nothing here can revert — it is a
+                // delete, which matters because notifyArbiterTimeout reaches
+                // this branch inside an empty try/catch.
+                delete d.removalReply[arbiterAddr];
                 d.removalProposals[arbiterAddr] = ArbiterRegistryStorage.RemovalProposal({
                     cause:          _causeForPath(path),
                     // No digest: the evidence is the chain's own state, and a
@@ -2387,6 +2471,13 @@ contract ArbiterRegistryFacet {
                     && d.removalProposals[slashedArbiter].by == address(0)) {
                     delete d.removalProposals[slashedArbiter];
                     delete d.chainProposalPath[slashedArbiter];
+                    // The accusation is gone, so the flag "answered the thing
+                    // standing right now" has nothing left to point at (task 3,
+                    // 19 August 2026). Left behind, it would show a reader an
+                    // answer to an accusation the panel took back, and it would
+                    // meet the arbiter as AlreadyAnswered on the next one. The
+                    // words stay in the log, as everywhere else.
+                    delete d.removalReply[slashedArbiter];
                     d.arbiterMistakeStreak[slashedArbiter] = 0;
                     d.suspendedUntil[slashedArbiter]       = 0;
                     emit ChainAccusationCleared(slashedArbiter, agreement);

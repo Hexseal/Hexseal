@@ -1771,10 +1771,15 @@ export const FORWARDER_CUSTOM_ERRORS = {
   //     reference to a dispute.
   //   DisputeRefNotApplicable — a dispute reference attached to a cause it does
   //     not belong to.
-  //   AlreadyAnswered — the removed arbiter has already answered; a second
-  //     answer is not written.
-  //   NothingToAnswer — there is nothing to answer: no removal against this
-  //     address.
+  //   AlreadyAnswered — he has already answered THIS accusation; a second
+  //     answer is not written. One accusation, one answer — a new accusation
+  //     (laid by a person or by the chain) opens the right again.
+  //   NothingToAnswer — nothing stands against this address: no live proposal
+  //     AND no removal. Since 19 August 2026 the answer is taken DURING the
+  //     48-hour pause as well, so a seated arbiter under a live accusation
+  //     does NOT get this refusal — but a stale proposal is not an accusation
+  //     and gives it, exactly when the removal itself has stopped being
+  //     executable.
   '0xaaffc640': 'RemovalSuspensionIsRemovalAuthorityOnly',
   '0x6db5710d': 'CauseNotProven',
   '0xeb8bf73b': 'EvidenceRequired',

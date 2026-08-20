@@ -86,9 +86,17 @@ describe('RemovalAnswered', () => {
     assert.fieldEquals('ArbiterRemoval', recordId(TX, 1), 'evidenceDigest', EVIDENCE.toHexString())
   })
 
-  // An automatic demotion sets removedAt exactly as a removal for cause does,
-  // so respondToRemoval is open to a demoted arbiter too, and their answer must
-  // hang off the demotion rather than off nothing.
+  // The chain's removal and the removal for cause share one body, so both write
+  // removedAt and respondToRemoval is open to a demoted arbiter too — their
+  // answer must hang off the demotion rather than off nothing.
+  //
+  // ⚠️ The sentence here used to credit the THIRD MISTAKE with setting
+  // removedAt ("an automatic demotion sets removedAt exactly as a removal for
+  // cause does"). Task 12 moved the unseating to executeChainRemoval, and task
+  // 3 opened the door on a live proposal as well — so an answer may now arrive
+  // BEFORE any demotion exists, and then it hangs off nothing at all. That case
+  // is the "no open accusation" test below, and it is now the common one for
+  // the chain-accused rather than the odd one.
   test('answered: a demoted arbiter answers the demotion, not a removal', () => {
     handleArbiterDemoted(demotedEvent(ARBITER, ZERO, PATH_AGREEMENT_TIMEOUT, AGREEMENT, TS, BLOCK, TX, 1))
     handleRemovalAnswered(removalAnsweredEvent(ARBITER, REPLY, TS2, BLOCK2, TX2, 1))

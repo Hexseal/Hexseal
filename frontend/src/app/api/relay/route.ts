@@ -662,8 +662,12 @@ export async function POST(req: NextRequest) {
           //     cannot be proven.
           //   DisputeRefNotApplicable — a dispute reference attached to a
           //     cause it does not belong to.
-          //   AlreadyAnswered — the removed arbiter has already answered.
-          //   NothingToAnswer — there is no removal against this address.
+          //   AlreadyAnswered — he has already answered THIS accusation. A
+          //     new accusation opens the right again.
+          //   NothingToAnswer — nothing stands against this address: no live
+          //     proposal AND no removal. Since 19 August 2026 the answer is
+          //     taken DURING the pause too, so a seated arbiter under a live
+          //     accusation does not get this refusal; a stale proposal does.
           '0xaaffc640': 'RemovalSuspensionIsRemovalAuthorityOnly',
           '0x6db5710d': 'CauseNotProven',
           '0xeb8bf73b': 'EvidenceRequired',

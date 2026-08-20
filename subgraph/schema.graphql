@@ -196,8 +196,19 @@ type Arbiter @entity(immutable: false) {
   # of the two is set, and both are cleared on re-seating because the chain
   # clears removedAt/removalReply there as well (ArbiterRegistryStorage
   # .clearRemovalRecord, called from both entry doors). Kept as a pointer so
-  # RemovalAnswered knows what it is answering — respondToRemoval only requires
-  # removedAt != 0, and an automatic demotion sets that too.
+  # RemovalAnswered knows what it is answering.
+  #
+  # ⚠️ AND SINCE 19 AUGUST 2026 THESE TWO NO LONGER COVER EVERY ANSWER. The
+  # chain takes a reply DURING the 48-hour pause, while the man is still seated
+  # and nothing has been removed — so the accusation being answered is a
+  # PROPOSAL, and neither pointer is set. The old wording here said the gate was
+  # "removedAt != 0, and an automatic demotion sets that too"; both halves are
+  # false now — task 12 stopped the automatic path from writing removedAt at
+  # all. handleRemovalAnswered logs a warning and keeps the answer unlinked in
+  # that case. Linking it to latestProposal is feed work nobody has ordered, and
+  # it is blocked upstream anyway: RemovalProposedByChain is not indexed at all
+  # (script/check_subgraph_arbiter_events.py says so out loud), so for the
+  # chain-accused there is no proposal record to hang anything off.
   openRemoval: ArbiterRemoval
   openDemotion: ArbiterDemotion
 
@@ -245,10 +256,14 @@ type ArbiterResignation implements ArbiterRecord @entity(immutable: true) {
 
 # Automatic removal on a run of judging mistakes.
 #
-# Mutable because the answer arrives later: respondToRemoval gates on
-# removedAt, which the automatic path sets exactly as the manual one does, so a
-# demoted arbiter can reply and the reply has to hang off the accusation it
-# answers.
+# Mutable because the answer arrives later: a demoted arbiter can reply, and the
+# reply has to hang off the accusation it answers.
+#
+# ⚠️ The reason used to be written as "respondToRemoval gates on removedAt,
+# which the automatic path sets exactly as the manual one does". Both halves
+# stopped being true: task 12 moved the unseating out of the automatic path, and
+# task 3 opened the door on a live proposal as well. What survives is the fact
+# this field exists for — the reply lands in a later transaction than the record.
 #
 # ⚠️ The forfeited bond is missing from this record because it is missing from
 # the event. The automatic path burns the bond into the vault just as
@@ -390,10 +405,15 @@ type RemovalAnswer implements ArbiterRecord @entity(immutable: true) {
 
   replyDigest: Bytes!
 
-  # Exactly one of these is set in practice: respondToRemoval requires
-  # removedAt != 0, which only the two removal doors set. Both stay null if an
-  # answer somehow arrives with no open accusation — the record survives on its
-  # own rather than being dropped.
+  # At most one of these is set. Both stay null when the answer arrives with no
+  # removal indexed against the address — the record survives on its own rather
+  # than being dropped.
+  #
+  # ⚠️ THAT IS NO LONGER THE ODD CASE, IT IS THE COMMON ONE (19 August 2026).
+  # The line here used to argue "respondToRemoval requires removedAt != 0, which
+  # only the two removal doors set", so exactly one pointer was always expected.
+  # The answer is now taken during the pause, before any removal exists, and the
+  # thing being answered is a proposal. See the note on Arbiter.openRemoval.
   removal: ArbiterRemoval
   demotion: ArbiterDemotion
 }

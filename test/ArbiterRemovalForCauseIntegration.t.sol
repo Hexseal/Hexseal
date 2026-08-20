@@ -662,17 +662,23 @@ contract ArbiterRemovalForCauseIntegrationTest is Test {
     //  можешь ответить» — вне зависимости от того, кто нажал. Публичная запись
     //  ArbiterDemoted вечна ровно так же, как ArbiterRemovedForCause.
     //
-    //  ⚠️ ЗАДАЧА 12: право открывает СНОС, а не третья ошибка. `removedAt`
-    //  ставит общее тело сноса, и до нажатия кнопки его нет — человек ещё в
-    //  корпусе, и отвечать ему пока не на что.
+    //  ⚠️ ЗАДАЧА 12 увела снятие в общую дверь, и `removedAt` ставит теперь
+    //  только снос. ЗАДАЧА 3 (19 августа 2026) дописала вторую дверь ответа:
+    //  живое предложение. Значит право ответа открывает УЖЕ ТРЕТЬЯ ОШИБКА —
+    //  вместе с приостановкой и обвинением, — а этот тест играет вторую
+    //  половину: снос открывает его тоже, и молчавший в паузу не теряет слова.
+    //  Первую половину играет test_TheChainAccusedAnswersDuringThePause ниже.
     // ============================================================
 
     function test_AutoDemotedArbiterCanAnswer() public {
         _threeOverturnsOnDistinctDisputes(arbiter);
 
-        // ⚠️ ЗАДАЧА 12: право ответа открывается СНОСОМ, а не третьей ошибкой.
-        // Отметку removedAt ставит снос, и до нажатия кнопки её нет — до неё
-        // человек не снят, а обвинён, и отвечать ему пока не на что.
+        // Здесь проверяется дверь `removedAt`, поэтому кнопку жмём: до неё
+        // отметки сноса нет. Что обвинённый мог ответить и РАНЬШЕ, начиная с
+        // третьей ошибки, — отдельная сцена
+        // (test_TheChainAccusedAnswersDuringThePause), и специально другая: эта
+        // обязана краснеть от поломки половины `removedAt`, а не от поломки
+        // половины «живое предложение».
         vm.warp(vm.getBlockTimestamp() + ArbiterAccountabilityFacet(address(diamond)).getRemovalDelay());
         vm.prank(STRANGER);
         ArbiterAccountabilityFacet(address(diamond)).executeChainRemoval(arbiter);
@@ -691,6 +697,139 @@ contract ArbiterRemovalForCauseIntegrationTest is Test {
             reply,
             unicode"автоматический путь тоже даёт право ответа — та же публичная запись, тот же ответ"
         );
+    }
+
+    // ============================================================
+    //  СЛОВО ДО ПРИГОВОРА, ОБВИНЯЕМЫЙ ЦЕПЬЮ (задача 3, 19 августа 2026)
+    //
+    //  Задача 12 увела автоснятие в общую дверь: третья судейская ошибка
+    //  приостанавливает и ОБВИНЯЕТ, а не снимает. Значит на этом пути
+    //  removedAt не ставится вовсе — и до задачи 3 обвинённый цепью не мог
+    //  ответить никак, ни во время паузы, ни после неё, пока кто-нибудь не
+    //  нажмёт кнопку.
+    //
+    //  Он же — единственный обвиняемый, у которого обвинитель безымянен: `by`
+    //  нулевой, слов в обвинении нет, поводом идут сами перевороты. И он же
+    //  единственный, кого обвинение вдобавок ПРИОСТАНАВЛИВАЕТ: человеческое
+    //  предложение работать не мешает, а это мешает. За двое суток паузы ответ
+    //  — буквально единственное, что он может сделать в цепи.
+    //
+    //  Сцены живут здесь, а не в лёгком стенде: обвинение цепи кладёт
+    //  ArbiterRegistryFacet._recordArbiterMistake, а отвечают через
+    //  ArbiterAccountabilityFacet — обоим нужно одно настоящее хранилище за
+    //  одним даймондом.
+    // ============================================================
+
+    /// Главный случай задачи: обвинённый ЦЕПЬЮ отвечает во время паузы, ещё
+    /// сидя в корпусе и не будучи снесённым.
+    function test_TheChainAccusedAnswersDuringThePause() public {
+        _threeOverturnsOnDistinctDisputes(arbiter);
+
+        assertTrue(
+            ArbiterAccountabilityFacet(address(diamond)).hasLiveProposal(arbiter),
+            unicode"сетап: цепь обвинила"
+        );
+        assertTrue(
+            ArbiterRegistryFacet(address(diamond)).isRegisteredArbiter(arbiter),
+            unicode"сетап: он ещё в корпусе — обвинён, а не снят"
+        );
+
+        bytes32 reply = keccak256(unicode"все три спора вёл по инструкции, вот логи");
+        vm.prank(arbiter);
+        ArbiterAccountabilityFacet(address(diamond)).respondToRemoval(
+            reply, unicode"перевороты были, вины моей в них нет"
+        );
+
+        assertEq(
+            ArbiterAccountabilityFacet(address(diamond)).getRemovalReply(arbiter), reply,
+            unicode"возражение легло в цепь до приговора, которого может и не быть"
+        );
+    }
+
+    /// ⚠️ ВТОРОЕ ОБВИНЕНИЕ ЦЕПИ ОТКРЫВАЕТ ПРАВО ЗАНОВО, и без очистки в
+    /// _recordArbiterMistake оно бы НЕ открылось. Это дыра, которой задание
+    /// задачи 3 не знало: оно перечислило места, где предложение ИСЧЕЗАЕТ, и
+    /// закрыло очисткой только человеческую дверь его ПОЯВЛЕНИЯ
+    /// (proposeRemoval). Цепь кладёт своё обвинение мимо неё — прямой записью
+    /// в хранилище.
+    ///
+    /// Сцена без единого искусственного шага: обвинение цепи протухает
+    /// неисполненным (кнопка ничья, нажать её никто не обязан), человек
+    /// остаётся сидеть, счётчик остаётся стоять — и следующий переворот кладёт
+    /// новое обвинение. Ответ на прежнее превратил бы его в AlreadyAnswered
+    /// навсегда.
+    function test_ANewChainAccusationReopensTheRightToAnswer() public {
+        _threeOverturnsOnDistinctDisputes(arbiter);
+
+        vm.prank(arbiter);
+        ArbiterAccountabilityFacet(address(diamond)).respondToRemoval(keccak256("a1"), "");
+
+        // Никто не нажал: обвинение протухает само. Отзыва нет, оправдания
+        // нет — ничто не стирает ответ по дороге.
+        vm.warp(vm.getBlockTimestamp() + ArbiterAccountabilityFacet(address(diamond)).getProposalTTL());
+        assertFalse(
+            ArbiterAccountabilityFacet(address(diamond)).hasLiveProposal(arbiter),
+            unicode"сетап: прежнее обвинение протухло неисполненным"
+        );
+
+        // Четвёртый переворот — цепь обвиняет снова.
+        _disputeAndOverturn(address(0x9E1), address(0x9E2));
+        assertTrue(
+            ArbiterAccountabilityFacet(address(diamond)).hasLiveProposal(arbiter),
+            unicode"сетап: цепь положила новое обвинение"
+        );
+
+        vm.prank(arbiter);
+        ArbiterAccountabilityFacet(address(diamond)).respondToRemoval(keccak256("a2"), "");
+        assertEq(
+            ArbiterAccountabilityFacet(address(diamond)).getRemovalReply(arbiter), keccak256("a2"),
+            unicode"на новое обвинение цепи он ответил заново, а не упёрся в AlreadyAnswered"
+        );
+    }
+
+    /// Оправдание коллегией — четвёртое место, где обвинение исчезает, и
+    /// задание задачи 3 его не знало (оно появилось задачей 12). Цепь забирает
+    /// своё слово целиком: предложения нет, счётчик ноль, приостановка снята —
+    /// и ответа тоже нет, потому что отвечать больше не на что.
+    function test_VindicationClosesTheAnswerToTheChainsAccusation() public {
+        address v1 = address(0x7E1);
+        address v2 = address(0x7E2);
+        address v3 = address(0x7E3);
+        ArbiterRegistryFacet(address(diamond)).addArbiter(v1);
+        ArbiterRegistryFacet(address(diamond)).addArbiter(v2);
+        ArbiterRegistryFacet(address(diamond)).addArbiter(v3);
+
+        _disputeAndOverturn(address(0x9F1), address(0x9F2));
+        _disputeAndOverturn(address(0x9F3), address(0x9F4));
+        address agr = _disputeAndOverturn(address(0x9F5), address(0x9F6));
+
+        vm.prank(arbiter);
+        ArbiterAccountabilityFacet(address(diamond)).respondToRemoval(keccak256("my side"), "");
+        assertEq(
+            ArbiterAccountabilityFacet(address(diamond)).getRemovalReply(arbiter), keccak256("my side"),
+            unicode"сетап: ответ на обвинение цепи лёг"
+        );
+
+        usdc.mint(address(0x9F5), 100 * 10 ** 6);
+        vm.prank(address(0x9F5));
+        usdc.approve(address(diamond), 20 * 10 ** 6);
+        vm.prank(address(0x9F5));
+        ArbiterRegistryFacet(address(diamond)).raiseAppeal(agr);
+        vm.prank(v1);
+        ArbiterRegistryFacet(address(diamond)).voteOnAppeal(agr, true);
+        vm.prank(v2);
+        ArbiterRegistryFacet(address(diamond)).voteOnAppeal(agr, true);
+        vm.prank(v3);
+        ArbiterRegistryFacet(address(diamond)).voteOnAppeal(agr, false);
+        ArbiterRegistryFacet(address(diamond)).resolveAppeal(agr);
+
+        assertEq(
+            ArbiterAccountabilityFacet(address(diamond)).getRemovalReply(arbiter), bytes32(0),
+            unicode"ответ снят вместе с обвинением, которое коллегия забрала"
+        );
+        vm.prank(arbiter);
+        vm.expectRevert(ArbiterAccountabilityFacet.NothingToAnswer.selector);
+        ArbiterAccountabilityFacet(address(diamond)).respondToRemoval(keccak256("again"), "");
     }
 
     /// п. 66, следствие второе: тем же вызовом глушился АВТОМАТ.

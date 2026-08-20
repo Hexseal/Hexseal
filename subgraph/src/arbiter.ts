@@ -164,9 +164,11 @@ export function handleArbiterDemoted(event: ArbiterDemoted): void {
   demotion.ordinal = arbiter.demotionCount
   demotion.save()
 
-  // An automatic demotion sets removedAt exactly as a removal for cause does,
-  // so respondToRemoval is open to this person and the reply must have
-  // something to hang off.
+  // The removal for cause and the chain's own removal share one body, so both
+  // write removedAt and both open respondToRemoval to this person — the reply
+  // must have something to hang off. (The sentence here used to credit the
+  // THIRD MISTAKE with setting removedAt; task 12 moved the unseating to
+  // executeChainRemoval, which is the event this handler serves.)
   arbiter.openDemotion = demotion.id
   arbiter.openRemoval = null
   voidOpenProposal(arbiter, 'demoted', event)
@@ -408,8 +410,14 @@ export function handleRemovalAnswered(event: RemovalAnswered): void {
   answer.replyDigest = event.params.replyDigest
 
   // Hang the answer off whichever accusation is open. The contract allows one
-  // reply per removal record and clears the slot on re-seating, so at most one
-  // of the two pointers is set.
+  // reply per accusation and clears the slot whenever an accusation is laid or
+  // taken back, so at most one of the two pointers is set.
+  //
+  // ⚠️ Often NEITHER is, and the warning below is the honest outcome rather
+  // than a bug: since 19 August 2026 the reply may be given during the pause,
+  // when the thing answered is a proposal and no removal exists yet. For the
+  // chain-accused there is nothing to link to at all — RemovalProposedByChain
+  // is not indexed (script/check_subgraph_arbiter_events.py names that gap).
   let removalId = arbiter.openRemoval
   let demotionId = arbiter.openDemotion
 

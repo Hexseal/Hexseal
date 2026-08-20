@@ -1089,6 +1089,10 @@ contract ArbiterRemovalForCauseTest is Test {
     //  отменяет и ничего не возвращает — он существует, чтобы читатель цепи
     //  видел ДВЕ записи вместо одной.
     //
+    //  ⚠️ Сцены НИЖЕ, в этом разделе, играют ответ ПОСЛЕ сноса — вторую из
+    //  двух дверей. Первая, ответ во время паузы, появилась задачей 3
+    //  (19 августа 2026) и живёт следующим разделом.
+    //
     //  ⚠️ Единственная функция этого фасета, которая читает _msgSender(): её
     //  зовёт обычный человек, у которого может не быть ETH. Через релеер
     //  msg.sender это адрес форвардера, и ответ записался бы форвардеру.
@@ -1110,7 +1114,11 @@ contract ArbiterRemovalForCauseTest is Test {
         assertEq(acc.getRemovalReply(arbiter), reply, unicode"ответ лёг в цепь");
     }
 
-    function test_AnswerIsOnceOnly() public {
+    /// ⚠️ ПЕРЕИМЕНОВАН ИЗ test_AnswerIsOnceOnly (задача 3, 19 августа 2026).
+    /// Отвечают теперь один раз НА ОБВИНЕНИЕ, а не один раз навсегда: новое
+    /// обвинение открывает право заново (test_NewProposalReopensTheRightToAnswer).
+    /// Сцена не менялась — тот же второй ответ на то же обвинение, тот же отказ.
+    function test_AnswerIsOncePerAccusation() public {
         _setStreak(arbiter, 2);
         _proposeAndWait(arbiter, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0), "");
         acc.removeArbiterForCause(arbiter, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0), address(0), "");
@@ -1131,12 +1139,199 @@ contract ArbiterRemovalForCauseTest is Test {
         acc.respondToRemoval(bytes32(0), "");
     }
 
-    /// Отвечать может только тот, кого сняли. Иначе посторонний засыпал бы
-    /// ленту чужими «ответами».
-    function test_OnlyRemovedCanAnswer() public {
+    /// A stranger with nothing standing against him — no removal, no proposal
+    /// — still cannot answer. The edit below WIDENED this door, it did not
+    /// take it off its hinges.
+    ///
+    /// ⚠️ RENAMED FROM test_OnlyRemovedCanAnswer (task 3, 19 August 2026), and
+    /// the old name is why: since the answer is taken during the pause, "only
+    /// the removed may answer" is no longer true, and a test name is an
+    /// assertion like any other. The scene did not change — the same address
+    /// with nothing against it gets the same refusal.
+    function test_StrangerWithNoAccusationStillCannotAnswer() public {
         vm.prank(address(0x5A));
         vm.expectRevert(ArbiterAccountabilityFacet.NothingToAnswer.selector);
-        acc.respondToRemoval(keccak256("x"), "");
+        acc.respondToRemoval(keccak256("x"), unicode"я вообще не при чём");
+    }
+
+    // ============================================================
+    //  СЛОВО ДО ПРИГОВОРА (замысел 17 августа 2026, решение 3)
+    //
+    //  До задачи 3 respondToRemoval требовала removedAt != 0 — то есть слово
+    //  давалось ПОСЛЕ приговора. Пауза задачи 2 без этой правки была бы двумя
+    //  сутками, в которые обвиняемый не может в цепи ровно ничего.
+    //
+    //  Ответ часы НЕ двигает: он не запускает и не продлевает таймер. Его
+    //  работа — лечь в запись ДО решения, чтобы снос случился поверх
+    //  возражения, а не вместо него. Ускорять снос молчанием тоже нельзя:
+    //  молчащего сносили бы быстрее, и отвечать стало бы выгодно ради
+    //  оттягивания.
+    //
+    //  ⚠️ Главный обвиняемый этой задачи — тот, кого обвинила ЦЕПЬ, — здесь не
+    //  разыгрывается вовсе: его обвинение кладёт _recordArbiterMistake в
+    //  ArbiterRegistryFacet, то есть за другим фасетом. Его сцены живут в
+    //  test/ArbiterRemovalForCauseIntegration.t.sol, на настоящем даймонде.
+    // ============================================================
+
+    /// Главное этой задачи: под живым предложением ответ принимается.
+    function test_AccusedAnswersDuringThePause() public {
+        acc.proposeRemoval(
+            arbiter, ArbiterAccountabilityFacet.Cause.Collusion, DIGEST, PROPOSAL_WORDS
+        );
+
+        bytes32 reply = keccak256(unicode"вот переписка целиком, судите сами");
+        vm.prank(arbiter);
+        acc.respondToRemoval(reply, unicode"оба спора вёл по инструкции, вот лог");
+
+        assertEq(acc.getRemovalReply(arbiter), reply, unicode"ответ лёг в цепь до приговора");
+        assertTrue(_isArbiterRaw(arbiter), unicode"и он всё ещё арбитр — приговора не было");
+    }
+
+    /// Ответ таймер НЕ двигает. Замеряется исходом, а не чтением поля: снос
+    /// проходит ровно на той же секунде, что и без ответа.
+    function test_AnswerDoesNotMoveTheClock() public {
+        _setStreak(arbiter, 2);
+        acc.proposeRemoval(arbiter, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0), "");
+        uint256 proposedAt = vm.getBlockTimestamp();
+
+        vm.warp(proposedAt + 1 hours);
+        vm.prank(arbiter);
+        acc.respondToRemoval(keccak256("answer"), unicode"не согласен");
+
+        vm.warp(proposedAt + acc.getRemovalDelay());
+        acc.removeArbiterForCause(
+            arbiter, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0), address(0), ""
+        );
+        assertFalse(_isArbiterRaw(arbiter), unicode"ответ ничего не отложил");
+    }
+
+    /// Ответ, данный ДО сноса, переживает снос — и это весь смысл правки:
+    /// читатель цепи видит ДВЕ записи вместо одной, причём возражение теперь
+    /// СТАРШЕ приговора, а не написано вдогонку ему.
+    ///
+    /// ⚠️ Этим же держится решение НЕ стирать removalReply в
+    /// ArbiterRegistryStorage.clearSeat (её зовёт _performRemoval): очистка там
+    /// сделала бы снос заменой возражения, а не наложением поверх него.
+    function test_AnswerGivenBeforeRemovalSurvivesIt() public {
+        _setStreak(arbiter, 2);
+        acc.proposeRemoval(arbiter, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0), "");
+
+        bytes32 reply = keccak256(unicode"возражение");
+        vm.prank(arbiter);
+        acc.respondToRemoval(reply, "");
+
+        vm.warp(vm.getBlockTimestamp() + acc.getRemovalDelay());
+        acc.removeArbiterForCause(
+            arbiter, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0), address(0), ""
+        );
+
+        assertEq(
+            acc.getRemovalReply(arbiter), reply,
+            unicode"снос случился ПОВЕРХ возражения, а не вместо него"
+        );
+    }
+
+    /// Ответить можно один раз на обвинение, а не один раз навсегда. Новое
+    /// предложение открывает право заново.
+    ///
+    /// ⚠️ Без очистки в proposeRemoval сидящий арбитр, ответивший на
+    /// протухшее потом предложение, ПОТЕРЯЛ БЫ право отвечать навсегда:
+    /// removalReply стирала только clearRemovalRecord, а её зовут лишь двери
+    /// ПОСАДКИ, через которые он не проходит — он никуда не уходил.
+    ///
+    /// ⚠️ ЧЕРЕЗ ПРОТУХАНИЕ, А НЕ ЧЕРЕЗ ОТЗЫВ, и это не выбор вкуса. Задание
+    /// предлагало сцену «ответил → отозвали → обвинили снова», но отзыв сам
+    /// стирает removalReply — назначенный на неё замок (очистка в
+    /// proposeRemoval) остался бы зелёным при снятии, и число красных говорило
+    /// бы про соседнюю правку. Протухание не стирает ничего, поэтому здесь
+    /// краснеет ровно та строка, ради которой сцена написана.
+    function test_NewProposalReopensTheRightToAnswer() public {
+        acc.proposeRemoval(arbiter, ArbiterAccountabilityFacet.Cause.Leak, keccak256("e1"), unicode"слил переписку");
+        vm.prank(arbiter);
+        acc.respondToRemoval(keccak256("a1"), "");
+
+        // Протухло само, никто ничего не отзывал и не стирал.
+        vm.warp(vm.getBlockTimestamp() + acc.getProposalTTL());
+
+        acc.proposeRemoval(arbiter, ArbiterAccountabilityFacet.Cause.Leak, keccak256("e2"), unicode"снова слил переписку");
+        vm.prank(arbiter);
+        acc.respondToRemoval(keccak256("a2"), "");
+
+        assertEq(acc.getRemovalReply(arbiter), keccak256("a2"), unicode"второй ответ лёг поверх первого");
+    }
+
+    /// Отзыв обвиняемый обязан увидеть как ЗАКРЫТИЕ, а не как тишину. В
+    /// хранилище закрытие выглядит так: против него больше ничего не лежит и
+    /// отвечать не на что.
+    function test_WithdrawalClosesTheAnswer() public {
+        acc.proposeRemoval(arbiter, ArbiterAccountabilityFacet.Cause.Other, DIGEST, PROPOSAL_WORDS);
+        vm.prank(arbiter);
+        acc.respondToRemoval(keccak256("a"), "");
+
+        acc.withdrawProposal(arbiter);
+
+        assertEq(acc.getRemovalReply(arbiter), bytes32(0), unicode"ответ снят вместе с обвинением");
+        vm.prank(arbiter);
+        vm.expectRevert(ArbiterAccountabilityFacet.NothingToAnswer.selector);
+        acc.respondToRemoval(keccak256("a"), "");
+    }
+
+    /// Отзыв против ПУСТОЙ записи не трогает ответ снятого. Дверь отзыва
+    /// принадлежит обвинителю, и без этой границы он стирал бы возражение
+    /// человека, которого уже снёс: у снятого предложения нет (его убрал
+    /// clearSeat), зато есть ответ — и он обязан пережить чужое нажатие.
+    function test_WithdrawingNothingDoesNotEraseARemovedMansAnswer() public {
+        _setStreak(arbiter, 2);
+        _proposeAndWait(arbiter, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0), "");
+        acc.removeArbiterForCause(
+            arbiter, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0), address(0), ""
+        );
+        vm.prank(arbiter);
+        acc.respondToRemoval(keccak256("my side"), "");
+
+        acc.withdrawProposal(arbiter);   // записи нет — отзывать нечего
+
+        assertEq(
+            acc.getRemovalReply(arbiter), keccak256("my side"),
+            unicode"возражение снятого не стирается отзывом пустоты"
+        );
+    }
+
+    /// Протухшее предложение — не обвинение. Отвечать на него нельзя: живого
+    /// обвинения нет, а исполнить его тоже уже нельзя (ProposalStale).
+    /// Единственная граница, где ответ и снос обязаны согласиться.
+    function test_StaleProposalIsNotAnAccusationToAnswer() public {
+        acc.proposeRemoval(arbiter, ArbiterAccountabilityFacet.Cause.Other, DIGEST, PROPOSAL_WORDS);
+        vm.warp(vm.getBlockTimestamp() + acc.getProposalTTL());
+
+        vm.prank(arbiter);
+        vm.expectRevert(ArbiterAccountabilityFacet.NothingToAnswer.selector);
+        acc.respondToRemoval(keccak256("a"), "");
+    }
+
+    /// Инвариант, на котором держится очистка в proposeRemoval: у СИДЯЩЕГО
+    /// арбитра removedAt всегда ноль. Иначе новое предложение стирало бы ответ
+    /// на живой, ещё не отменённый снос.
+    ///
+    /// Контроль стыка, не замок. Ловит разъезд ПАРЫ «двери входа стирают
+    /// removedAt» / «proposeRemoval требует isArbiter» — если завтра кто-то
+    /// заведёт третью дверь посадки без clearRemovalRecord, здесь станет видно.
+    ///
+    /// ⚠️ Замерено, а не обещано: снятие `if (!d.isArbiter[arbiter]) revert
+    /// NotAnArbiter();` из `proposeRemoval` даёт ДВА красных — этот и
+    /// `test_ProposeRevertsIfNotAnArbiter`. То есть единственным красным он на
+    /// этой порче не бывает, и его молчание само по себе ничего не значит.
+    /// Утверждать, что так на ЛЮБОЙ порче, было бы обещанием без замера.
+    function test_SeatedArbiterNeverCarriesALiveRemoval() public {
+        _setStreak(arbiter, 2);
+        _proposeAndWait(arbiter, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0), "");
+        acc.removeArbiterForCause(
+            arbiter, ArbiterAccountabilityFacet.Cause.OverturnedVerdicts, bytes32(0), address(0), ""
+        );
+
+        // Против снятого предложение положить нельзя вовсе — он не арбитр.
+        vm.expectRevert(ArbiterAccountabilityFacet.NotAnArbiter.selector);
+        acc.proposeRemoval(arbiter, ArbiterAccountabilityFacet.Cause.Other, DIGEST, PROPOSAL_WORDS);
     }
 
     // ============================================================

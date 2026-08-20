@@ -649,10 +649,12 @@ contract DeployFull is Script {
         sels[12] = ArbiterAccountabilityFacet.getRemovalProposal.selector;
         sels[13] = ArbiterAccountabilityFacet.getProposalTTL.selector;
 
-        // Право ответа снятого (задача 8, 15 августа 2026): обвинение против
-        // настоящего адреса лежит в цепи вечно, respondToRemoval — ЕДИНСТВЕННАЯ
-        // гейслесс-функция этого фасета (зовёт её снятый арбитр, обычный
-        // человек), читает отправителя через собственный _msgSender().
+        // Право ответа обвинённого (задача 8, 15 августа 2026; с 19 августа
+        // ответ принимается ещё ВО ВРЕМЯ паузы, а не только после сноса):
+        // обвинение против настоящего адреса лежит в цепи вечно,
+        // respondToRemoval — ЕДИНСТВЕННАЯ гейслесс-функция этого фасета (зовёт
+        // её обвинённый или снятый арбитр, обычный человек), читает
+        // отправителя через собственный _msgSender().
         sels[14] = ArbiterAccountabilityFacet.respondToRemoval.selector;
         sels[15] = ArbiterAccountabilityFacet.getRemovalReply.selector;
 

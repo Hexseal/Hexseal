@@ -5,11 +5,15 @@ pragma solidity ^0.8.20;
 // HEXSEAL — ArbiterAccountabilityFacet.sol
 //
 // Ответственность ручных арбитров: приостановка, снос с поводом, предложение
-// директора (задача 7), право ответа снятого.
+// директора (задача 7), право ответа ОБВИНЁННОГО — с 19 августа 2026 ответ
+// принимается ещё во время паузы, а не только после сноса (задача 3).
 //
-// ПОЧЕМУ ОТДЕЛЬНЫЙ ФАСЕТ, а не дописка в ArbiterRegistryFacet: тот занимает
-// 21 227 байт развёрнутого кода из 24 576 (86.4 %, замерено 15 августа 2026).
-// Запаса в 3.3 КБ не хватает. Фасеты даймонда делят хранилище по неймспейсу,
+// ПОЧЕМУ ОТДЕЛЬНЫЙ ФАСЕТ, а не дописка в ArbiterRegistryFacet: тому не хватает
+// места, и с тех пор стало теснее. Снимок, устаревающий при каждой правке
+// реестра: 21 227 байт из 24 576 (86,4 %) 15 августа 2026 → 23 072 из 24 576
+// (93,9 %, запас 1 504) 19 августа. Актуальное число не отсюда, а из
+// `forge build --sizes`; следствие для будущих работ — docs/OPEN-ITEMS.md,
+// пункт 94: новую функцию по умолчанию класть СЮДА, а не в реестр. Фасеты даймонда делят хранилище по неймспейсу,
 // поэтому этот работает с тем же ArbiterRegistryStorage и тем же POSITION —
 // переноса данных не происходит вовсе.
 //
@@ -26,8 +30,10 @@ pragma solidity ^0.8.20;
 // следующей задачи того же плана, здесь не реализовано.
 //
 // ⚠️ Задача 8 (15 августа 2026, право ответа снятого) добавила respondToRemoval
-// — ПЕРВУЮ и ЕДИНСТВЕННУЮ гейслесс-функцию этого фасета. Зовёт её снятый
-// арбитр, обычный человек, у которого может не быть ETH; на пути через
+// — ПЕРВУЮ и ЕДИНСТВЕННУЮ гейслесс-функцию этого фасета. Зовёт её обвинённый
+// или снятый арбитр — обычный человек, у которого может не быть ETH (с 19
+// августа 2026 ответ принимается ещё ВО ВРЕМЯ паузы, то есть чаще всего
+// звонящий здесь — действующий арбитр под живым обвинением); на пути через
 // релеер msg.sender — адрес MinimalForwarder, а не человек. Файл теперь
 // реализует собственный _msgSender() (копия тела ArbiterRegistryFacet.
 // _msgSender — про то, чем это совпадение сторожится и чем НЕ сторожится, см.
@@ -204,7 +210,8 @@ contract ArbiterAccountabilityFacet {
     error DisputeRefRequired();
     error DisputeRefNotApplicable();
 
-    // ── Право ответа снятого (задача 8, 15 августа 2026) ──
+    // ── Право ответа обвинённого (задача 8, 15 августа 2026; с 19 августа
+    //    ответ принимается ещё ВО ВРЕМЯ паузы, не только после сноса) ──
     error AlreadyAnswered();
     error NothingToAnswer();
     error ZeroDigest();
@@ -1096,9 +1103,16 @@ contract ArbiterAccountabilityFacet {
         d.isArbiter[arbiter] = false;
         ArbiterRegistryStorage.clearSeat(d, arbiter);
 
-        // Момент сноса — нужен, чтобы respondToRemoval (задача 8) отличал
-        // «сняли и он молчит» от «его никогда не снимали»: без этой отметки
-        // любой посторонний мог бы «ответить» на несуществующее обвинение.
+        // Момент сноса. С 19 августа 2026 это ВТОРАЯ из двух дверей ответа, а
+        // не единственная: respondToRemoval пускает и под живым предложением.
+        // Эта отметка отвечает за половину «его уже сняли, предложения больше
+        // нет (его убрал clearSeat строкой выше) — а сказать он всё ещё
+        // вправе». Без неё молчавший во время паузы терял бы слово ровно в тот
+        // момент, когда оно понадобилось.
+        //
+        // Границу «посторонний не отвечает на несуществующее обвинение» держат
+        // теперь обе половины вместе: ноль здесь И отсутствие живого
+        // предложения. Сторожит test_StrangerWithNoAccusationStillCannotAnswer.
         d.removedAt[arbiter] = block.timestamp;
 
         // The evidence is spent — see the docstring above.
@@ -1268,11 +1282,34 @@ contract ArbiterAccountabilityFacet {
     //  Обвинение против настоящего адреса лежит в цепи вечно. Ответ ничего
     //  не отменяет и ничего не возвращает — он существует, чтобы читатель
     //  цепи видел ДВЕ записи вместо одной.
+    //
+    //  ⚠️ С 19 августа 2026 ответ принимается ВО ВРЕМЯ паузы, а не только
+    //  после сноса: пока против человека висит живое предложение, он вправе
+    //  положить возражение в цепь. Часов это не двигает — снос случается
+    //  ровно на той же секунде, поверх возражения, а не вместо него.
+    //
+    //  Слот ответа — про ТЕКУЩЕЕ обвинение, а не про человека на всю жизнь.
+    //  Кто кладёт новое обвинение, тот его чистит (proposeRemoval и
+    //  ArbiterRegistryFacet._recordArbiterMistake); кто обвинение забирает,
+    //  чистит тоже (withdrawProposal и ветка оправдания в
+    //  ArbiterRegistryFacet.resolveAppeal).
+    //
+    //  ⚠️ СНОС СЛОТ НЕ ТРОГАЕТ, и это не пропуск, а требование: приговор
+    //  ложится ПОВЕРХ возражения, а не вместо него
+    //  (test_AnswerGivenBeforeRemovalSurvivesIt).
+    //
+    //  ⚠️ И ПРОТУХАНИЕ ЕГО ТОЖЕ НЕ ТРОГАЕТ — здесь стояло «снос —
+    //  ЕДИНСТВЕННОЕ событие, которое слот не трогает», и это была неправда.
+    //  У протухания кода нет вовсе: TTL просто перестаёт выполняться, стирать
+    //  некому. Отсюда состояние «обвинение мертво, а отпечаток лежит» —
+    //  открытый пункт 93 в docs/OPEN-ITEMS.md, и лечится он на стороне
+    //  ЧИТАТЕЛЯ: карточка обязана спрашивать пару «ответ + обвинение».
+    //  Право ответа при этом не теряется — следующее обвинение слот чистит.
     // ============================================================
 
     /// ⚠️ ЕДИНСТВЕННАЯ гейслесс-функция этого фасета. Отправитель берётся через
-    /// _msgSender(), а не msg.sender: её зовёт снятый арбитр — обычный человек,
-    /// у которого может не быть ETH. На пути через релеер msg.sender это адрес
+    /// _msgSender(), а не msg.sender: её зовёт обвинённый или снятый арбитр —
+    /// обычный человек, у которого может не быть ETH. На пути через релеер msg.sender это адрес
     /// MinimalForwarder, и ответ записался бы форвардеру, а не человеку.
     ///
     /// ⚠️ `reply` — ПРАВО, а не обязанность (замысел 17 августа 2026, решение
@@ -1294,7 +1331,38 @@ contract ArbiterAccountabilityFacet {
         address caller = _msgSender();
         ArbiterRegistryStorage.Data storage d = ArbiterRegistryStorage.data();
 
-        if (d.removedAt[caller] == 0) revert NothingToAnswer();
+        // ⚠️ THE ANSWER IS TAKEN DURING THE PAUSE (design of 17 August 2026,
+        // decision 3). This line used to read `removedAt == 0` alone, so the
+        // word came AFTER the sentence: the right of reply existed, the
+        // adversarial part did not. Task 2 gave the accused forty-eight hours
+        // and nothing he could do in them.
+        //
+        // TWO DOORS, not one: a LIVE PROPOSAL stands against him (he is still
+        // an arbiter, the clock of the pause is running) OR the removal has
+        // already happened. The second half is kept deliberately — a removal
+        // erases the proposal on its way out through clearSeat, and the man who
+        // was silent during the pause must still be able to speak after it.
+        //
+        // ⚠️ AND THE FIRST HALF IS THE ONLY DOOR THE CHAIN-ACCUSED HAS. Since
+        // task 12 the third judicial mistake SUSPENDS AND ACCUSES instead of
+        // unseating, so `removedAt` is never written on that path until
+        // somebody presses executeChainRemoval — and nobody is obliged to. He
+        // is the one accused by no person, and he is also the only one the
+        // accusation stops from working, so for those two days this is
+        // literally the only thing he can do on chain.
+        //
+        // A stale proposal does not let him in: hasLiveProposal compares
+        // against PROPOSAL_TTL with the same strictness as the gate in
+        // removeArbiterForCause — there is nothing to answer exactly when there
+        // is nothing left to execute.
+        //
+        // The answer does NOT move the clock: there is no write to
+        // removalProposals here, and there must never be one.
+        if (d.removedAt[caller] == 0 && !hasLiveProposal(caller)) revert NothingToAnswer();
+        // "Answered" means answered THE ACCUSATION THAT STANDS NOW, not
+        // answered once in a lifetime. Whoever lays a new accusation clears
+        // this — proposeRemoval for a person's, _recordArbiterMistake for the
+        // chain's — and whoever takes one back clears it too.
         if (d.removalReply[caller] != bytes32(0)) revert AlreadyAnswered();
 
         d.removalReply[caller] = replyDigest;
@@ -1441,6 +1509,34 @@ contract ArbiterAccountabilityFacet {
         }
 
         if (!d.isArbiter[arbiter]) revert NotAnArbiter();
+
+        // ⚠️ A NEW ACCUSATION IS A NEW RIGHT TO ANSWER (design of 17 August
+        // 2026, decision 3, consequence).
+        //
+        // The hole this closes is opened by the "answer during the pause" edit
+        // itself: `removalReply` used to be erased ONLY by clearRemovalRecord,
+        // and that is called only by the SEATING doors (addArbiter /
+        // applyAsArbiter). A seated arbiter who answers a proposal goes through
+        // neither — he never left — so his answer would sit in storage forever,
+        // and the SECOND, real accusation against him would meet AlreadyAnswered
+        // on empty ground. The right of reply would be lost without a single
+        // removal.
+        //
+        // These lines cannot erase an answer to a LIVE removal: proposeRemoval
+        // requires isArbiter, and a seated arbiter always has removedAt == 0 —
+        // both entry doors clear it, both exit doors take isArbiter away.
+        // test_SeatedArbiterNeverCarriesALiveRemoval stands over that pair.
+        //
+        // ⚠️ This is not the only door an accusation comes through. The chain
+        // lays its own past this function, by writing storage directly in
+        // ArbiterRegistryFacet._recordArbiterMistake, and the same clearing
+        // line stands there for the same reason.
+        //
+        // The words themselves are not lost: they are in the RemovalReplyGiven
+        // log. Storage answers one question only — "did he answer the accusation
+        // standing right now" — which is exactly what the docstring of the
+        // removalReply field says.
+        delete d.removalReply[arbiter];
 
         // ⚠️ Round 1 took this power away from the chief on withdrawProposal —
         // "stop a removal, and start it over, every time" — and it walked back
@@ -1603,6 +1699,21 @@ contract ArbiterAccountabilityFacet {
         }
 
         if (existed) {
+            // The accused is owed a CLOSURE, not a silence (design decision 4).
+            // In storage a closure looks like this: nothing stands against him
+            // any more, and there is nothing left to answer. The answer itself
+            // stays on chain in RemovalAnswered / RemovalReplyGiven — what is
+            // erased is not the history but the flag "answered the thing that
+            // is hanging right now".
+            //
+            // ⚠️ INSIDE `if (existed)`, AND THAT PLACEMENT IS THE RULE, not
+            // tidiness. withdrawProposal does not require isArbiter, and against
+            // a man already removed the record is empty (clearSeat erased it)
+            // while his answer is not. An unconditional delete here would hand
+            // the accuser a button that wipes the objection of someone he has
+            // already unseated. Guarded by
+            // test_WithdrawingNothingDoesNotEraseARemovedMansAnswer.
+            delete d.removalReply[arbiter];
             emit RemovalProposalWithdrawn(arbiter, msg.sender);
         }
     }
@@ -1654,11 +1765,23 @@ contract ArbiterAccountabilityFacet {
     /// обвинение ЦЕПИ целиком. Граница строгая, как у suspendedUntil: на самой
     /// последней секунде TTL ещё живо.
     ///
-    /// ⚠️ Читателей прибавилось: с задачи 12 отсюда же берёт ответ
-    /// `liftSuspension` — «висит ли против человека живое обвинение цепи», —
-    /// и берёт именно ОТСЮДА, чтобы протухание считалось одним правилом
-    /// (C-2 круга правок 1: первая редакция того предиката про TTL забыла и
-    /// запирала директора навсегда).
+    /// ⚠️ Читателей несколько, и списка их здесь больше нет: он протухал уже
+    /// дважды — от правок в чужих функциях, в диф которых эта строка не
+    /// попадала (задача 12 добавила `liftSuspension`, задача 3 —
+    /// `respondToRemoval`). Вместо списка — правило: кому нужен БУЛЕВ ответ
+    /// «живо ли предложение», зовёт эту функцию и не пишет сравнение заново.
+    ///
+    /// Законных исключений ИЗ ЭТОГО ПРАВИЛА в файле ровно два, и оба
+    /// сравнивают с `PROPOSAL_TTL` напрямую потому, что булева ответа им мало:
+    /// `removeArbiterForCause` и `executeChainRemoval` ревертят
+    /// `ProposalStale(proposedAt)` С АРГУМЕНТОМ. Проверяется грепом по
+    /// `PROPOSAL_TTL`: сравнений в файле должно быть ровно ТРИ — эти два и
+    /// строка тела ниже; объявление и геттер сравнений не содержат.
+    ///
+    /// Цена копии замерена дважды, оба раза в задаче 12: предикат
+    /// `liftSuspension` про TTL забыл и запирал директора навсегда (C-2 круга
+    /// правок 1); ветка оправдания в `resolveAppeal` гасила счётчик по
+    /// МЁРТВОМУ обвинению (круг правок 2).
     function hasLiveProposal(address arbiter) public view returns (bool) {
         ArbiterRegistryStorage.RemovalProposal storage p =
             ArbiterRegistryStorage.data().removalProposals[arbiter];
