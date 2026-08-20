@@ -302,6 +302,13 @@ library ArbiterRegistryStorage {
         /// стороны имеют XP от ТРЕТЬИХ лиц (приём MIN_COUNTERPARTY_XP из
         /// ReputationFacet), либо не по количеству, а по спорной сумме, либо
         /// не давать конвертации опираться на одно это число.
+        ///
+        /// ⚠️ И ЭТО ТОЛЬКО ПОЛОВИНА ДРОБИ (пункт 101, 21 августа 2026). Читать
+        /// стаж без переворотов нельзя: порядок «ошибка, ошибка, чистый» по
+        /// кругу растит ИМЕННО ЭТО ЧИСЛО, а серию до порога не доводит никогда,
+        /// и снаружи такой арбитр выглядел лучше честного новичка. Вторая
+        /// половина — `overturnedVerdicts`, дописана в конец этой же структуры;
+        /// карточка `getArbiterStanding` отдаёт их вместе.
         mapping(address => uint256) cleanVerdicts;
 
         /// Предложение директора снести арбитра (задача 7, 15 августа 2026).
@@ -469,6 +476,73 @@ library ArbiterRegistryStorage {
         /// question "is there a chain proposal" is asked of removalProposals
         /// (by == address(0) while proposedAt != 0), never of this field.
         mapping(address => uint8) chainProposalPath;
+
+        // ── Overturned verdicts, cumulative (item 101, 21 August 2026) ──────
+        //
+        // ⚠️ APPENDED AT THE END. Do not touch the order or the types of the
+        // fields above: the layout is append-only, gate
+        // script/check-storage-structs.sh, and this is the very class of bug
+        // that broke the live JobBoard in July 2026.
+
+        /// How many of this arbiter's verdicts have been overturned, counted
+        /// over his whole service — the half of the fraction that was missing.
+        ///
+        /// ⚠️ THIS IS NOT A SECOND `arbiterMistakeStreak`, AND IT IS NOT ITS
+        /// REPLACEMENT. That one is a streak of judicial mistakes IN A ROW, and
+        /// finalizeVerdict clears it on every clean verdict — which is exactly
+        /// how a bad arbiter stayed invisible. "Mistake, mistake, clean" round
+        /// and round never reaches MAX_ARBITER_MISTAKES, the automatic path
+        /// never fires, and `cleanVerdicts` keeps growing, so the record showed
+        /// a man with thirteen overturns as BETTER than an honest newcomer with
+        /// none. The streak keeps its meaning; this field answers the other
+        /// question, the one nothing answered.
+        ///
+        /// ⚠️ IT DECIDES NOTHING AND GATES NOTHING (owner's decision of
+        /// 21 August 2026, design section 16). The rungs are "visible →
+        /// counted", and this is the second one. No threshold reads it, no
+        /// automation fires on it, and no door asks it — deliberately, because
+        /// the number that expresses the principle is a FRACTION, not a sum: a
+        /// bare total punishes long service, twenty overturns out of five
+        /// hundred being a different man from twenty out of twenty-five. The
+        /// other half of the fraction is `cleanVerdicts`, and both go out
+        /// together through getArbiterStanding so the READER divides.
+        ///
+        /// ⚠️ WHAT IS COUNTED: the two paths where a verdict actually WAS
+        /// overturned — the hand (DemotionPath.OwnerOverturn) and the panel
+        /// (DemotionPath.AppealVote). NOT the timeout: nothing was overturned
+        /// there because nothing was ruled, and notifyArbiterTimeout says so
+        /// itself where it refuses to slash XP. The list is an ALLOW-list in
+        /// _recordArbiterMistake, not "everything except the timeout", so a
+        /// fourth path added later has to be named before it counts.
+        ///
+        /// ⚠️ A PANEL THAT VINDICATES TAKES ONE BACK, same as the streak. The
+        /// sequence: the arbiter rules, the hand overturns him (+1 here), the
+        /// losing side appeals, and the panel flips the ruling back to the
+        /// ARBITER'S OWN. In the end his verdict stands, so counting an
+        /// overturn against him would be the record lying — the very defect
+        /// bca3ecc2 fixed one counter over. ONE is subtracted, never the whole
+        /// count: overturns on OTHER disputes are his and stay his.
+        ///
+        /// That subtraction is sound only because "a hand pressed" now implies
+        /// "the outcome differs from what the arbiter ruled": overturnVerdict
+        /// refuses an empty press with VerdictUnchanged (review round 1,
+        /// 21 August 2026). Without that guard a panel DISAGREEING with the
+        /// arbiter was recorded as acquitting him.
+        ///
+        /// ⚠️ One shape survives, and it belongs to the migration rather than
+        /// to the design: this count is per ARBITER, so during the window where
+        /// pre-cut overturns went unrecorded, a give-back can spend a
+        /// post-cut one. Shut today by the corps having one member —
+        /// docs/OPEN-ITEMS.md, item 102.
+        ///
+        /// ⚠️ IT IS NOT THE FULL TRUTH ABOUT THE VINDICATED, and that is said
+        /// out loud: `cleanVerdicts` does not grow for him either, because
+        /// `v.overturned` stays true forever and finalizeVerdict reads that one
+        /// flag for two different facts (item 83). So a vindicated arbiter
+        /// lands back at zero-zero for that dispute rather than at a clean
+        /// verdict. Fixing that means splitting the flag, which is a fork in
+        /// the design and touches the money paths — not this field's to make.
+        mapping(address => uint256) overturnedVerdicts;
     }
 
     function data() internal pure returns (Data storage d) {
@@ -974,6 +1048,11 @@ contract ArbiterRegistryFacet {
     /// Alone it was not the promise, and saying otherwise here would be the
     /// very class of documentation this branch keeps having to correct.
     error AlreadyOverturned();
+    /// An overturn that changes nothing (review round 1 of item 101, 21 August
+    /// 2026). Not a nicety: `overturned` is read as "the outcome differs from
+    /// what the arbiter ruled", and an empty press made that false while
+    /// costing the arbiter XP and a mistake. See overturnVerdict.
+    error VerdictUnchanged();
     error VerdictFrozenError();
     error VerdictAlreadySubmitted();
     error NotTheClaimer();
@@ -1908,6 +1987,52 @@ contract ArbiterRegistryFacet {
         // must be the one the person reads.
         if (v.overturned) revert AlreadyOverturned();
 
+        // ⚠️ AN OVERTURN MUST OVERTURN (review round 1 of item 101, 21 August
+        // 2026). This door used to accept ANY `newClientWins`, including the
+        // value the arbiter had already ruled — a press that changed no
+        // outcome, cost the arbiter XP and a judicial mistake, and set
+        // `overturned` to true.
+        //
+        // That flag is what resolveAppeal reads to tell "the panel is
+        // vindicating him" from "the panel is overturning him". It asks whether
+        // A HAND HAS PRESSED, never whether the outcome now differs from the
+        // arbiter's ruling — so after an empty press the two cases became
+        // indistinguishable, and the WRONG one was picked: a panel that then
+        // voted for the OPPOSITE of the arbiter's ruling — saying plainly that
+        // he was wrong — was read as a vindication. Measured by the reviewer:
+        // streak 0, overturns 0, and if the empty press was the third mistake,
+        // the chain's own accusation and the suspension were quashed with it.
+        //
+        // So the record could be laundered on purpose: press into the same
+        // value, wait for a panel to disagree with the arbiter, walk out clean.
+        //
+        // `v.clientWins` is the arbiter's OWN ruling at this line, and that is
+        // structural rather than incidental: submitVerdict writes it, and the
+        // only two other writers (this line below and resolveAppeal) both set
+        // `overturned`, which the check above has just excluded.
+        //
+        // The fix belongs HERE and not in resolveAppeal: an empty overturn is
+        // not a real state to be interpreted more carefully later, it is a
+        // press that should never have been recorded. Refusing it keeps
+        // "overturned == the outcome differs from what the arbiter ruled" true
+        // AT EVERY POINT WHERE THAT FLAG IS READ, which is what every reader of
+        // it already assumes.
+        //
+        // ⚠️ Said with the bound rather than without it (review round 2): the
+        // implication is NOT an invariant of the field for all time. The
+        // vindication branch of resolveAppeal deliberately ends with
+        // `overturned` true and `clientWins` back at the arbiter's own value —
+        // a state this very line refuses to create. It reads the flag BEFORE
+        // making it, which is what keeps the two compatible, and the bound is
+        // what makes the sentence true instead of nearly true.
+        //
+        // Stands BELOW the four checks above for the same reason they are
+        // ordered as they are: "the door is shut" is the larger fact, and an
+        // empty press at a finalized verdict must read AlreadyFinalized. Pinned
+        // by test_OneVerdictCannotBeOverturnedThreeTimes, which asks for
+        // AlreadyOverturned on a press that is ALSO empty.
+        if (newClientWins == v.clientWins) revert VerdictUnchanged();
+
         address slashedArbiter = v.arbiter;
         v.clientWins = newClientWins;
         v.overturned = true;
@@ -2146,6 +2271,23 @@ contract ArbiterRegistryFacet {
         uint256 mistakes = d.arbiterMistakeStreak[arbiterAddr] + 1;
         d.arbiterMistakeStreak[arbiterAddr] = mistakes;
 
+        // ⚠️ THE CUMULATIVE COUNT IS NOT THE STREAK, AND IT DOES NOT TAKE ALL
+        // THREE PATHS (item 101, 21 August 2026). The line above records "one
+        // more judicial mistake in a row"; this one records "one more verdict
+        // of his was overturned", and the timeout is a judicial mistake that
+        // overturned NOTHING — there was no ruling to overturn, which is why
+        // notifyArbiterTimeout refuses to slash XP for it two hundred lines up.
+        // Counting it here would put an overturn in the numerator of a fraction
+        // whose denominator (`cleanVerdicts`) counts verdicts, and the reader
+        // would be dividing two different things.
+        //
+        // Written as an ALLOW-list rather than `!= AgreementTimeout`: a fourth
+        // DemotionPath added later must be named before it counts, instead of
+        // being counted by default by a condition nobody revisits.
+        if (path == DemotionPath.OwnerOverturn || path == DemotionPath.AppealVote) {
+            d.overturnedVerdicts[arbiterAddr]++;
+        }
+
         if (mistakes >= MAX_ARBITER_MISTAKES) {
             // The seat is no longer taken here. The automatic path stops the
             // arbiter at once and ACCUSES him; the removal itself runs through
@@ -2364,6 +2506,38 @@ contract ArbiterRegistryFacet {
             // once per verdict (appealResolved). That is why telling the two
             // cases apart needs no new storage field and the layout does not
             // move.
+            //
+            // ⚠️ AND THE STEP THIS FLAG IS ASKED TO TAKE — "a hand pressed,
+            // therefore the standing outcome is NOT the arbiter's ruling,
+            // therefore flipping it back vindicates him" — WAS UNSOUND UNTIL
+            // 21 August 2026 (review round 1 of item 101). overturnVerdict took
+            // any value, including the arbiter's own, so an empty press set
+            // this flag while the outcome still matched his ruling. The panel
+            // then flipping it produced the OPPOSITE of his ruling, and this
+            // branch read the panel's disagreement as an acquittal: streak and
+            // overturns wound back, and the chain's own accusation quashed.
+            //
+            // The premise is now enforced where it belongs — overturnVerdict
+            // refuses with VerdictUnchanged. Nothing in this branch had to
+            // change; what changed is that its premise became true.
+            //
+            // ⚠️ AND THE CLAIM IS BOUNDED TO THIS LINE, deliberately (review
+            // round 2, 21 August 2026, where the earlier wording was found
+            // stronger than the truth). What holds is: AT THIS READ, `true`
+            // implies the standing outcome differs from the arbiter's ruling.
+            // It is NOT a property of the field in general — three lines below,
+            // this branch itself flips `clientWins` back to the arbiter's own
+            // value and leaves `overturned` true, which is exactly the state
+            // the guard forbids elsewhere. That is correct and is the whole
+            // point of a vindication; it is also why the flag must be READ
+            // BEFORE the write, and why "by construction" without "here" would
+            // be a false statement in a public repository heading into audit.
+            //
+            // The bound holds because only two writers exist and both are
+            // excluded above: overturnVerdict cannot leave the flag set on a
+            // matching outcome (VerdictUnchanged), and this branch runs at most
+            // once per verdict (appealResolved), so its own later write cannot
+            // reach this read.
             bool alreadyOverturned = v.overturned;
 
             v.clientWins = !v.clientWins;
@@ -2423,6 +2597,50 @@ contract ArbiterRegistryFacet {
             //
             // Named so that it stays a known gap rather than a silent one.
             if (alreadyOverturned) {
+                // ⚠️ AND IT REACHES THE CUMULATIVE COUNT TOO, BY ONE (item 101,
+                // 21 August 2026). The panel has just restored this arbiter's
+                // own ruling, so his verdict was not overturned in the end and
+                // a mark in `overturnedVerdicts` for this dispute would be the
+                // record lying — the same argument that made the streak give
+                // one back, and the same one that stopped the second booking.
+                //
+                // ONE, never the whole count, and never zero: the branch below
+                // wipes the STREAK entirely when it withdraws the chain's own
+                // accusation, but that wipe is about not leaving a vindicated
+                // man one overturn away from being accused again. This number
+                // opens no door and can borrow no such reason — overturns on
+                // OTHER disputes stay his.
+                //
+                // ⚠️ THE FLOOR, AND WHAT IT IS AND IS NOT FOR — corrected in
+                // review round 1, where the first wording overstated the path.
+                //
+                // It is NOT reachable after the cut: every +1 here has a
+                // strictly earlier +1 behind it, and nothing zeroes this field
+                // — not removal, not withdrawal, not resignation, not
+                // re-seating. The migration window it was written for is
+                // narrower still: a verdict overturned BEFORE the cut and
+                // appealed AFTER needs raiseAppeal, which needs three voters
+                // besides the one who ruled — four arbiters — and the chain has
+                // ONE.
+                //
+                // The guard stays because the cost of being wrong is not a
+                // revert: unguarded, 0 − 1 wraps to 2²⁵⁶−1 and stands in a
+                // permanent record as the count of this arbiter's overturned
+                // verdicts. Guarded by
+                // test_VindicationCannotUnderflowTheOverturnCount.
+                //
+                // ⚠️ AND THE WINDOW HAS A SECOND, LIVELIER SHAPE, named rather
+                // than papered over: the count is per ARBITER, not per dispute.
+                // Overturn A before the cut (uncounted), overturn B after it
+                // (counted, total 1), then A's appeal vindicates him — and the
+                // one taken back is B's. A number he earned pays for one the
+                // chain never recorded. Same four-arbiter precondition, so it
+                // is shut for the same reason today; it is written down because
+                // seating three more arbiters opens both without touching a
+                // line of code. docs/OPEN-ITEMS.md, item 102.
+                uint256 overturns = d.overturnedVerdicts[slashedArbiter];
+                if (overturns > 0) d.overturnedVerdicts[slashedArbiter] = overturns - 1;
+
                 // ⚠️ VINDICATION MUST REACH THE CHAIN'S OWN ACCUSATION, not
                 // just the counter (task 12, trap 5, 18 August 2026) — and
                 // since C-1 the reason is STRONGER than the arithmetic first

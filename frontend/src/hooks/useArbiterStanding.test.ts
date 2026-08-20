@@ -5,7 +5,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
  *
  * Сторожатся три свойства, и каждое ломается молча:
  *
- *  1. ПОРЯДОК ПОЛЕЙ. Тринадцать значений приезжают кортежем, восемь из них
+ *  1. ПОРЯДОК ПОЛЕЙ. Четырнадцать значений приезжают кортежем, девять из них
  *     `uint256`. Перестановка любых двух не ревертит ничего, типами не ловится
  *     и на экране выглядит как правдоподобная чужая биография: «снимали 7 раз»
  *     вместо «залог 7 USDC». Ожидаемый порядок берётся ИЗ ABI (а тот заперт на
@@ -19,7 +19,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
  *  3. ПРИЗНАК «ПРОВЕРИЛА ЛИ ЦЕПЬ САМА» доезжает до карточки, а не теряется по
  *     дороге от расшифровки.
  *
- * ⚠️ ЦЕПЬ ЗДЕСЬ ОТВЕЧАЕТ НАРОЧНО СТРАННО — числами 0..12 по местам. Подставь
+ * ⚠️ ЦЕПЬ ЗДЕСЬ ОТВЕЧАЕТ НАРОЧНО СТРАННО — числами 0..13 по местам. Подставь
  * правдоподобные значения, и перестановка соседних полей осталась бы
  * незамеченной: «оба bigint, оба похожи на правду». Различимые по местам числа
  * — единственное, чем позиционную ошибку вообще можно поймать.
@@ -80,9 +80,9 @@ function answerReply(digest: `0x${string}`): void {
 const POSITIONAL = [
   0n, 1n, 2n, 3n,
   '0x0000000000000000000000000000000000000004' as `0x${string}`,
-  5n, 6n, 7n, 8n,
+  5n, 6n, 7n, 8n, 9n,
   true,
-  10n, 11n, 12,
+  11n, 12n, 13,
 ] as const;
 
 beforeEach(() => {
@@ -124,7 +124,7 @@ describe('карточку спрашивают у диамонда и имен�
   });
 });
 
-describe('тринадцать полей разложены по местам, а не как придётся', () => {
+describe('четырнадцать полей разложены по местам, а не как придётся', () => {
   it('S4 каждое поле стоит на том же месте, что и его возврат в ABI', () => {
     answerStanding(POSITIONAL);
     answerReply(ZERO_DIGEST);
@@ -140,8 +140,9 @@ describe('тринадцать полей разложены по местам, 
       suspendedUntil:         standing!.suspendedUntil,
       openClaims:             Number(standing!.openClaims),
       cleanVerdicts:          Number(standing!.cleanVerdicts),
+      overturnedVerdicts:     Number(standing!.overturnedVerdicts),
       removedAt:              standing!.removedAt,
-      hasLiveRemovalProposal: standing!.hasLiveRemovalProposal ? 9 : -1,
+      hasLiveRemovalProposal: standing!.hasLiveRemovalProposal ? 10 : -1,
       removalCount:           Number(standing!.removalCount),
       lastRemovalAt:          standing!.lastRemovalAt,
       lastRemovalCause:       standing!.lastRemovalCause.raw,
@@ -154,15 +155,27 @@ describe('тринадцать полей разложены по местам, 
     expect(byPosition).toEqual(ABI_OUTPUT_NAMES);
   });
 
-  it('S5 ABI действительно отдал тринадцать имён — иначе сверка выше тавтологична', () => {
-    expect(ABI_OUTPUT_NAMES).toHaveLength(13);
+  it('S5 ABI действительно отдал четырнадцать имён — иначе сверка выше тавтологична', () => {
+    expect(ABI_OUTPUT_NAMES).toHaveLength(14);
     expect(ABI_OUTPUT_NAMES[0]).toBe('xp');
-    expect(ABI_OUTPUT_NAMES[12]).toBe('lastRemovalCause');
+    expect(ABI_OUTPUT_NAMES[13]).toBe('lastRemovalCause');
+  });
+
+  it('S5а пара «чистые / перевёрнутые» стоит ВПЛОТНУЮ и в этом порядке', () => {
+    // Пункт 101: порознь эти два числа врут оба — стаж в одиночку показывал
+    // терпеливого плохого арбитра лучше честного новичка, голая сумма
+    // переворотов наказывает выслугу. Соседство — не косметика: экран, который
+    // возьмёт из кортежа одно и не заметит второго, получится ровно из
+    // раздвинутых полей. Ожидаемое берётся из ABI (тот заперт на исходник
+    // контракта), а не из крючка — иначе сверка была бы сама с собой.
+    const clean = ABI_OUTPUT_NAMES.indexOf('cleanVerdicts');
+    expect(clean).toBeGreaterThanOrEqual(0);
+    expect(ABI_OUTPUT_NAMES[clean + 1]).toBe('overturnedVerdicts');
   });
 
   it('S6 деньги и счётчики остаются bigint, время — секундами', () => {
     answerStanding([
-      3_000n, 4n, 0n, 6_000_000n, SEATER, 1_760_000_000n, 2n, 9n,
+      3_000n, 4n, 0n, 6_000_000n, SEATER, 1_760_000_000n, 2n, 9n, 3n,
       1_755_000_000n, false, 1n, 1_755_000_000n, 0,
     ]);
     answerReply(ZERO_DIGEST);
@@ -170,6 +183,8 @@ describe('тринадцать полей разложены по местам, 
 
     expect(standing!.bond).toBe(6_000_000n);
     expect(standing!.xp).toBe(3_000n);
+    expect(standing!.cleanVerdicts).toBe(9n);
+    expect(standing!.overturnedVerdicts).toBe(3n);
     expect(standing!.seatedBy).toBe(SEATER);
     expect(standing!.suspendedUntil).toBe(1_760_000_000);
     expect(standing!.lastRemovalAt).toBe(1_755_000_000);
@@ -214,7 +229,7 @@ describe('ответ обвиняемого показывается нарав�
 
 describe('признак «проверила ли цепь сама» доезжает до карточки', () => {
   const withCause = (raw: number) => {
-    answerStanding([...POSITIONAL.slice(0, 12), raw]);
+    answerStanding([...POSITIONAL.slice(0, 13), raw]);
     answerReply(ZERO_DIGEST);
     // There is no React here. This whole file calls the hook as a PLAIN
     // FUNCTION: `wagmi` and `useCallback` are mocked above precisely because

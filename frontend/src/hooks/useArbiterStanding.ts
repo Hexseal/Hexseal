@@ -11,7 +11,7 @@ import { decodeRemovalCause, type RemovalCause } from '@/lib/arbiterRemovalCause
  * залог, приостановку и историю сносов, плюс его собственный ответ на
  * обвинение.
  *
- * ⚠️ ОДНО ЧТЕНИЕ, А НЕ СЕМЬ. `getArbiterStanding` отдаёт тринадцать полей
+ * ⚠️ ОДНО ЧТЕНИЕ, А НЕ СЕМЬ. `getArbiterStanding` отдаёт четырнадцать полей
  * разом именно затем, чтобы карточка не расходилась сама с собой: собери их
  * семью отдельными запросами — между ними пройдут блоки, и залог окажется
  * прочитан до сноса, а статус после (докстринг функции в
@@ -61,8 +61,8 @@ export interface RemovalAnswer {
 
 /**
  * Поля названы РОВНО так же, как возвраты `getArbiterStanding` в ABI, и это не
- * косметика: тринадцать значений приезжают кортежем, то есть ПО МЕСТУ, а восемь
- * из них — `uint256`, структурно неразличимые. Перестановка любых двух не
+ * косметика: четырнадцать значений приезжают кортежем, то есть ПО МЕСТУ, а
+ * девять из них — `uint256`, структурно неразличимые. Перестановка любых двух не
  * ревертит ничего и не ловится типами (тот же класс, что `boxKey`/`signKey` в
  * `relay.ts`). Совпадение имён позволяет замку сверить порядок полей с порядком
  * возвратов в ABI, а тот уже заперт на исходник контракта
@@ -83,6 +83,12 @@ export interface ArbiterStanding {
   suspendedUntil: number;
   openClaims: bigint;
   cleanVerdicts: bigint;
+  /** Сколько вердиктов этого арбитра перевернули — за всю службу. ВТОРАЯ
+   *  ПОЛОВИНА ДРОБИ: показывать без `cleanVerdicts` нельзя, голая сумма
+   *  наказывает выслугу, а `cleanVerdicts` в одиночку показывал терпеливого
+   *  плохого арбитра лучше честного новичка. Делит читатель — порогов и
+   *  последствий у пары нет ни одного (пункт 101). */
+  overturnedVerdicts: bigint;
   /** Секунды эпохи. Ноль — снос не действует СЕЙЧАС (не снимали либо посадили
    *  заново); история сносов при этом никуда не девается, см. `removalCount`. */
   removedAt: number;
@@ -127,7 +133,7 @@ export function useArbiterStanding(
   }) as {
     data: readonly [
       bigint, bigint, bigint, bigint, Address, bigint, bigint, bigint, bigint,
-      boolean, bigint, bigint, number,
+      bigint, boolean, bigint, bigint, number,
     ] | undefined;
     isLoading: boolean;
     refetch: () => void;
@@ -162,11 +168,12 @@ export function useArbiterStanding(
       suspendedUntil:         Number(tuple[5]),
       openClaims:             tuple[6],
       cleanVerdicts:          tuple[7],
-      removedAt:              Number(tuple[8]),
-      hasLiveRemovalProposal: tuple[9],
-      removalCount:           tuple[10],
-      lastRemovalAt:          Number(tuple[11]),
-      lastRemovalCause:       decodeRemovalCause(Number(tuple[12])),
+      overturnedVerdicts:     tuple[8],
+      removedAt:              Number(tuple[9]),
+      hasLiveRemovalProposal: tuple[10],
+      removalCount:           tuple[11],
+      lastRemovalAt:          Number(tuple[12]),
+      lastRemovalCause:       decodeRemovalCause(Number(tuple[13])),
       answer: {
         // Нулевой отпечаток — это «не отвечал», а не «ответ пустой»: контракт
         // нулевой ответ не принимает вовсе (`ZeroDigest`).

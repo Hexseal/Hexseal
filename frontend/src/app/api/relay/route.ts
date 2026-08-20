@@ -522,6 +522,16 @@ export async function POST(req: NextRequest) {
           //     sees THAT as a refusal, so it has no entry here; it is named
           //     only so this comment does not read as the whole promise.
           '0xd8d3519a': 'AlreadyOverturned',
+      //   VerdictUnchanged() — an overturn must overturn (review round 1 of item
+      //     101, 21 August 2026). The door took ANY value, including the arbiter's
+      //     own ruling: a press that moved no outcome, yet cost him XP and a
+      //     judicial mistake and set `overturned`. That flag is what resolveAppeal
+      //     reads to tell a vindication from an overturn, so an empty press let a
+      //     panel's DISAGREEMENT with the arbiter be recorded as his acquittal —
+      //     a way to launder the record on purpose. A person can meet this refusal
+      //     (the owner or the DAO pressing without changing the outcome), so it
+      //     belongs here rather than being left as raw hex.
+          '0xb7d41107': 'VerdictUnchanged',
           '0xdf726563': 'NoVerdict',
           '0x7c9a1cf9': 'AlreadyVoted',
           '0x4dcfa42d': 'AlreadyAppealed',

@@ -135,6 +135,49 @@ def parse_struct_fields(lines: list[str], struct_start: int, struct_end: int) ->
     return fields
 
 
+def structs_from_text(relpath: str, text: str) -> dict[str, list[tuple[str, str]]]:
+    """Тот же разбор, но для ПРОИЗВОЛЬНОГО текста файла, а не только для того,
+    что лежит на диске.
+
+    Вынесено отдельной функцией кругом правок 2 (21 августа 2026): второй
+    источник раскладки — не диск, а git (`git show HEAD:<путь>`), и разбирать
+    его обязан ТОТ ЖЕ код. Две копии разбора разошлись бы при первой правке
+    регулярки, и тогда «поле изменилось» и «поле такое же» решались бы разными
+    парсерами — то есть сравнение перестало бы что-либо значить."""
+    result: dict[str, list[tuple[str, str]]] = {}
+    lines = text.splitlines()
+
+    i = 0
+    while i < len(lines):
+        m = LIBRARY_RE.match(lines[i])
+        if not m:
+            i += 1
+            continue
+
+        lib_name = m.group(1)
+        lib_start = i
+        lib_end = find_matching_brace(lines, lib_start)
+        lib_body = lines[lib_start : lib_end + 1]
+
+        if any(STORAGE_MARKER_RE.search(l) for l in lib_body):
+            j = lib_start
+            while j <= lib_end:
+                sm = STRUCT_RE.match(lines[j])
+                if sm:
+                    struct_name = sm.group(1)
+                    struct_end = find_matching_brace(lines, j)
+                    result[f"{relpath} :: {lib_name}.{struct_name}"] = parse_struct_fields(
+                        lines, j, struct_end
+                    )
+                    j = struct_end + 1
+                else:
+                    j += 1
+
+        i = lib_end + 1
+
+    return result
+
+
 def extract_storage_structs() -> dict[str, list[tuple[str, str]]]:
     """Возвращает {"relpath :: Library.Struct": [(type, name), ...]} для всех
     структур внутри namespaced storage-библиотек в src/."""
@@ -176,6 +219,95 @@ def extract_storage_structs() -> dict[str, list[tuple[str, str]]]:
             i = lib_end + 1
 
     return result
+
+
+# ── ВТОРОЙ ИСТОЧНИК РАСКЛАДКИ: git ────────────────────────────────────────────
+#
+# ⚠️ ЗАЧЕМ ОН ВООБЩЕ. Снимок отвечает на вопрос «что было записано», и для поля,
+# которого в снимке НЕТ, он не отвечает ничего. А различить надо два случая,
+# внешне одинаковых:
+#
+#   • поле ДОПИСАНО — законно, лечится `--update`;
+#   • поле СУЩЕСТВОВАЛО и у него СМЕНИЛИ ТИП — незаконно, и `--update` тут не
+#     лекарство, а увековечивание бага.
+#
+# Из одного лишь снимка они неразличимы в принципе: в обоих случаях слева
+# «ничего», справа поле. Значит нужен второй источник, независимый от снимка, —
+# и он есть, потому что исходники лежат в git. `git show HEAD:<путь>` даёт
+# раскладку ДО правки, и по ней вопрос решается механически, а не просьбой к
+# человеку читать внимательно.
+#
+# ⚠️ ЧЕГО ЭТОТ ИСТОЧНИК НЕ ЛОВИТ, названо, а не замолчано: смену типа, УЖЕ
+# закоммиченную в HEAD. Там git и диск совпадают, разницы нет. Дыра узкая и
+# закрывается сама: пока снимок не обновлён, `--check` возвращает 4 и краснеет
+# в CI вечно, а `--update` откажет ровно в тот момент, когда поле попробуют
+# записать. То есть попасть в HEAD такая правка может, а стать благословлённой —
+# нет.
+
+
+def git_baseline(ref: str = "HEAD") -> dict[str, list[tuple[str, str]]] | None:
+    """Раскладка структур в `ref`. None — git недоступен или ответа нет
+    (не репозиторий, первый коммит, вырезанный архив). None означает «не смог
+    выяснить», и вызывающий обязан отнестись к этому как к незнанию, а не как
+    к «изменений нет»."""
+    import subprocess
+
+    try:
+        listing = subprocess.run(
+            ["git", "-C", str(REPO_ROOT), "ls-tree", "-r", "--name-only", ref, "src/"],
+            capture_output=True, text=True, timeout=30,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if listing.returncode != 0:
+        return None
+
+    result: dict[str, list[tuple[str, str]]] = {}
+    for relpath in listing.stdout.splitlines():
+        if not relpath.endswith(".sol"):
+            continue
+        try:
+            blob = subprocess.run(
+                ["git", "-C", str(REPO_ROOT), "show", f"{ref}:{relpath}"],
+                capture_output=True, text=True, timeout=30,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return None
+        if blob.returncode != 0:
+            continue
+        try:
+            result.update(structs_from_text(relpath, blob.stdout))
+        except ParseError:
+            # Старая ревизия могла не разбираться нынешним парсером. Молчать
+            # об этом нельзя, но и валить гейт из-за истории — тоже: файл
+            # просто не участвует в сверке, а его поля попадут в «не смог
+            # выяснить».
+            continue
+    return result
+
+
+def classify_unrecorded(
+    key: str,
+    fields: list[tuple[str, str]],
+    baseline: dict[str, list[tuple[str, str]]] | None,
+) -> tuple[list[tuple[str, str]], list[tuple[str, str, str]], list[tuple[str, str]]]:
+    """Делит незаписанные в снимок поля на три кучи:
+    (законно дописанные, [(имя, было, стало)] с изменённым типом, неопределимые)."""
+    if baseline is None:
+        return [], [], list(fields)
+
+    before = {name: ftype for ftype, name in baseline.get(key, [])}
+    appended: list[tuple[str, str]] = []
+    retyped: list[tuple[str, str, str]] = []
+    for ftype, fname in fields:
+        old_type = before.get(fname)
+        if old_type is None:
+            appended.append((ftype, fname))
+        elif old_type != ftype:
+            retyped.append((fname, old_type, ftype))
+        else:
+            appended.append((ftype, fname))
+    return appended, retyped, []
 
 
 def format_snapshot(structs: dict[str, list[tuple[str, str]]]) -> str:
@@ -292,6 +424,77 @@ def main(argv: list[str]) -> int:
         return 0
 
     if mode == "--update":
+        # ⚠️ `--update` ОТКАЗЫВАЕТ, КОГДА ЕГО ЗОВУТ КАК ЛЕКАРСТВО ОТ БАГА
+        # (круг правок 2, 21 августа 2026). Ревьюер замерил цепочку: `--check`
+        # даёт 4, человек делает РОВНО ТО, ЧТО СОВЕТУЕТ СООБЩЕНИЕ, — и
+        # запрещённая смена типа `uint8 -> bytes32` записывается в снимок
+        # навсегда, `--check` после этого зелёный. То есть гейт своими руками
+        # узаконивал тот самый класс, ради которого заведён.
+        #
+        # Отличаем механически, а не просьбой читать внимательно: у поля,
+        # которого нет в снимке, спрашиваем git — было ли оно в HEAD и с каким
+        # типом. Было с другим — это не дописывание, и записывать это нельзя.
+        retyped_all: list[tuple[str, str, str, str]] = []
+        unknown_all: list[tuple[str, str]] = []
+        if SNAPSHOT_PATH.exists():
+            try:
+                snap = parse_snapshot(SNAPSHOT_PATH.read_text(encoding="utf-8"))
+            except ParseError:
+                snap = {}
+            baseline = git_baseline()
+            for key in sorted(set(current) & set(snap)):
+                if is_prefix(snap[key], current[key]) and len(current[key]) > len(snap[key]):
+                    _, retyped, unknown = classify_unrecorded(
+                        key, current[key][len(snap[key]):], baseline
+                    )
+                    retyped_all += [(key, n, o, w) for n, o, w in retyped]
+                    unknown_all += [(key, n) for _, n in unknown]
+
+        if retyped_all:
+            print(
+                "check-storage-structs: --update ОТКАЗАН — это не дописывание, "
+                "а смена типа",
+                file=sys.stderr,
+            )
+            print("", file=sys.stderr)
+            print(
+                "Поля ниже уже существовали в HEAD, и у них ДРУГОЙ тип, чем сейчас\n"
+                "в src/. Записать это в снимок значило бы объявить нормой ровно тот\n"
+                "класс правки, который сломал живой JobBoard в июле 2026: слот тот\n"
+                "же, кодировка другая, старые записи читаются мусором.",
+                file=sys.stderr,
+            )
+            for key, fname, old_type, new_type in retyped_all:
+                print("", file=sys.stderr)
+                print(f"  структура: {key}", file=sys.stderr)
+                print(f"    {fname}:  было {old_type}  ->  стало {new_type}", file=sys.stderr)
+            print("", file=sys.stderr)
+            print(
+                "Что делать: ВЕРНУТЬ прежний тип. Если новый тип действительно\n"
+                "нужен — это новое поле с новым именем, дописанное в конец, а\n"
+                "старое остаётся на месте нетронутым (раскладка append-only).\n"
+                "Обойти этот отказ можно только правкой самого гейта — и это\n"
+                "намеренно: осознанное усилие, а не одна клавиша.",
+                file=sys.stderr,
+            )
+            return 1
+
+        if unknown_all:
+            # git не ответил — записать можно, но не молча: человек обязан
+            # знать, что второй источник в этот раз ничего не подтвердил.
+            print(
+                "check-storage-structs: ⚠️ git не ответил, проверить «дописано или "
+                "переименовано» было нечем",
+                file=sys.stderr,
+            )
+            for key, fname in unknown_all:
+                print(f"  ? {fname}   ({key})", file=sys.stderr)
+            print(
+                "  Снимок обновлён на слово вызывающего. Если это смена типа, а не "
+                "дописывание — она только что стала нормой.",
+                file=sys.stderr,
+            )
+
         SNAPSHOT_PATH.write_text(format_snapshot(current), encoding="utf-8")
         print(f"check-storage-structs: снапшот перезаписан -> {SNAPSHOT_PATH}")
         return 0
@@ -323,14 +526,142 @@ def main(argv: list[str]) -> int:
     only_in_current = sorted(set(current) - set(snapshot))
     only_in_snapshot = sorted(set(snapshot) - set(current))
     changed: list[str] = []
+    unrecorded: list[tuple[str, list[tuple[str, str]]]] = []
 
     for key in sorted(set(current) & set(snapshot)):
         if not is_prefix(snapshot[key], current[key]):
             changed.append(key)
+        elif len(current[key]) > len(snapshot[key]):
+            # ⚠️ ЗАКОННОЕ ДОПИСЫВАНИЕ — И ВСЁ РАВНО ОТКАЗ. Разбор круга правок 1
+            # к пункту 101 (21 августа 2026) замерил дыру: `chainProposalPath`
+            # (задача 12, 18 августа) в снапшот не попал, потому что чистое
+            # дописывание гейт устраивало. Смена его типа uint8 -> bytes32 —
+            # ровно тот класс, что сломал живой JobBoard, — давала rc=0 и слово
+            # «ок». Та же порча на СОСЕДНЕМ поле, которое в снапшоте есть,
+            # давала rc=1 с диагностикой.
+            #
+            # То есть два поля одной структуры охранялись по-разному, и
+            # различало их только то, добежал ли кто-то до `--update`. По репо
+            # было 168 полей в коде против 167 в снимке.
+            #
+            # Поле вне снимка не сторожится НИЧЕМ: базовой линии для него нет,
+            # значит и «изменение» обнаружить не с чем. Поэтому дописывание
+            # законно как ПРАВКА, но незаконно как КОНЕЧНОЕ СОСТОЯНИЕ дерева, и
+            # у него свой код возврата: 4, не 1. Раскладку никто не ломал —
+            # сломана полнота снимка, и лечится она одной командой.
+            unrecorded.append((key, current[key][len(snapshot[key]):]))
 
-    if not only_in_current and not only_in_snapshot and not changed:
+    # ⚠️ РАЗЛИЧАЕМ ДВА СЛУЧАЯ ВНУТРИ «НЕЗАПИСАННОГО», И ЭТО ГЛАВНАЯ ПРАВКА
+    # КРУГА 2 (21 августа 2026). Внешне они одинаковы — слева в снимке ничего,
+    # справа поле, — а требуют ПРОТИВОПОЛОЖНЫХ действий:
+    #
+    #   • поле дописано  -> `--update`, всё законно;
+    #   • у поля сменили тип -> `--update` ЗАПРЕЩЁН, он увековечит баг.
+    #
+    # Сообщение, которое не различало их, отправляло человека в `--update`
+    # ОБА раза. Замерено ревьюером: rc=4 -> `--update` -> rc=0, и запрещённая
+    # смена типа благословлена навсегда. Совет гейта был ловушкой.
+    #
+    # Различаем вторым источником, а не просьбой читать внимательно: git.
+    # Лениво: ~30 вызовов `git show` не нужны, когда классифицировать нечего,
+    # а гейт зовётся в CI на каждом прогоне.
+    baseline = git_baseline() if unrecorded else {}
+    unrecorded_appended: list[tuple[str, list[tuple[str, str]]]] = []
+    retyped_unrecorded: list[tuple[str, str, str, str]] = []
+    unknown_unrecorded: list[tuple[str, list[tuple[str, str]]]] = []
+    for key, fields in unrecorded:
+        appended, retyped, unknown = classify_unrecorded(key, fields, baseline)
+        if appended:
+            unrecorded_appended.append((key, appended))
+        if unknown:
+            unknown_unrecorded.append((key, unknown))
+        retyped_unrecorded += [(key, n, o, w) for n, o, w in retyped]
+
+    # Смена типа — это код 1, а не 4, где бы её ни нашли: снимок тут ни при чём,
+    # сломана раскладка. Печатается ПЕРВОЙ и отдельно, чтобы `--update` даже не
+    # пришёл человеку в голову.
+    if retyped_unrecorded:
+        print(
+            "check-storage-structs: СМЕНА ТИПА У ПОЛЯ, КОТОРОГО НЕТ В СНИМКЕ",
+            file=sys.stderr,
+        )
+        print("", file=sys.stderr)
+        print(
+            "Поле есть в HEAD с ОДНИМ типом и в src/ с ДРУГИМ. Снимок про него\n"
+            "молчит, поэтому обычная сверка это пропустила бы — сравнили с git.\n"
+            "\n"
+            "⚠️ `--update` ЗДЕСЬ НЕ ЛЕКАРСТВО. Он запишет новый тип, гейт станет\n"
+            "зелёным, и ровно та правка, что сломала живой JobBoard в июле 2026\n"
+            "(bytes32 termsHash -> string terms в том же слоте, Panic(0x22) на\n"
+            "живых записях), будет объявлена нормой навсегда. Он и откажет.",
+            file=sys.stderr,
+        )
+        for key, fname, old_type, new_type in retyped_unrecorded:
+            print("", file=sys.stderr)
+            print(f"  структура: {key}", file=sys.stderr)
+            print(f"    {fname}:  было {old_type}  ->  стало {new_type}", file=sys.stderr)
+        print("", file=sys.stderr)
+        print(
+            "Что делать: ВЕРНУТЬ прежний тип. Нужен новый — заводится НОВОЕ поле\n"
+            "с новым именем в конце структуры, старое остаётся нетронутым.",
+            file=sys.stderr,
+        )
+        if changed or only_in_current or only_in_snapshot:
+            print("", file=sys.stderr)
+            print("И это не всё — ниже остальное:", file=sys.stderr)
+        else:
+            return 1
+
+    if not only_in_current and not only_in_snapshot and not changed and not unrecorded:
         print("check-storage-structs: ок — поля структур хранилища не менялись (или только дописаны в конец)")
         return 0
+
+    # Отдельная, БОЛЕЕ МЯГКАЯ ветка, и печатается она раньше грозного текста про
+    # сломанную раскладку — иначе человек прочитал бы «старые записи
+    # декодируются мусором» про правку, которая ничего не сломала.
+    if unrecorded_appended and not retyped_unrecorded and not only_in_current \
+            and not only_in_snapshot and not changed:
+        print(
+            "check-storage-structs: РАСКЛАДКА ЦЕЛА, НО СНИМОК НЕПОЛОН — "
+            "дописанные поля не сторожатся",
+            file=sys.stderr,
+        )
+        print("", file=sys.stderr)
+        print(
+            "Поля ниже есть в src/ и дописаны СТРОГО В КОНЕЦ — то есть правка\n"
+            "законна и живое хранилище цело. Но в снимке их нет, а значит для\n"
+            "них не существует базовой линии: смена типа у такого поля пройдёт\n"
+            "мимо гейта молча, ровно как прошла бы у termsHash в июле 2026.\n"
+            "Пока снимок не обновлён, эти поля защищены НИЧЕМ.",
+            file=sys.stderr,
+        )
+        for key, fields in unrecorded_appended:
+            print("", file=sys.stderr)
+            print(f"  структура: {key}", file=sys.stderr)
+            for ftype, fname in fields:
+                print(f"    + {ftype} {fname}", file=sys.stderr)
+        if unknown_unrecorded:
+            print("", file=sys.stderr)
+            print(
+                "⚠️ git не ответил, поэтому «дописано» здесь — предположение, а не\n"
+                "  проверенный факт. Поля ниже могли оказаться и сменой типа:",
+                file=sys.stderr,
+            )
+            for key, fields in unknown_unrecorded:
+                for ftype, fname in fields:
+                    print(f"  ? {ftype} {fname}   ({key})", file=sys.stderr)
+        print("", file=sys.stderr)
+        print(
+            "Проверено по git: это ДОПИСЫВАНИЕ, а не смена типа, — поэтому\n"
+            "лечится одной командой, и её результат надо закоммитить вместе\n"
+            "с правкой кода:\n"
+            "  python3 script/check_storage_structs.py --update\n"
+            "\n"
+            "(Если бы это была смена типа, гейт сказал бы другое и `--update`\n"
+            " отказал бы. Совет выше даётся не всякому незаписанному полю.)",
+            file=sys.stderr,
+        )
+        return 4
 
     print("check-storage-structs: НАЙДЕНО ЗАПРЕЩЁННОЕ ИЗМЕНЕНИЕ РАСКЛАДКИ ХРАНИЛИЩА", file=sys.stderr)
     print("", file=sys.stderr)
@@ -367,6 +698,24 @@ def main(argv: list[str]) -> int:
         for key in changed:
             print("", file=sys.stderr)
             print(diff_report(key, snapshot[key], current[key]), file=sys.stderr)
+
+    if unrecorded_appended:
+        # Сюда попадаем, только когда рядом есть и НАСТОЯЩАЯ поломка: код 1
+        # старше кода 4. Но назвать незащищённые поля всё равно обязаны —
+        # человек чинит одно и не должен потом второй раз узнавать про другое.
+        #
+        # Речь всегда о ДРУГОЙ структуре: внутри одной поломка ломает и
+        # префикс, так что структура попадает в `changed`, а не сюда, — и
+        # незаписанное поле там видно прямо в diff_report строкой «<нет> | …».
+        print("", file=sys.stderr)
+        print(
+            "Кроме того, эти поля дописаны законно, но в снимок не попали — "
+            "и потому не сторожатся:",
+            file=sys.stderr,
+        )
+        for key, fields in unrecorded_appended:
+            for ftype, fname in fields:
+                print(f"  + {ftype} {fname}   ({key})", file=sys.stderr)
 
     print("", file=sys.stderr)
     print(

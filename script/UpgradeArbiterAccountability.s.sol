@@ -34,7 +34,7 @@ interface ISuspensionWindowProbe {
  *                                                 сегодня, потому Replace)
  *   Add      3 → тот же новый ArbiterRegistryFacet (входы задач 2, 3 и 5,
  *                                                 оставшиеся в реестре)
- *   Add     23 → ArbiterAccountabilityFacet       (весь фасет целиком: 20 своих
+ *   Add     24 → ArbiterAccountabilityFacet       (весь фасет целиком: 21 своя
  *                                                 плюс 3 переехавших, которых в
  *                                                 цепи ещё нет)
  *   Remove   1 → address(0): removeArbiter(address), 0x3487e08c
@@ -60,15 +60,16 @@ interface ISuspensionWindowProbe {
  * → остаются Add, просто в другом списке. Итог ПО САМОЙ ЗАДАЧЕ 4.5 не сдвинулся:
  * Add было 6+17=23, стало 3+20=23.
  *
- * ⚠️ Это снимок 16 августа, и с тех пор Add вырос — не от 4.5, а от трёх
+ * ⚠️ Это снимок 16 августа, и с тех пор Add вырос — не от 4.5, а от четырёх
  * следующих работ (см. абзацы ниже). Сегодняшнее число ищите не здесь, а в
- * сводке из пяти строк выше: Add 3 + 23 = 26.
+ * сводке из пяти строк выше: Add 3 + 24 = 27.
  *
  * ⚠️ ЗАДАЧА 1 ПЛАНА removal-due-process (17 августа 2026) — ПРИЧИНА СЛОВАМИ.
  * Add-группа ответственности 20 → 21: приехал getMaxReasonBytes, потолок слов в
- * БАЙТАХ. (Дальше она росла ещё дважды, и обе прибавки — ниже по шапке:
+ * БАЙТАХ. (Дальше она росла ещё трижды, и все три прибавки — ниже по шапке:
  * задача 2 дала getRemovalDelay, 21 → 22; задача 12 — executeChainRemoval,
- * 22 → 23. Итог 23, и он же в сводке наверху.) Той же работой сменились ПОДПИСИ трёх входов этой же группы
+ * 22 → 23; пункт 101 — getOverturnedVerdicts, 23 → 24. Итог 24, и он же в
+ * сводке наверху.) Той же работой сменились ПОДПИСИ трёх входов этой же группы
  * (removeArbiterForCause и proposeRemoval получили `string reason`,
  * respondToRemoval — `string reply`), и это НЕ переводит их в Replace: ни один
  * из трёх в цепи не смонтирован, разрез ещё не сделан. Сменилось только
@@ -97,23 +98,28 @@ interface ISuspensionWindowProbe {
  *   всего смонтировано               177 селекторов, 11 фасетов
  *   ArbiterRegistryFacet             0x1CF4c7DaA27f2241eafd8E818329719418403013, 64 селектора
  *   арбитров                         1 (0x42dCd14e…), банк 6 000 000, пол 10 000 000
- * После разреза: 177 + 26 − 1 = 202 селектора, 12 фасетов — где 26 это
- * Add 3 + Add 23, а 1 это Remove. Задача 4.5 это число НЕ сдвинула: она
+ * После разреза: 177 + 27 − 1 = 203 селектора, 12 фасетов — где 27 это
+ * Add 3 + Add 24, а 1 это Remove. Задача 4.5 это число НЕ сдвинула: она
  * переложила селекторы между фасетами, не добавив и не убрав ни одного.
  *
- * ⚠️ Здесь стояло «177 + 24 − 1 = 200», от Add-группы в 21 селектор. Число
- * протухло молча: задачи 2 и 12 дописали свои селекторы в СПИСОК (строки ниже
- * и тест на них), а сводку наверху не тронули. Пост-полёт от этого не
- * пострадал — он СЧИТАЕТ, а не сверяет с литералом, — но человек, читающий
- * шапку перед подписью и сверяющий «стало 200» после, ошибся бы на боевой
- * транзакции. Сводка обязана пересчитываться вместе со списком. Старый адрес по-прежнему опустошается ровно: 63 Replace
- * (52 + 11) плюс 1 Remove — те самые 64, что сидят на нём сегодня.
+ * ⚠️ Здесь стояло «177 + 24 − 1 = 200», от Add-группы в 21 селектор, а потом
+ * «177 + 26 − 1 = 202», от группы в 23. Число протухает молча всякий раз, когда
+ * работа дописывает селектор в СПИСОК (строки ниже и тест на них) и не трогает
+ * сводку наверху: так было с задачами 2 и 12, так же едва не вышло с пунктом
+ * 101. Пост-полёт от этого не страдает — он СЧИТАЕТ, а не сверяет с литералом,
+ * — но человек, читающий шапку перед подписью и сверяющий «стало столько»
+ * после, ошибся бы на боевой транзакции. Сводка обязана пересчитываться
+ * ЦЕЛИКОМ вместе со списком, а не только в той строке, которую правит автор.
+ * Старый адрес по-прежнему опустошается ровно: 63 Replace (52 + 11) плюс
+ * 1 Remove — те самые 64, что сидят на нём сегодня, и это число разрезы такого
+ * рода не двигают: Add едет на НОВЫЕ адреса.
  *
  * ── Что именно приезжает ──────────────────────────────────────────────────
  * Задача 1  провенанс посадки            getSeatedBy / getSeatedCountBy
  * Задача 2  потолок блока директора      getChiefBloc
  * Задача 3  потолок споров на арбитра    getMaxClaimsPerArbiter
  * Задача 5  судейский стаж               getCleanVerdicts, getMaxArbiterMistakes
+ * Пункт 101 вторая половина дроби        getOverturnedVerdicts
  * Задачи 4-9 — весь ArbiterAccountabilityFacet: приостановка, снос с поводом,
  *             предложение директора, право ответа ОБВИНЁННОГО (с 19 августа
  *             2026 ответ принимается ещё во время 48-часовой паузы, а не
@@ -149,13 +155,13 @@ interface ISuspensionWindowProbe {
  * в арбитражном неймспейсе, не читает. Это тот самый класс, что в июле 2026
  * сломал JobBoard: getOpenJobs() начал ревертить Panic(0x22) на живом
  * хранилище после смены раскладки, а статические гейты этого не видели.
- * Ветка дописала в конец ArbiterRegistryStorage.Data ОДИННАДЦАТЬ полей —
+ * Ветка дописала в конец ArbiterRegistryStorage.Data ДВЕНАДЦАТЬ полей —
  * ровно тот тип правки, который этот класс и порождает. Считать так (число
  * протухнет при следующей же работе, а способ нет): всё, что объявлено ПОСЛЕ
  * `presentationDigests` — последнего поля, живущего в цепи с разреза
  * 15 августа. Сегодня это seatedBy, seatedCountBy, suspendedUntil,
  * cleanVerdicts, removalProposals, removalReply, removedAt, removalCount,
- * lastRemovalAt, lastRemovalCause, chainProposalPath.
+ * lastRemovalAt, lastRemovalCause, chainProposalPath, overturnedVerdicts.
  *
  * ⚠️ Здесь стояло «Задачи 1, 4, 5, 7 и 8 дописали ШЕСТЬ полей» — снимок
  * 16 августа, переживший ещё четыре работы. Поимённый список задач в такой
@@ -807,7 +813,7 @@ contract UpgradeArbiterAccountability is Script {
     /// означает функцию, которой в даймонде нет, то есть мёртвую кнопку во
     /// фронте.
     function addAccountabilitySelectors() public pure returns (bytes4[] memory sels) {
-        sels = new bytes4[](23);
+        sels = new bytes4[](24);
 
         // Задача 4: приостановка — быстрая, обратимая, протухает сама
         sels[0]  = ArbiterAccountabilityFacet.suspendArbiter.selector;
@@ -865,6 +871,15 @@ contract UpgradeArbiterAccountability is Script {
         // reverts and takes the WHOLE cut down with it, in one live
         // transaction (docs/PROCESS.md, the fourth way).
         sels[22] = ArbiterAccountabilityFacet.executeChainRemoval.selector;
+
+        // ⚠️ ADD, NOT REPLACE (item 101, 21 August 2026), and for the plainest
+        // possible reason: the function did not exist until today. The other
+        // half of the fraction — how many of this arbiter's verdicts were
+        // overturned, over his whole service. `cleanVerdicts` alone made a
+        // patient bad arbiter read BETTER than an honest newcomer, because the
+        // mistake counter is a streak and a clean verdict clears it. Nothing
+        // counted the overturns at all.
+        sels[23] = ArbiterAccountabilityFacet.getOverturnedVerdicts.selector;
     }
 
     /// Ровно один: голая removeArbiter(address). Просто убрать её из исходника

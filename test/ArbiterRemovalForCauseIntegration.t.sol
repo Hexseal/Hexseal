@@ -1877,7 +1877,7 @@ contract ArbiterRemovalForCauseIntegrationTest is Test {
             unicode"трижды забирал споры одного контрагента и трижды решал в его пользу"
         );
 
-        (, , , , , , , , uint256 removedAt1, , uint256 count1, uint256 lastAt1, uint8 cause1)
+        (, , , , , , , , , uint256 removedAt1, , uint256 count1, uint256 lastAt1, uint8 cause1)
             = ArbiterAccountabilityFacet(address(diamond)).getArbiterStanding(arbiter);
         assertGt(removedAt1, 0, unicode"текущий снос отмечен");
         assertEq(count1, 1, unicode"сносов один");
@@ -1887,7 +1887,7 @@ contract ArbiterRemovalForCauseIntegrationTest is Test {
 
         ArbiterRegistryFacet(address(diamond)).addArbiter(arbiter);
 
-        (, , , , , , , , uint256 removedAt2, , uint256 count2, uint256 lastAt2, uint8 cause2)
+        (, , , , , , , , , uint256 removedAt2, , uint256 count2, uint256 lastAt2, uint8 cause2)
             = ArbiterAccountabilityFacet(address(diamond)).getArbiterStanding(arbiter);
         assertEq(removedAt2, 0, unicode"текущего сноса нет — его отменили посадкой");
         assertEq(count2, 1, unicode"а прошлый снос посадка не стирает");
@@ -1901,7 +1901,7 @@ contract ArbiterRemovalForCauseIntegrationTest is Test {
             unicode"выложил переписку по спору третьей стороне"
         );
 
-        (, , , , , , , , , , uint256 count3, uint256 lastAt3, uint8 cause3)
+        (, , , , , , , , , , , uint256 count3, uint256 lastAt3, uint8 cause3)
             = ArbiterAccountabilityFacet(address(diamond)).getArbiterStanding(arbiter);
         assertEq(count3, 2, unicode"второй снос — счётчик два");
         assertEq(lastAt3, vm.getBlockTimestamp(), unicode"момент обновился на последний");
@@ -1932,7 +1932,7 @@ contract ArbiterRemovalForCauseIntegrationTest is Test {
 
         assertFalse(ArbiterRegistryFacet(address(diamond)).isRegisteredArbiter(arbiter));
 
-        (, , , , , , , , , , uint256 count, uint256 lastAt, uint8 cause)
+        (, , , , , , , , , , , uint256 count, uint256 lastAt, uint8 cause)
             = ArbiterAccountabilityFacet(address(diamond)).getArbiterStanding(arbiter);
         assertEq(count, 1, unicode"автомат снял — счётчик вырос так же, как от руки");
         assertEq(lastAt, vm.getBlockTimestamp(), unicode"момент автоснятия записан — момент СНОСА, не момент ошибки");
@@ -1986,7 +1986,7 @@ contract ArbiterRemovalForCauseIntegrationTest is Test {
 
         assertFalse(ArbiterRegistryFacet(address(diamond)).isRegisteredArbiter(arbiter));
 
-        (, , , , , , , , , , uint256 count, , uint8 cause)
+        (, , , , , , , , , , , uint256 count, , uint8 cause)
             = ArbiterAccountabilityFacet(address(diamond)).getArbiterStanding(arbiter);
         assertEq(count, 1, unicode"таймаут снял — счётчик вырос");
         assertEq(cause, AUTO_TIMEOUT,
@@ -2037,7 +2037,7 @@ contract ArbiterRemovalForCauseIntegrationTest is Test {
 
         assertFalse(ArbiterRegistryFacet(address(diamond)).isRegisteredArbiter(arbiter));
 
-        (, , , , , , , , , , uint256 count, , uint8 cause)
+        (, , , , , , , , , , , uint256 count, , uint8 cause)
             = ArbiterAccountabilityFacet(address(diamond)).getArbiterStanding(arbiter);
         assertEq(count, 1, unicode"голоса сняли — счётчик вырос");
         assertEq(cause, AUTO_APPEAL,
@@ -2065,7 +2065,7 @@ contract ArbiterRemovalForCauseIntegrationTest is Test {
             unicode"сетап: самозапись прошла"
         );
 
-        (, , , , , , , , uint256 removedAt, , uint256 count, , uint8 cause)
+        (, , , , , , , , , uint256 removedAt, , uint256 count, , uint8 cause)
             = ArbiterAccountabilityFacet(address(diamond)).getArbiterStanding(arbiter);
         assertEq(removedAt, 0, unicode"текущий снос самозапись снимает — это её право");
         assertEq(count, 1, unicode"а историю обвиняемый обнулить не может");
@@ -2214,7 +2214,7 @@ contract ArbiterRemovalForCauseIntegrationTest is Test {
         );
         // Момент сноса отмечен — иначе отвечать было бы не на что. Читается
         // через карточку: отдельного геттера removedAt в фасете нет.
-        (, , , , , , , , uint256 removedAt, , , , ) =
+        (, , , , , , , , , uint256 removedAt, , , , ) =
             ArbiterAccountabilityFacet(address(diamond)).getArbiterStanding(judged);
         assertGt(removedAt, 0, unicode"момент сноса отмечен");
         assertFalse(
@@ -3025,7 +3025,7 @@ contract ArbiterRemovalForCauseIntegrationTest is Test {
         // Ничего не потеряно: кнопку цепи он может нажать сам, как и любой
         // другой, — и тогда запись скажет правду о происхождении.
         ArbiterAccountabilityFacet(address(diamond)).executeChainRemoval(arbiter);
-        (, , , , , , , , , , , , uint8 cause) =
+        (, , , , , , , , , , , , , uint8 cause) =
             ArbiterAccountabilityFacet(address(diamond)).getArbiterStanding(arbiter);
         assertEq(cause, AUTO_OVERTURN, unicode"происхождение сохранено: сняла ЦЕПЬ, а не он");
     }

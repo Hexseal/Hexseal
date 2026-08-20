@@ -433,6 +433,63 @@ describe('восстановление обычного кошелька — э�
 // ═══ Код восстановления не живёт в объекте сеанса ═══════════════════════
 
 describe('код восстановления держится вне объекта сеанса', () => {
+  /**
+   * ⚠️ СЛОВО ИЩЕТСЯ КАК ЦЕЛЫЙ ТОКЕН, А НЕ КАК ПОДСТРОКА, И ЭТО ПОЧИНКА
+   * МИГАЮЩЕГО ТЕСТА (круг правок 2, 21 августа 2026).
+   *
+   * Здесь стояло `s.includes(code.split(' ')[0])`. В списке BIP39 есть слова
+   * из ТРЁХ букв — `act`, `add`, `age`, `air`, `all`, `any`, `arm`, `art`,
+   * `ask`, `bag`, `bar`, `bid`, `box`, `boy`, `bus`, `can`, `car`, `cat`,
+   * `cry`, `cup`, `dad`, `day`, `dog`, `dry` и так далее, — а объект сеанса
+   * набит строками высокой энтропии: hex-ключи, адрес, base64. Трёхбуквенная
+   * последовательность попадается в них СЛУЧАЙНО, и тест краснел без единой
+   * ошибки в коде.
+   *
+   * Замерено, а не выведено: одно случайное слово против шести hex-строк по 64
+   * знака — 80 попаданий на 200 000 (0,040 %); одно слово против одной
+   * base64-строки в 44 знака — 4 на 300 000. Величина маленькая, но полный
+   * прогон открывает сеансы десятками, и у ревьюера это дало 1 красный из двух
+   * прогонов при 0 из двенадцати одиночных. Мигающий тест хуже отсутствующего:
+   * он приучает не верить красному.
+   *
+   * Токен вместо подстроки убирает случайность НАСОВСЕМ, а не уменьшает её:
+   * в hex и base64 пробелов нет вовсе, значит вся строка — один токен, и
+   * совпасть со словом из трёх букв она не может никак.
+   *
+   * И замок при этом СИЛЬНЕЕ прежнего, а не слабее: проверяются ВСЕ
+   * двенадцать слов, а не только первое. Раньше на подстроку боялись брать
+   * больше одного.
+   */
+  const leaks = (haystacks: string[], code: string): string[] => {
+    const words = code.split(' ');
+    const found: string[] = [];
+    for (const s of haystacks) {
+      // Целый код — подстрокой: двенадцать слов через пробелы случайно не
+      // встретятся нигде, и такая проверка ловит код внутри любой обёртки.
+      if (s.includes(code)) found.push(`весь код внутри ${JSON.stringify(s.slice(0, 40))}`);
+      // Отдельное слово — только как самостоятельный токен.
+      const tokens = new Set(s.split(/\s+/));
+      for (const w of words) {
+        if (tokens.has(w)) found.push(`слово "${w}" в ${JSON.stringify(s.slice(0, 40))}`);
+      }
+    }
+    return found;
+  };
+
+  /** Все строки объекта — и листья, и сериализация целиком. */
+  const stringsOf = (session: unknown): string[] => {
+    const seen: string[] = [JSON.stringify(session)];
+    const walk = (v: unknown, depth: number) => {
+      if (depth > 4 || v === null || typeof v !== 'object') return;
+      for (const [, val] of Object.entries(v as Record<string, unknown>)) {
+        if (typeof val === 'string') seen.push(val);
+        else walk(val, depth + 1);
+      }
+    };
+    walk(session, 0);
+    return seen;
+  };
+
   it('его нет ни в JSON, ни СРЕДИ ПОЛЕЙ объекта — ни под каким именем (В-3)', async () => {
     // Шапка обещает прямо: объект сеанса уедет в состояние интерфейса, в
     // отладочные снимки, в журнал — и код уехал бы вместе с ним; поэтому он
@@ -442,19 +499,7 @@ describe('код восстановления держится вне объек
     const code = exportRecoveryCode(session);
     expect(code.split(' ')).toHaveLength(RECOVERY_WORD_COUNT);
 
-    expect(JSON.stringify(session)).not.toContain(code);
-    expect(JSON.stringify(session)).not.toContain(code.split(' ')[0]);
-
-    const seen: string[] = [];
-    const walk = (v: unknown, depth: number) => {
-      if (depth > 4 || v === null || typeof v !== 'object') return;
-      for (const [, val] of Object.entries(v as Record<string, unknown>)) {
-        if (typeof val === 'string') seen.push(val);
-        else walk(val, depth + 1);
-      }
-    };
-    walk(session, 0);
-    expect(seen.some(s => s.includes(code.split(' ')[0]))).toBe(false);
+    expect(leaks(stringsOf(session), code)).toEqual([]);
   });
 
   it('и у восстановленного с диска сеанса тоже', async () => {
@@ -462,7 +507,25 @@ describe('код восстановления держится вне объек
     const reopened = await openSession(ALICE, async () => ALICE_CONTRACT_SIG);
     expect(reopened.restored).toBe(true);
     const code = exportRecoveryCode(reopened);
-    expect(JSON.stringify(reopened)).not.toContain(code.split(' ')[0]);
+    expect(leaks(stringsOf(reopened), code)).toEqual([]);
+  });
+
+  it('сам замок ловит утечку — и целым кодом, и одним словом', () => {
+    // ⚠️ БЕЗ ЭТОЙ СЦЕНЫ ПОЧИНКА НЕОТЛИЧИМА ОТ ОСЛАБЛЕНИЯ. Две проверки выше
+    // ждут ПУСТОГО списка, то есть остались бы зелёными и у предиката,
+    // который не находит ничего никогда. Здесь предикат проверяется на
+    // настоящих утечках, и заодно — на строке, где слово сидит подстрокой
+    // случайно: она обязана НЕ считаться утечкой, иначе мигание вернётся.
+    const code = 'abandon ability able about above absent absorb abstract absurd abuse access accident';
+    const word = code.split(' ')[0];
+
+    expect(leaks([`{"recoveryCode":"${code}"}`], code)).not.toEqual([]);
+    expect(leaks([word], code)).not.toEqual([]);
+    expect(leaks([`подсказка: ${word} и дальше`], code)).not.toEqual([]);
+
+    // Случайная подстрока — не утечка. `add` и `age` внутри hex, `able`
+    // внутри слитного слова.
+    expect(leaks(['0x3f1add9cage77', 'unableToDecrypt', 'YWJhbmRvbg=='], code)).toEqual([]);
   });
 });
 

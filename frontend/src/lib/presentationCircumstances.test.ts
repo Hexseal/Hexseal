@@ -659,11 +659,35 @@ describe('Предельный срок замка черновиков: наз�
     // остальное (микрозадачи libsodium, прочие таймеры) идёт как есть. Значит
     // зелёный результат доказывает, что именно ЭТОТ срок реально дошёл до
     // `setTimeout`, а не то, что тест сам себя подождал.
+    // ⚠️ СРАВНИВАЕМ С ДОПУСКОМ, А НЕ НА РАВЕНСТВО, И ЭТО НЕ ОСЛАБЛЕНИЕ ЗАМКА
+    // (круг правок 1 к пункту 101, 21 августа 2026). Здесь стояло `ms ===
+    // LOCK_TIMEOUT_MS`, и тест был МИГАЮЩИМ: боевой `withLock` берёт ОБЩИЙ
+    // дедлайн (`Date.now() + LOCK_TIMEOUT_MS`) и передаёт в `setTimeout`
+    // ОСТАТОК от него. Ровно 10 000 выходит, только если между двумя чтениями
+    // часов не прошло ни миллисекунды; под нагрузкой приезжает 9 999 — и тогда
+    // ломались обе половины разом: сжатие не срабатывало (тест ждал десять
+    // секунд по-настоящему), а `toContain` не находил числа. У ревьюера это
+    // дало 2996/1 там, где в одиночку файл проходит 28/28.
+    //
+    // Мигающий тест хуже отсутствующего: он приучает не верить красному.
+    //
+    // Чиним ТЕСТ, а не код: общий дедлайн — намеренное свойство (держатель,
+    // дождавшийся замка в последний момент, не получает вторые полные десять
+    // секунд), и требовать от него миллисекундной точности значит требовать
+    // того, чего он не обещает.
+    //
+    // Допуск в секунду не размывает проверку: доказать надо, что до
+    // `setTimeout` доехал БОЕВОЙ срок, а не тестовое значение. Сжатый ноль,
+    // забытая тройка секунд или единица — все далеко за окном; попасть в него
+    // случайно нечем.
+    const nearProdDeadline = (ms: number | undefined): boolean =>
+      ms !== undefined && ms <= LOCK_TIMEOUT_MS && ms > LOCK_TIMEOUT_MS - 1_000;
+
     const realSetTimeout = globalThis.setTimeout;
     const delays: number[] = [];
     vi.stubGlobal('setTimeout', ((fn: (...a: unknown[]) => void, ms?: number, ...rest: unknown[]) => {
       delays.push(ms ?? 0);
-      return realSetTimeout(fn, ms === LOCK_TIMEOUT_MS ? 0 : ms, ...rest);
+      return realSetTimeout(fn, nearProdDeadline(ms) ? 0 : ms, ...rest);
     }) as typeof setTimeout);
 
     let taken!: () => void;
@@ -683,7 +707,10 @@ describe('Предельный срок замка черновиков: наз�
       draftFromContainer(container, presentationWireBytes(container)),
     );
     expect(verdict, 'чужая вкладка держит замок вечно, а мы не отказали по сроку').toBe('lock_timeout');
-    expect(delays, 'боевой LOCK_TIMEOUT_MS не был передан в реальный setTimeout').toContain(LOCK_TIMEOUT_MS);
+    expect(
+      delays.filter(nearProdDeadline),
+      `боевой LOCK_TIMEOUT_MS не доехал до реального setTimeout; переданы: ${delays.join(', ')}`,
+    ).not.toHaveLength(0);
 
     // markPresentationSent зовёт тот же withLock — тот же отказ, тем же именем.
     const markVerdict = await markPresentationSent(

@@ -2337,7 +2337,7 @@ export const ARBITER_ACCOUNTABILITY_ABI = [
   },
   // ── Положение арбитра одним чтением ──────────────────────────────────────
   //
-  // ⚠️ Тринадцать полей ОДНИМ вызовом не ради экономии: собранные семью
+  // ⚠️ Четырнадцать полей ОДНИМ вызовом не ради экономии: собранные семью
   // отдельными запросами, они расходятся сами с собой — между запросами
   // проходят блоки, и залог прочитан до сноса, а статус после.
   {
@@ -2352,6 +2352,7 @@ export const ARBITER_ACCOUNTABILITY_ABI = [
       { internalType: 'uint256', name: 'suspendedUntil',         type: 'uint256' },
       { internalType: 'uint256', name: 'openClaims',             type: 'uint256' },
       { internalType: 'uint256', name: 'cleanVerdicts',          type: 'uint256' },
+      { internalType: 'uint256', name: 'overturnedVerdicts',     type: 'uint256' },
       { internalType: 'uint256', name: 'removedAt',              type: 'uint256' },
       { internalType: 'bool',    name: 'hasLiveRemovalProposal', type: 'bool' },
       { internalType: 'uint256', name: 'removalCount',           type: 'uint256' },
@@ -2372,6 +2373,17 @@ export const ARBITER_ACCOUNTABILITY_ABI = [
   {
     inputs: [{ internalType: 'address', name: 'arbiterAddr', type: 'address' }],
     name: 'getCleanVerdicts',
+    outputs: [{ internalType: 'uint256', name: '', type: 'uint256' }],
+    stateMutability: 'view',
+    type: 'function',
+  },
+  // Вторая половина дроби (пункт 101, 21 августа 2026). Читать вместе с
+  // getCleanVerdicts выше и никогда порознь: серия ошибок обнуляется чистым
+  // вердиктом, поэтому одна лишь она показывала терпеливого плохого арбитра
+  // лучше честного новичка. Ни порогов, ни последствий у числа нет.
+  {
+    inputs: [{ internalType: 'address', name: 'arbiterAddr', type: 'address' }],
+    name: 'getOverturnedVerdicts',
     outputs: [{ internalType: 'uint256', name: '', type: 'uint256' }],
     stateMutability: 'view',
     type: 'function',

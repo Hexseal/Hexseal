@@ -149,18 +149,21 @@ contract StorageLayoutTest is Test {
         mapping(address => ArbiterRegistryStorage.RemovalProposal) storage proposals = d.removalProposals;
         mapping(address => uint8) storage lastCause       = d.lastRemovalCause;
         mapping(address => uint8) storage chainPath       = d.chainProposalPath;
+        mapping(address => uint256) storage overturns     = d.overturnedVerdicts;
 
         uint256 offStreak;
         uint256 offBond;
         uint256 offProposals;
         uint256 offLastCause;
         uint256 offChainPath;
+        uint256 offOverturns;
         assembly {
             offStreak    := mistakeStreak.slot
             offBond      := bond.slot
             offProposals := proposals.slot
             offLastCause := lastCause.slot
             offChainPath := chainPath.slot
+            offOverturns := overturns.slot
         }
 
         assertEq(offStreak - base, 11, unicode"arbiterMistakeStreak сдвинулся");
@@ -173,5 +176,14 @@ contract StorageLayoutTest is Test {
         // по той же причине, что и остальные: `offLastCause + 1` сравнивал бы
         // структуру с самой собой.
         assertEq(offChainPath - base, 35, unicode"chainProposalPath обязан лежать ЗА прежним последним полем");
+
+        // Новое поле пункта 101 (21 августа 2026): накопительный счёт
+        // переворотов. 36 — СЛЕДУЮЩИЙ за прежним последним (35), то есть
+        // дописано в конец и ничего не потеснило. Литерал здесь по той же
+        // причине, что и у пяти соседей выше: `offChainPath + 1` сравнивал бы
+        // структуру с самой собой и молчал бы ровно при той порче, ради
+        // которой этот тест написан — вставке поля в СЕРЕДИНУ, от которой оба
+        // числа уехали бы вместе.
+        assertEq(offOverturns - base, 36, unicode"overturnedVerdicts обязан лежать ЗА прежним последним полем");
     }
 }

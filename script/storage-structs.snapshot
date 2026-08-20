@@ -119,6 +119,8 @@ mapping(address=>uint256) removedAt
 mapping(address=>uint256) removalCount
 mapping(address=>uint256) lastRemovalAt
 mapping(address=>uint8) lastRemovalCause
+mapping(address=>uint8) chainProposalPath
+mapping(address=>uint256) overturnedVerdicts
 
 === src/facets/ArbiterRegistryFacet.sol :: ArbiterRegistryStorage.PendingVerdict ===
 address arbiter

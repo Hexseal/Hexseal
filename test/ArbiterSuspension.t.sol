@@ -549,6 +549,13 @@ contract ArbiterSuspensionTest is Test, ArbiterTwoFacetBench {
     uint256 constant SLOT_LAST_REMOVAL_AT     = 33;
     uint256 constant SLOT_LAST_REMOVAL_CAUSE  = 34;
 
+    /// Накопительный счёт переворотов (пункт 101, 21 августа 2026) — дописан в
+    /// конец структуры ПОСЛЕ chainProposalPath (35), значит 36. Число
+    /// литеральное и проверяется поведенчески тем же способом, что три выше:
+    /// промахнувшись слотом, vm.store молча пишет в чужое поле, и своё число в
+    /// test_StandingDistinguishesEveryField не сойдётся.
+    uint256 constant SLOT_OVERTURNED_VERDICTS = 36;
+
     function _storeUint(bytes32 base, uint256 offset, address who, uint256 value) internal {
         bytes32 slot = keccak256(abi.encode(who, uint256(base) + offset));
         vm.store(address(acc), slot, bytes32(value));
@@ -556,9 +563,10 @@ contract ArbiterSuspensionTest is Test, ArbiterTwoFacetBench {
 
     /// Ветка из брифа задачи 9: положение только что приостановленного
     /// арбитра, остальное — нули лёгкого стенда по умолчанию. Расширена
-    /// тремя полями, которых не было в брифе (cleanVerdicts, removedAt,
-    /// hasLiveRemovalProposal) — бриф писался до того, как они появились в
-    /// хранилище (см. докстринг getArbiterStanding в самом фасете).
+    /// полями, которых не было в брифе (cleanVerdicts, overturnedVerdicts,
+    /// removedAt, hasLiveRemovalProposal) — бриф писался до того, как они
+    /// появились в хранилище (см. докстринг getArbiterStanding в самом
+    /// фасете).
     function test_StandingReturnsEverythingAtOnce() public {
         acc.suspendArbiter(arbiter);
 
@@ -571,6 +579,7 @@ contract ArbiterSuspensionTest is Test, ArbiterTwoFacetBench {
             uint256 suspendedUntil,
             uint256 openClaims,
             uint256 cleanVerdicts,
+            uint256 overturnedVerdicts,
             uint256 removedAt,
             bool    hasLiveRemovalProposal,
             uint256 removalCount,
@@ -586,6 +595,7 @@ contract ArbiterSuspensionTest is Test, ArbiterTwoFacetBench {
         assertEq(suspendedUntil, vm.getBlockTimestamp() + 72 hours, unicode"приостановка видна тут же");
         assertEq(openClaims, 0);
         assertEq(cleanVerdicts, 0, unicode"судейского стажа ещё нет");
+        assertEq(overturnedVerdicts, 0, unicode"переворотов ещё нет — и это ВТОРАЯ половина дроби");
         assertEq(removedAt, 0, unicode"не снимали — ноль, а не мусор");
         assertFalse(hasLiveRemovalProposal, unicode"предложения о сносе не было");
         assertEq(removalCount, 0, unicode"не снимали ни разу — ноль, а не мусор");
@@ -612,6 +622,7 @@ contract ArbiterSuspensionTest is Test, ArbiterTwoFacetBench {
         _storeUint(ARB_BASE, SLOT_REMOVED_AT, arbiter, 508);
         _storeUint(ARB_BASE, SLOT_REMOVAL_COUNT, arbiter, 509);
         _storeUint(ARB_BASE, SLOT_LAST_REMOVAL_AT, arbiter, 510);
+        _storeUint(ARB_BASE, SLOT_OVERTURNED_VERDICTS, arbiter, 511);
         // Повод — uint8, в 509/510 он не влезает, поэтому свой маркер из того
         // же ряда, но в диапазоне типа: 211 не совпадает ни с одним настоящим
         // поводом (1..6) и не попадает в диапазон автоснятия (252..255 =
@@ -646,6 +657,7 @@ contract ArbiterSuspensionTest is Test, ArbiterTwoFacetBench {
             uint256 suspendedUntil,
             uint256 openClaims,
             uint256 cleanVerdicts,
+            uint256 overturnedVerdicts,
             uint256 removedAt,
             bool    hasLiveRemovalProposal,
             uint256 removalCount,
@@ -661,6 +673,7 @@ contract ArbiterSuspensionTest is Test, ArbiterTwoFacetBench {
         assertEq(suspendedUntil, expectedSuspendedUntil, "suspendedUntil");
         assertEq(openClaims, 506, "openClaims");
         assertEq(cleanVerdicts, 507, "cleanVerdicts");
+        assertEq(overturnedVerdicts, 511, "overturnedVerdicts");
         assertEq(removedAt, 508, "removedAt");
         assertTrue(hasLiveRemovalProposal, "hasLiveRemovalProposal");
         assertEq(removalCount, 509, unicode"поле сносов отдаёт своё число");

@@ -8,10 +8,10 @@ pragma solidity ^0.8.20;
 // см. test/StorageLayout.t.sol.
 //
 // Регенерирован 2026-07-25 из живых ABI (`forge inspect <Facet> methodIdentifiers`)
-// после ~40 инкрементальных апгрейдов, которые этот файл не отслеживал. Все 200
-// селекторов 12 фасетов проверены против test/DeployFullSelectors.t.sol — тот тест
+// после ~40 инкрементальных апгрейдов, которые этот файл не отслеживал. Все 203
+// селектора 12 фасетов проверены против test/DeployFullSelectors.t.sol — тот тест
 // падает, если этот файл и живые ABI разойдутся снова. Число здесь — сумма
-// литералов `new bytes4[](n)` в билдерах ниже; оно уже тринадцатикратно протухало (стояло
+// литералов `new bytes4[](n)` в билдерах ниже; оно уже пятнадцатикратно протухало (стояло
 // 148, когда фабрика выросла с 13 до 20; затем 159, до порога и котировки
 // платного вызова арбитра; затем 162 — цифру не поправили в том же коммите,
 // где код вырос до 167, 31 июля 2026; затем 167, когда 9 августа 2026 добавился
@@ -87,6 +87,25 @@ pragma solidity ^0.8.20;
 // потребовала: слова живут в СОБЫТИЯХ (RemovalReasonGiven/RemovalReplyGiven),
 // их читатель — лента и карточка, а хранилище стоило бы дороже и двигало бы
 // раскладку зря.
+// ⚠️ ЗДЕСЬ ЧИСЛО ОСТАНОВИЛОСЬ НА 200 И ПРОТУХЛО ДВАЖДЫ ПОДРЯД, молча: задача 2
+// того же плана (17 августа 2026) дописала getRemovalDelay, задача 12
+// (18 августа) — executeChainRemoval, и оба раза правился СПИСОК, а сводка
+// наверху — нет. Пост-проверка от этого не пострадала (test/DeployFullSelectors
+// СЧИТАЕТ сумму, а не сверяет её с этим абзацем), но человек, читающий шапку,
+// ошибся бы на два. Значит: 201, 17 августа 2026, задача 2 — getRemovalDelay
+// (+1, 32 против прежних 31), чтение 48-часовой паузы; 202, 18 августа 2026,
+// задача 12 — executeChainRemoval (+1, 33 против 32), тихая дверь ведёт в
+// общую.
+// Затем 203, 21 августа 2026, пункт 101: ВТОРАЯ ПОЛОВИНА ДРОБИ. Счётчик ошибок
+// был СЕРИЕЙ подряд, и чистый вердикт её обнулял, поэтому «ошибка, ошибка,
+// чистый» по кругу не доводил до порога никогда, автоматика не срабатывала ни
+// разу, а `cleanVerdicts` при этом рос — арбитр с тринадцатью переворотами
+// читался снаружи ЛУЧШЕ честного новичка. Накопительного счёта переворотов не
+// было нигде. ArbiterAccountabilityFacet получил getOverturnedVerdicts (+1, 35
+// против прежних 34), карточка getArbiterStanding отдаёт пару вместе — делит
+// читатель. Новое поле `overturnedVerdicts` дописано В КОНЕЦ
+// ArbiterRegistryStorage.Data; порогов и последствий у числа нет ни одного
+// (решение владельца: лестница «видно → посчитано»).
 // Пересчитать, не полагаясь на глаз:
 //   grep -o "new bytes4\[\]([0-9]*)" script/DeployFull.s.sol \
 //     | sed 's/.*(\([0-9]*\))/\1/' | awk '{s+=$1} END {print s}'
@@ -580,7 +599,11 @@ contract DeployFull is Script {
         sels[54] = ArbiterRegistryFacet.getMaxArbiterMistakes.selector;
     }
 
-    // ArbiterAccountabilityFacet — 31 селектор (arbiter-accountability,
+    // ArbiterAccountabilityFacet — 35 селекторов (число в этой строке стояло
+    // «31» и протухало четырежды: getMaxReasonBytes, getRemovalDelay,
+    // executeChainRemoval, getOverturnedVerdicts. Считать не по нему, а по
+    // литералу `new bytes4[](n)` строкой ниже — он один и правится вместе с
+    // самим списком) (arbiter-accountability,
     // задача 4, 15 августа 2026, пять; шестой, getChiefArbiterAddress, снят
     // задачей 5 того же дня — см. комментарий ниже; задача 6 того же дня
     // добавила пять (снос с поводом + четыре view), круг правок 1 ревью
@@ -601,7 +624,7 @@ contract DeployFull is Script {
     // (86.4%), запаса не хватало. Делит тот же ArbiterRegistryStorage
     // namespace — переноса данных нет.
     function arbiterAccountabilityFacetSelectors() public pure returns (bytes4[] memory sels) {
-        sels = new bytes4[](34);
+        sels = new bytes4[](35);
         sels[0] = ArbiterAccountabilityFacet.suspendArbiter.selector;
         sels[1] = ArbiterAccountabilityFacet.liftSuspension.selector;
         sels[2] = ArbiterAccountabilityFacet.isSuspended.selector;
@@ -725,6 +748,16 @@ contract DeployFull is Script {
         // refuses any accusation a human laid: that one is still the removal
         // authority's to execute through removeArbiterForCause.
         sels[33] = ArbiterAccountabilityFacet.executeChainRemoval.selector;
+
+        // ── The other half of the fraction (item 101, 21 August 2026) ──
+        // `cleanVerdicts` alone showed a patient bad arbiter as BETTER than an
+        // honest newcomer: "mistake, mistake, clean" round and round grows the
+        // service record and never carries the streak to its threshold, because
+        // the streak is a streak and a clean verdict clears it. Nothing counted
+        // the overturns at all. This reading is the total; it decides nothing
+        // and gates nothing — getArbiterStanding hands it out beside
+        // getCleanVerdicts and the READER divides.
+        sels[34] = ArbiterAccountabilityFacet.getOverturnedVerdicts.selector;
     }
 
     // DealMetadataFacet — 1 селектор

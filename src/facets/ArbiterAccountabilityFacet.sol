@@ -700,8 +700,22 @@ contract ArbiterAccountabilityFacet {
     /// `overturnVerdict`, и `notifyArbiterTimeout`, и различить их постфактум
     /// цепь не может. Значит выбор между этими двумя кодами — заявление
     /// владельца о том, ЧТО именно произошло, а проверяет цепь лишь факт
-    /// серии. Разделить их можно только вторым счётчиком, и это отдельная
-    /// работа, а не эта.
+    /// серии.
+    ///
+    /// ⚠️ ЗДЕСЬ СТОЯЛО «разделить их можно только вторым счётчиком, и это
+    /// отдельная работа, а не эта», и половина этой фразы протухла 21 августа
+    /// 2026 (пункт 101). Второй счётчик ТЕПЕРЬ ЕСТЬ — `overturnedVerdicts`,
+    /// и он растёт ровно на двух путях переворота, обходя таймаут стороной.
+    /// Отличить «его переворачивали» от «он не успел» цепь этим числом уже
+    /// может.
+    ///
+    /// А проверка ниже его всё равно НЕ ЧИТАЕТ, и это не забывчивость: пара
+    /// «чистые / перевёрнутые» заведена решением владельца на ступенях «видно →
+    /// посчитано», порогов и последствий у неё нет ни одного. Повесить сюда
+    /// `overturnedVerdicts` значило бы сделать третью ступень — «влияет» — под
+    /// видом уточнения, причём накопительным числом, которое наказывает
+    /// выслугу. Тот, кто решит это изменить, принимает новое решение, а не
+    /// доделывает старое.
     ///
     /// ⚠️ ЕДИНСТВЕННЫЙ ВЫЗЫВАЮЩИЙ — `removeArbiterForCause` (задача 12, круг
     /// правок 1, 18 августа 2026). `executeChainRemoval` эту функцию НЕ зовёт
@@ -1850,6 +1864,16 @@ contract ArbiterAccountabilityFacet {
     /// главного: именно по нему решено конвертировать ручных арбитров при
     /// включении ДАО (см. докстринг ArbiterRegistryStorage.Data.cleanVerdicts).
     ///
+    /// `overturnedVerdicts` — ВТОРАЯ ПОЛОВИНА ДРОБИ (пункт 101, 21 августа
+    /// 2026), и она стоит ВПЛОТНУЮ к первой намеренно. Порознь эти числа врут
+    /// оба: `cleanVerdicts` в одиночку показывал терпеливого плохого арбитра
+    /// лучше честного новичка — «ошибка, ошибка, чистый» по кругу растит стаж и
+    /// не доводит серию до порога никогда, — а голая сумма переворотов
+    /// наказывает выслугу, потому что разобравший пятьсот споров наберёт их
+    /// больше плохого, разобравшего двадцать. Делит ЧИТАТЕЛЬ: порогов и
+    /// последствий у этой пары нет ни одного (решение владельца, лестница
+    /// «видно → посчитано», п. 84).
+    ///
     /// `removedAt` — момент сноса, ноль если не снимали. Экран отличает
     /// действующего арбитра от снятого одним полем, не гадая по остальным.
     ///
@@ -1885,8 +1909,16 @@ contract ArbiterAccountabilityFacet {
     /// место, и единый код терял бы различие ровно там, где оно нужно.
     ///
     /// Селектор функции от типа возврата не зависит — расширение кортежа
-    /// каскад деплоя не трогает; читателей у функции сегодня ноль
-    /// (проверено грепом по frontend/src), ломать нечего.
+    /// каскад деплоя не трогает.
+    ///
+    /// ⚠️ ЗДЕСЬ СТОЯЛО «читателей у функции сегодня ноль (проверено грепом по
+    /// frontend/src), ломать нечего» — и это протухло: с 17 августа 2026 её
+    /// читает `frontend/src/hooks/useArbiterStanding.ts`, разбирая кортеж ПО
+    /// МЕСТУ. Значит вставка поля в середину обязана ехать вместе с ним и с
+    /// `useArbiterStanding.test.ts`. Молча это не проедет: арность кортежа
+    /// меняется, и всякая распаковка на прежнее число полей перестаёт
+    /// компилироваться, а фронтовый замок сверяет порядок полей крючка с
+    /// порядком возвратов в ABI.
     function getArbiterStanding(address arbiter) external view returns (
         uint256 xp,
         uint256 cleanStreak,
@@ -1896,6 +1928,7 @@ contract ArbiterAccountabilityFacet {
         uint256 suspendedUntil,
         uint256 openClaims,
         uint256 cleanVerdicts,
+        uint256 overturnedVerdicts,
         uint256 removedAt,
         bool    hasLiveRemovalProposal,
         uint256 removalCount,
@@ -1913,6 +1946,7 @@ contract ArbiterAccountabilityFacet {
             d.suspendedUntil[arbiter],
             d.openClaimCount[arbiter],
             d.cleanVerdicts[arbiter],
+            d.overturnedVerdicts[arbiter],
             d.removedAt[arbiter],
             hasLiveProposal(arbiter),
             d.removalCount[arbiter],
@@ -1980,14 +2014,54 @@ contract ArbiterAccountabilityFacet {
     ///     живёт и вычитание единицы, когда обвинения цепи нет).
     ///
     /// Разбор двух порогов — в докстринге MISTAKE_THRESHOLD.
+    ///
+    /// ⚠️ ЭТО НЕ «СКОЛЬКО РАЗ ОН ОШИБСЯ» (пункт 101, 21 августа 2026). Серия
+    /// обнуляется чистым вердиктом, поэтому «ошибка, ошибка, чистый» по кругу
+    /// держит её на двойке вечно, и читатель, принявший этот ноль за итог,
+    /// увидит хорошего судью там, где переворотов тринадцать. Итог отдаёт
+    /// getOverturnedVerdicts, и читать его положено В ПАРЕ с getCleanVerdicts.
     function getArbiterMistakeStreak(address addr) external view returns (uint256) { return ArbiterRegistryStorage.data().arbiterMistakeStreak[addr]; }
 
     /// @notice Сколько раз вердикт этого арбитра дошёл до финализации
     /// неперевёрнутым. Задел под будущую конвертацию «залог плюс судейский
     /// стаж» при включении ДАО (задача 5, 15 августа 2026) — сам перевод здесь
     /// не реализован, только счётчик.
+    ///
+    /// ⚠️ ПОЛОВИНА ДРОБИ, А НЕ ОЦЕНКА (пункт 101, 21 августа 2026). В одиночку
+    /// это число показывало терпеливого плохого арбитра ЛУЧШЕ честного
+    /// новичка: «ошибка, ошибка, чистый» по кругу растит стаж, а серия ошибок
+    /// не доходит до порога никогда. Вторая половина — getOverturnedVerdicts.
     function getCleanVerdicts(address arbiterAddr) external view returns (uint256) {
         return ArbiterRegistryStorage.data().cleanVerdicts[arbiterAddr];
+    }
+
+    /// @notice How many of this arbiter's verdicts have been overturned, over
+    /// his whole service (item 101, 21 August 2026).
+    ///
+    /// ⚠️ READ IT NEXT TO getCleanVerdicts, NEVER ALONE. The two are halves of
+    /// one fraction, and the sum on its own punishes long service: twenty
+    /// overturns out of five hundred and twenty out of twenty-five are
+    /// different men. getArbiterStanding hands both out in one call for exactly
+    /// that reason; this getter exists for the caller who already has the other
+    /// half.
+    ///
+    /// ⚠️ NOT THE MISTAKE STREAK. getArbiterMistakeStreak above counts judicial
+    /// mistakes IN A ROW and is cleared by every clean verdict — which is how
+    /// "mistake, mistake, clean" round and round kept an arbiter's record
+    /// looking better than a newcomer's. This one is never cleared by good work
+    /// afterwards; a panel that vindicates him takes back exactly one.
+    ///
+    /// ⚠️ IT GATES NOTHING. No threshold reads it and no door asks it — the
+    /// rungs stop at "visible → counted" by the owner's decision of 21 August
+    /// 2026. Whoever wires a consequence to it later is making a new decision,
+    /// not finishing this one.
+    ///
+    /// Sits in THIS facet, not the registry, for the reason the fourteen
+    /// readings above moved here: the registry has 1 504 bytes of headroom
+    /// left, and readings about an arbiter's BEHAVIOUR are this facet's
+    /// business anyway.
+    function getOverturnedVerdicts(address arbiterAddr) external view returns (uint256) {
+        return ArbiterRegistryStorage.data().overturnedVerdicts[arbiterAddr];
     }
 
     /// @notice Залог арбитра. Форфейтится в банк при сносе по поводу и при
