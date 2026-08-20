@@ -165,8 +165,10 @@ through a real forwarder.
   lines and are load-bearing; see [`THIRD_PARTY_LICENSES.md`](THIRD_PARTY_LICENSES.md).
   The same goes double for anything under `lib/`: those are git submodules, and a commit
   inside one is a local change no other clone will ever reproduce.
-- **Commit messages** in this repository are Russian and follow
-  `type(область): что изменилось`. English is accepted from contributors.
+- **Commit messages** are English, subject and body alike, and follow
+  `type(area): what changed`. Commits made before 2026-08-17 are in Russian; that history
+  is kept as-is, because documents and comments across the repository cite commits by
+  hash, and rewriting the messages would invalidate every one of those references.
 
 ## Licence of contributions
 

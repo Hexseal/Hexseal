@@ -96,3 +96,324 @@ type FeeCollection @entity(immutable: true) {
   blockNumber: BigInt!
   timestamp: BigInt!
 }
+
+# =============================================================================
+#  ARBITER ACCOUNTABILITY
+#
+#  WHY THIS IS INDEXED AT ALL. The accusation can be read straight off the
+#  contract: getArbiterStanding() hands back removalCount, lastRemovalAt and
+#  lastRemovalCause without any indexer. The ANSWER cannot. getRemovalReply()
+#  returns a digest and nothing else — no moment, no block, no transaction. A
+#  card that dates the accusation and cannot date the reply is not showing the
+#  two of them side by side, whatever it claims. That moment exists in exactly
+#  one place, the RemovalAnswered log, and reaching it is what an indexer is
+#  for. Everything else here — who pressed, on what grounds, whether the chain
+#  checked those grounds itself, how many times before — is history: the card
+#  view keeps only the latest of each, and the chain keeps no list.
+#
+#  WHAT IS DELIBERATELY NOT HERE. No cause names, no "the chain verified this"
+#  computed from a cause code. The chain states verifiedByChain itself, once,
+#  in ArbiterRemovedForCause, and that boolean is copied through untouched. The
+#  numbering behind `cause` and `path` is decoded in the frontend, where
+#  decodeRemovalCause() is already held against both .sol sources by a lock
+#  (frontend/src/lib/arbiterRemovalCause.test.ts). A second decoder here would be a
+#  second copy of the same enum with nothing watching it.
+#
+#  NULLABLE Int AND Boolean ARE NOT USED ANYWHERE BELOW, and that is a rule
+#  rather than an accident: graph-ts generates `get n(): i32 { ... return 0 }`
+#  for a nullable Int, so "absent" and "zero" come out of the store as the same
+#  value, and 0 is a real cause (OverturnedVerdicts) and a real path. Where
+#  absence has to be representable the field is a BigInt, a Bytes or an entity
+#  reference — those generate honest `| null`.
+# =============================================================================
+
+# One line of the public feed. Every record below implements it, so a reader
+# asking "what happened to the arbiter corps, newest first" makes one query
+# (arbiterRecords) instead of seven, and gets suspensions, proposals, removals
+# and answers already interleaved in chain order.
+#
+# `by` is whoever the log names as the presser. It is address(0) in two cases,
+# and in both of them the zero is an assertion rather than a gap: a
+# self-service seating (nobody seated them, they walked in under
+# applyAsArbiter) and an automatic demotion down the AgreementTimeout or
+# AppealVote path, where the contract says outright that there is no person
+# behind the call. See the DemotionPath docstring in ArbiterRegistryFacet.
+interface ArbiterRecord {
+  id: ID!             # txHash-logIndex
+  arbiter: Arbiter!
+  kind: String!
+  by: Bytes!
+  timestamp: BigInt!
+  blockNumber: BigInt!
+  txHash: Bytes!
+}
+
+# The standing card: current state plus the counters, one entity per address.
+#
+# ⚠️ `seated` is faithful to isArbiter because every writer of that mapping has
+# an event indexed here — measured, not assumed: five writers in the two facets
+# (applyAsArbiter, addArbiter, resignAsArbiter, _recordArbiterMistake,
+# removeArbiterForCause), and the first two both emit ArbiterSeated. Add a
+# sixth door without an event and this field starts lying; that is the seam to
+# watch when the corps grows a new entrance.
+#
+# ⚠️ THERE IS NO `suspendedUntil` HERE, and its absence is deliberate. Both
+# removal doors — removeArbiterForCause and the automatic demotion — open a
+# 72-hour suspension window on the way out (ArbiterAccountabilityFacet C-1 and
+# ArbiterRegistryFacet edit A) and emit NOTHING about it. A field fed only by
+# ArbiterSuspended would therefore be missing exactly the windows that matter
+# most, while looking authoritative. The live value is one contract read away —
+# getArbiterStanding().suspendedUntil — and that is where a caller should get
+# it. The suspensions listed below are the announced ones: the button, not the
+# side effect.
+type Arbiter @entity(immutable: false) {
+  id: ID!             # arbiter address, lowercase hex
+  address: Bytes!
+  seated: Boolean!
+  firstSeenAt: BigInt!
+  updatedAt: BigInt!
+
+  # Provenance of the current seat, or of the last one held.
+  seatedAt: BigInt
+  seatedBy: Bytes     # address(0) when self-service
+  selfSeated: Boolean!
+
+  # How the seat was last left. "resigned" | "demoted" | "removedForCause".
+  exitKind: String
+  exitAt: BigInt
+
+  # How many times it has already happened.
+  seatingCount: Int!
+  resignationCount: Int!
+  demotionCount: Int!
+  removalForCauseCount: Int!
+  suspensionCount: Int!
+  suspensionLiftCount: Int!
+  removalProposalCount: Int!
+  answerCount: Int!
+
+  # The accusation currently standing against this address, if any: at most one
+  # of the two is set, and both are cleared on re-seating because the chain
+  # clears removedAt/removalReply there as well (ArbiterRegistryStorage
+  # .clearRemovalRecord, called from both entry doors). Kept as a pointer so
+  # RemovalAnswered knows what it is answering.
+  #
+  # ⚠️ AND SINCE 19 AUGUST 2026 THESE TWO NO LONGER COVER EVERY ANSWER. The
+  # chain takes a reply DURING the 48-hour pause, while the man is still seated
+  # and nothing has been removed — so the accusation being answered is a
+  # PROPOSAL, and neither pointer is set. The old wording here said the gate was
+  # "removedAt != 0, and an automatic demotion sets that too"; both halves are
+  # false now — task 12 stopped the automatic path from writing removedAt at
+  # all. handleRemovalAnswered logs a warning and keeps the answer unlinked in
+  # that case. Linking it to latestProposal is feed work nobody has ordered, and
+  # it is blocked upstream anyway: RemovalProposedByChain is not indexed at all
+  # (script/check_subgraph_arbiter_events.py says so out loud), so for the
+  # chain-accused there is no proposal record to hang anything off.
+  openRemoval: ArbiterRemoval
+  openDemotion: ArbiterDemotion
+
+  # Most recent records of their kind, whatever state they ended in. Named
+  # "latest" and not "live" on purpose: a suspension window expires and a
+  # proposal passes its 14-day TTL with no event to mark either, so an indexer
+  # cannot honestly hold a "live" flag. Liveness is a comparison against the
+  # current time, and the reader is the only one who knows what time it is.
+  latestSuspension: ArbiterSuspension
+  latestProposal: RemovalProposal
+
+  seatings: [ArbiterSeating!]! @derivedFrom(field: "arbiter")
+  resignations: [ArbiterResignation!]! @derivedFrom(field: "arbiter")
+  demotions: [ArbiterDemotion!]! @derivedFrom(field: "arbiter")
+  removals: [ArbiterRemoval!]! @derivedFrom(field: "arbiter")
+  suspensions: [ArbiterSuspension!]! @derivedFrom(field: "arbiter")
+  suspensionLifts: [ArbiterSuspensionLift!]! @derivedFrom(field: "arbiter")
+  proposals: [RemovalProposal!]! @derivedFrom(field: "arbiter")
+  answers: [RemovalAnswer!]! @derivedFrom(field: "arbiter")
+}
+
+type ArbiterSeating implements ArbiterRecord @entity(immutable: true) {
+  id: ID!
+  arbiter: Arbiter!
+  kind: String!       # "seated"
+  by: Bytes!          # address(0) when selfService
+  timestamp: BigInt!
+  blockNumber: BigInt!
+  txHash: Bytes!
+
+  selfService: Boolean!
+}
+
+type ArbiterResignation implements ArbiterRecord @entity(immutable: true) {
+  id: ID!
+  arbiter: Arbiter!
+  kind: String!       # "resigned"
+  by: Bytes!          # the arbiter: resignAsArbiter is theirs alone
+  timestamp: BigInt!
+  blockNumber: BigInt!
+  txHash: Bytes!
+
+  bondRefunded: BigInt!
+}
+
+# Automatic removal on a run of judging mistakes.
+#
+# Mutable because the answer arrives later: a demoted arbiter can reply, and the
+# reply has to hang off the accusation it answers.
+#
+# ⚠️ The reason used to be written as "respondToRemoval gates on removedAt,
+# which the automatic path sets exactly as the manual one does". Both halves
+# stopped being true: task 12 moved the unseating out of the automatic path, and
+# task 3 opened the door on a live proposal as well. What survives is the fact
+# this field exists for — the reply lands in a later transaction than the record.
+#
+# ⚠️ The forfeited bond is missing from this record because it is missing from
+# the event. The automatic path burns the bond into the vault just as
+# removeArbiterForCause does (ArbiterRegistryFacet, right above the emit), but
+# ArbiterDemoted carries no amount. Nothing here can recover it.
+type ArbiterDemotion implements ArbiterRecord @entity(immutable: false) {
+  id: ID!
+  arbiter: Arbiter!
+  kind: String!       # "demoted"
+  by: Bytes!          # address(0) on the AgreementTimeout and AppealVote paths
+  timestamp: BigInt!
+  blockNumber: BigInt!
+  txHash: Bytes!
+
+  path: Int!          # raw ArbiterRegistryFacet.DemotionPath
+  agreement: Bytes!   # the dispute the last mistake of the run landed on
+  ordinal: Int!       # 1-based: this arbiter's n-th demotion
+
+  answer: RemovalAnswer
+  answeredAt: BigInt
+}
+
+# Removal for cause: the heaviest record in this file, and the reason the
+# verifiedByChain mark exists.
+#
+# Half the causes the chain checks against its own state (OverturnedVerdicts,
+# Timeouts, Silence); the other half it only notarises with a digest it never
+# read (Collusion, Leak, Other). The contract decides which it was and states
+# it in the event. Show the cause without the mark and the second half reads as
+# proven — that is the single thing this whole entity exists to prevent.
+type ArbiterRemoval implements ArbiterRecord @entity(immutable: false) {
+  id: ID!
+  arbiter: Arbiter!
+  kind: String!       # "removedForCause"
+  by: Bytes!
+  timestamp: BigInt!
+  blockNumber: BigInt!
+  txHash: Bytes!
+
+  cause: Int!             # raw ArbiterAccountabilityFacet.Cause
+  verifiedByChain: Boolean!
+  evidenceDigest: Bytes!  # bytes32(0) is possible on a chain-verified cause
+  bondForfeited: BigInt!
+  ordinal: Int!           # 1-based: this arbiter's n-th removal for cause
+
+  # The director's proposal this removal consumed, when there was one. Filled
+  # from RemovalProposalConsumed, a separate log in the same transaction, so
+  # "proposed for X, removed for Y" is one query rather than two.
+  consumedProposal: RemovalProposal
+
+  answer: RemovalAnswer
+  answeredAt: BigInt
+}
+
+# An announced suspension: the button, not the window a removal opens on its
+# way out. Mutable because the lift attaches to it.
+type ArbiterSuspension implements ArbiterRecord @entity(immutable: false) {
+  id: ID!
+  arbiter: Arbiter!
+  kind: String!       # "suspended"
+  by: Bytes!
+  timestamp: BigInt!
+  blockNumber: BigInt!
+  txHash: Bytes!
+
+  until: BigInt!
+  lift: ArbiterSuspensionLift
+  liftedAt: BigInt
+  liftedBy: Bytes
+}
+
+# Its own record and not just a field on the suspension: liftSuspension emits
+# unconditionally, including when nothing announced was open — it is reachable
+# against a window that a removal opened silently, and against an address with
+# no window at all. Folding it into the suspension would drop those from the
+# feed entirely, and they are the interesting ones.
+type ArbiterSuspensionLift implements ArbiterRecord @entity(immutable: true) {
+  id: ID!
+  arbiter: Arbiter!
+  kind: String!       # "suspensionLifted"
+  by: Bytes!
+  timestamp: BigInt!
+  blockNumber: BigInt!
+  txHash: Bytes!
+
+  suspension: ArbiterSuspension   # null when no announced suspension was open
+}
+
+# The director's signal. Not a removal: the owner still has to press
+# removeArbiterForCause with their own arguments, and the two records carry two
+# different addresses on purpose.
+#
+# ⚠️ `voidedAt` MIRRORS CONTRACT BEHAVIOUR THAT EMITS NO EVENT, and that is a
+# copy, named as one. ArbiterRegistryStorage.clearSeat wipes a live proposal
+# when the arbiter resigns or is demoted, silently. Without the mirror the card
+# would show a proposal standing against a person the chain no longer holds one
+# against, disagreeing with getArbiterStanding().hasLiveRemovalProposal on the
+# same screen. With the mirror, a future contract that stops wiping there makes
+# this field lie instead. The way out is a RemovalProposalVoided event, after
+# which this copy should be deleted rather than maintained.
+type RemovalProposal implements ArbiterRecord @entity(immutable: false) {
+  id: ID!
+  arbiter: Arbiter!
+  kind: String!       # "removalProposed"
+  by: Bytes!
+  timestamp: BigInt!
+  blockNumber: BigInt!
+  txHash: Bytes!
+
+  cause: Int!             # raw ArbiterAccountabilityFacet.Cause
+  evidenceDigest: Bytes!  # required by the contract for the unverifiable causes
+
+  withdrawnAt: BigInt
+  withdrawnBy: Bytes
+  consumedAt: BigInt
+  consumedByRemoval: ArbiterRemoval
+  voidedAt: BigInt
+  voidedReason: String    # "resigned" | "demoted"
+
+  # True when this record was rebuilt from a RemovalProposalConsumed snapshot
+  # because the RemovalProposed log it belongs to was never seen. It should
+  # never happen; if it does, the removal keeps its link instead of losing the
+  # proposal, and the mapping logs a warning naming the arbiter.
+  reconstructed: Boolean!
+}
+
+# The other half of owner decision 2: the accused answers, and the answer is
+# shown level with the accusation. Only a digest ever reaches the chain — no
+# text is stored on-chain, so none can leak through this indexer either. What
+# the indexer adds is the moment, which the contract does not keep.
+type RemovalAnswer implements ArbiterRecord @entity(immutable: true) {
+  id: ID!
+  arbiter: Arbiter!
+  kind: String!       # "removalAnswered"
+  by: Bytes!          # the arbiter answering, taken from the event
+  timestamp: BigInt!
+  blockNumber: BigInt!
+  txHash: Bytes!
+
+  replyDigest: Bytes!
+
+  # At most one of these is set. Both stay null when the answer arrives with no
+  # removal indexed against the address — the record survives on its own rather
+  # than being dropped.
+  #
+  # ⚠️ THAT IS NO LONGER THE ODD CASE, IT IS THE COMMON ONE (19 August 2026).
+  # The line here used to argue "respondToRemoval requires removedAt != 0, which
+  # only the two removal doors set", so exactly one pointer was always expected.
+  # The answer is now taken during the pause, before any removal exists, and the
+  # thing being answered is a proposal. See the note on Arbiter.openRemoval.
+  removal: ArbiterRemoval
+  demotion: ArbiterDemotion
+}

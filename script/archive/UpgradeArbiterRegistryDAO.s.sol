@@ -32,6 +32,7 @@ pragma solidity ^0.8.20;
 import "forge-std/Script.sol";
 import "forge-std/console.sol";
 import "../../src/facets/ArbiterRegistryFacet.sol";
+import {ArbiterAccountabilityFacet} from "../../src/facets/ArbiterAccountabilityFacet.sol";
 import "../../src/DiamondProxy.sol";
 
 contract UpgradeArbiterRegistryDAO is Script {
@@ -49,7 +50,7 @@ contract UpgradeArbiterRegistryDAO is Script {
         // ── Replace: все 13 существующих селекторов ──────────────────────────
         bytes4[] memory replaceSels = new bytes4[](13);
         replaceSels[0]  = ArbiterRegistryFacet.addArbiter.selector;
-        replaceSels[1]  = ArbiterRegistryFacet.removeArbiter.selector;
+        replaceSels[1]  = bytes4(0x3487e08c) /* removeArbiter(address), удалена 15 августа 2026 (задача 6 arbiter-accountability) */;
         replaceSels[2]  = ArbiterRegistryFacet.setChiefArbiter.selector;
         replaceSels[3]  = ArbiterRegistryFacet.getChiefArbiter.selector;
         replaceSels[4]  = ArbiterRegistryFacet.commitDisputeClaim.selector;
@@ -59,7 +60,7 @@ contract UpgradeArbiterRegistryDAO is Script {
         replaceSels[8]  = ArbiterRegistryFacet.isRegisteredArbiter.selector;
         replaceSels[9]  = ArbiterRegistryFacet.getArbiters.selector;
         replaceSels[10] = ArbiterRegistryFacet.getDisputeClaimer.selector;
-        replaceSels[11] = ArbiterRegistryFacet.getArbiterDeals.selector;
+        replaceSels[11] = ArbiterAccountabilityFacet.getArbiterDeals.selector;
         replaceSels[12] = ArbiterRegistryFacet.getClaimCommitment.selector;
 
         cuts[0] = IDiamondCut.FacetCut({

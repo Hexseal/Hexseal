@@ -1596,10 +1596,11 @@ const forwarder = new ethers.Contract(FORWARDER_ADDR, FORWARDER_ABI, provider);
 // mean standing up a small internal package neither app currently has for the sake
 // of one lookup table. Keep the two tables in sync if either changes.
 //
-// Экспортируется ради замка test/forwarderErrorsMatchFacet.test.js: тот сверяет
-// СОСТАВ таблицы с объявлениями ошибок в src/facets/ArbiterRegistryFacet.sol.
-// Сверять по тексту app.js он мог бы и без экспорта — но тогда сторожил бы
-// строчку в файле, а не то, чем пользуется decodeForwarderRevert.
+// Exported for the lock in test/forwarderErrorsMatchFacet.test.js: it checks the
+// COMPOSITION of this table against the error declarations of ALL arbiter facets
+// (src/facets/Arbiter*.sol — two of them today, the registry and accountability).
+// It could read app.js as text and skip the export — but then it would guard a
+// line in a file rather than the thing decodeForwarderRevert actually uses.
 export const FORWARDER_CUSTOM_ERRORS = {
   '0xf12ce677': 'ActivationWindowPassed',
   '0x646cf558': 'AlreadyClaimed',
@@ -1611,6 +1612,19 @@ export const FORWARDER_CUSTOM_ERRORS = {
   '0x422a8e97': 'VerdictAlreadySubmitted',
   '0x7fcc22c9': 'HasOpenDisputeClaims',
   '0xf1898254': 'AppealInProgress',
+  //   AlreadyOverturned() — the hand may not press twice on one verdict. The
+  //     flag was written and never read back as a refusal, so three presses
+  //     against the SAME agreement reached the demotion threshold: unseating an
+  //     arbiter cost one submitted verdict, not three disputes. resolveAppeal
+  //     sets the same flag, so a verdict reversed by the vote is closed to the
+  //     hand as well.
+  //     ⚠️ This refusal is only half of "one verdict, at most one judicial
+  //     mistake" — the reverse order, hand then panel, stays open on purpose
+  //     and is handled inside resolveAppeal, which books nothing there and
+  //     takes the hand's booking back. Nobody sees THAT as a refusal, so it has
+  //     no entry here; it is named only so this comment does not read as the
+  //     whole promise.
+  '0xd8d3519a': 'AlreadyOverturned',
   '0xdf726563': 'NoVerdict',
   '0x7c9a1cf9': 'AlreadyVoted',
   '0x4dcfa42d': 'AlreadyAppealed',
@@ -1706,6 +1720,157 @@ export const FORWARDER_CUSTOM_ERRORS = {
   '0x616d24a0': 'ClaimTimeUnknown',
   '0xe56aceea': 'NotDisputeParty',
   '0x506f3a1b': 'ZeroDigest',
+  // ── The arbiter-accountability branch (August 2026) ─────────────────────────
+  // Eight new refusals from ArbiterRegistryFacet. All eight stand on doors a
+  // person opens by hand, and each answers "why did the button do nothing" —
+  // without an entry here the answer would be "Inner call reverted".
+  //   ChiefBlocWouldDecideAppeal — the chief seats so many of his own that
+  //     they would decide an appeal by themselves; the chain refuses the
+  //     seating, not a person.
+  //   TooManyOpenClaims — the arbiter already holds his cap of disputes and
+  //     cannot take another.
+  //   ArbiterSuspendedError — the arbiter is suspended, the deadline is in the
+  //     argument.
+  //   HasLiveRemovalProposal — a live removal proposal already lies against
+  //     this person; a second one is not written.
+  //   DaoAddressNotSet — governance is being switched on without a successor
+  //     named.
+  //   SeatingHandedOver — the right to seat arbiters has passed to the DAO,
+  //     and manual seating is shut for good.
+  //   NotCurrentDaoAddress — the caller is not the DAO address recorded right
+  //     now.
+  //   ReseatingRemovedIsOwnerOnly — only the owner can bring back a REMOVED
+  //     arbiter; that door is shut to the chief.
+  '0xd02d6f54': 'ChiefBlocWouldDecideAppeal',
+  '0xe7b00352': 'TooManyOpenClaims',
+  '0xbc9ad5e6': 'ArbiterSuspendedError',
+  '0x34a0af52': 'HasLiveRemovalProposal',
+  '0x4488109e': 'DaoAddressNotSet',
+  '0x6a4dd129': 'SeatingHandedOver',
+  '0x6aba596c': 'NotCurrentDaoAddress',
+  '0xcf5bfb95': 'ReseatingRemovedIsOwnerOnly',
+  // ── ArbiterAccountabilityFacet, eight refusals of its OWN ───────────────────
+  // ⚠️ THIS IS THE SECOND FACET, AND UNTIL TODAY NOTHING GUARDED IT. The lock
+  // looked at the registry only, while half the arbiter surface had moved into
+  // the accountability facet — that is, the very class of miss the lock was
+  // built for was living right under its nose. The lock reads BOTH sources now.
+  //
+  // The facet's five remaining errors (NotOwner, NotOwnerOrChief, NotAnArbiter,
+  // ArbiterZeroAddress, ZeroDigest) are declared in the registry too with the
+  // same signature — hence the same selector, and no separate entry is needed.
+  //   RemovalSuspensionIsRemovalAuthorityOnly — a suspension imposed by a
+  //     removal is lifted only by whoever holds the removal right; the plain
+  //     chief is refused here not "by role" but by the weight of that
+  //     particular suspension.
+  //   CauseNotProven — the cause claims to be chain-checkable, but the chain
+  //     does not confirm it (the argument is the cause code).
+  //   EvidenceRequired — an unverifiable cause with no evidence digest.
+  //   RemovalHandedOver — the removal right has passed to the named successor;
+  //     the owner gets the same refusal, and there is no way back.
+  //   DisputeRefRequired — the "silence" cause cannot be proven without a
+  //     reference to a dispute.
+  //   DisputeRefNotApplicable — a dispute reference attached to a cause it does
+  //     not belong to.
+  //   AlreadyAnswered — he has already answered THIS accusation; a second
+  //     answer is not written. One accusation, one answer — a new accusation
+  //     (laid by a person or by the chain) opens the right again.
+  //   NothingToAnswer — nothing stands against this address: no live proposal
+  //     AND no removal. Since 19 August 2026 the answer is taken DURING the
+  //     48-hour pause as well, so a seated arbiter under a live accusation
+  //     does NOT get this refusal — but a stale proposal is not an accusation
+  //     and gives it, exactly when the removal itself has stopped being
+  //     executable.
+  '0xaaffc640': 'RemovalSuspensionIsRemovalAuthorityOnly',
+  '0x6db5710d': 'CauseNotProven',
+  '0xeb8bf73b': 'EvidenceRequired',
+  '0xe25d596d': 'RemovalHandedOver',
+  '0xe7666a2e': 'DisputeRefRequired',
+  '0xa7599ad5': 'DisputeRefNotApplicable',
+  '0xdc1a1b7d': 'AlreadyAnswered',
+  '0x6739e29d': 'NothingToAnswer',
+  // ── The accusation gets words (design of 17 August 2026, decision 7) ────────
+  //   ReasonRequired — the accuser pressed "remove for collusion" without
+  //     writing a single word. "Inner call reverted" would not tell him that
+  //     what is missing is the EXPLANATION — and an explanation is mandatory
+  //     exactly where the chain stays silent: collusion, leak and "other", and
+  //     on the PROPOSAL as much as on the removal.
+  //     ⚠️ This refusal never arrives by this road: neither accusation door is
+  //     gasless (see script/gasless-sender.allow), and through the forwarder
+  //     they answer NotOwner/NotOwnerOrChief long before reaching the words.
+  //     It is listed for completeness of the table, which
+  //     forwarderErrorsMatchFacet guards — the same footing as the
+  //     neighbouring NotOwnerOrChief and SeatingHandedOver.
+  //   ReasonTooLong(uint256) — over the cap, and the cap is in BYTES, not
+  //     characters. This one does arrive by this road: it comes from
+  //     respondToRemoval, the facet's only gasless door, i.e. the words of the
+  //     DEFENCE. The chain puts the real length in the argument, but both
+  //     tables decode the name only — "by how much exactly" is shown to nobody
+  //     today. That is a neighbouring open seam, not a promise. The form must
+  //     ask the chain for the cap (getMaxReasonBytes) and count BYTES: a
+  //     "40 characters left" counter lies fourfold on the first emoji.
+  '0xbc7fd331': 'ReasonRequired',
+  '0x4763e825': 'ReasonTooLong',
+  // ── 48 hours between the accusation and the removal (design of 17 August
+  //    2026, decisions 1-4) ─────────────────────────────────────────────────
+  // The proposal existed but was optional and changed nothing: removal went
+  // through in one transaction and the person learned of it after the fact. It
+  // is now the only way in — the execution window is [48 hours, 14 days) from
+  // the proposal, and the cause at execution must match the proposed one.
+  //   NoLiveProposal — nothing to execute: no proposal stands against this
+  //     address at all, or it was withdrawn. A separate refusal from
+  //     ProposalStale on purpose: there the accusation existed and expired.
+  //   RemovalTooEarly(uint256) — the clock is still running. The argument is
+  //     THE MOMENT from which removal is allowed, so the form can say "19 hours
+  //     to go" rather than "try later". Same open seam as ReasonTooLong above:
+  //     both tables decode the name only, so the moment reaches nobody today.
+  //   ProposalStale(uint256) — the proposal outlived its 14 days; executing it
+  //     would mean an old accusation firing without a fresh warning.
+  //   CauseDiffersFromProposal(uint8,uint8) — warned about one thing, removed
+  //     for another. Changing the cause costs a withdrawal, a new proposal and
+  //     another 48 hours; that is the price of an accusation, not a bug.
+  //     ⚠️ Like ReasonRequired above, none of these four arrives by this road:
+  //     removeArbiterForCause is not gasless (see script/gasless-sender.allow)
+  //     and answers NotOwner through the forwarder long before reaching them.
+  //     They are listed for completeness of the table, which
+  //     forwarderErrorsMatchFacet guards.
+  '0xa6891f1e': 'NoLiveProposal',
+  '0x05b9bc6b': 'RemovalTooEarly',
+  '0x84db9930': 'ProposalStale',
+  '0x033d5425': 'CauseDiffersFromProposal',
+  //   NotYourProposal — the caller is allowed on the withdrawal door in
+  //     general, but this record belongs to someone else. Separate from
+  //     NotOwnerOrChief on purpose: there the role is wrong, here the role is
+  //     right. Withdrawal used to clear anyone's record and that was harmless
+  //     while a proposal took nothing away; once the proposal became the only
+  //     way in to a removal, clearing someone else's became the power to STOP
+  //     one — which the chief was deliberately never given.
+  '0x4fbe5f11': 'NotYourProposal',
+  //   ProposalAlreadyLive(address,uint256) — one live accusation per person,
+  //     and it holds the door. Overwriting someone else's proposal used to
+  //     reset the 48-hour clock and leave nothing behind — the very power round
+  //     1 denied the chief on withdrawProposal, walking back in one door over.
+  //     Clearing a record now costs an explicit withdrawal, which the feed
+  //     records. Same open seam as RemovalTooEarly above: the table decodes the
+  //     name only, so `by` and `proposedAt` reach nobody today.
+  '0x21efc74d': 'ProposalAlreadyLive',
+  //   NotAChainProposal — executeChainRemoval was pressed against an accusation
+  //     a PERSON laid. That button exists only for the chain's own record (the
+  //     third judicial mistake suspends and accuses in nobody's name), and a
+  //     human accusation is still executed by the holder of the removal right
+  //     through removeArbiterForCause, with his arguments and his name on it.
+  //     Owner's condition, 18 August 2026: "the main thing is that overriding
+  //     it must not fly". This is also the FIRST refusal the button gives —
+  //     before the clock is looked at — so a stranger pressing on a human
+  //     accusation is not told that one stands and when it ripens.
+  '0xbba75e02': 'NotAChainProposal',
+  //   ChainProposalNeedsTheChainDoor — the mirror of the line above, and the
+  //     pair only works with both halves: removeArbiterForCause was executing
+  //     accusations the CHAIN laid, which rewrote their ORIGIN in the permanent
+  //     record (253 "the chain" became 1 "a person, for cause") and put the
+  //     owner's name in the feed where nobody's belonged. The name says where
+  //     to go: executeChainRemoval, which anyone may press, the removal
+  //     authority included.
+  '0x1d7c2bf0': 'ChainProposalNeedsTheChainDoor',
 };
 
 // Decodes MinimalForwarder.execute()'s `retdata` (the inner call's own revert data)

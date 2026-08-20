@@ -38,6 +38,7 @@ pragma solidity ^0.8.20;
 import "forge-std/Script.sol";
 import "forge-std/console.sol";
 import "../../src/facets/ArbiterRegistryFacet.sol";
+import {ArbiterAccountabilityFacet} from "../../src/facets/ArbiterAccountabilityFacet.sol";
 import "../../src/FactoryFacet.sol";
 import "../../src/AgreementDeployer.sol";
 import "../../src/DiamondProxy.sol";
@@ -68,7 +69,7 @@ contract UpgradeArbiterRegistryFacetAppeal is Script {
         bytes4[] memory replaceSels = new bytes4[](38);
         replaceSels[0]  = ArbiterRegistryFacet.setChiefArbiter.selector;
         replaceSels[1]  = ArbiterRegistryFacet.addArbiter.selector;
-        replaceSels[2]  = ArbiterRegistryFacet.removeArbiter.selector;
+        replaceSels[2]  = bytes4(0x3487e08c) /* removeArbiter(address), удалена 15 августа 2026 (задача 6 arbiter-accountability) */;
         replaceSels[3]  = ArbiterRegistryFacet.commitDisputeClaim.selector;
         replaceSels[4]  = bytes4(keccak256("claimDispute(address,bytes32)")) /* frozen: old 2-arg selector, historical cut */;
         replaceSels[5]  = ArbiterRegistryFacet.releaseDisputeClaim.selector;
@@ -77,7 +78,7 @@ contract UpgradeArbiterRegistryFacetAppeal is Script {
         replaceSels[8]  = ArbiterRegistryFacet.isRegisteredArbiter.selector;
         replaceSels[9]  = ArbiterRegistryFacet.getArbiters.selector;
         replaceSels[10] = ArbiterRegistryFacet.getDisputeClaimer.selector;
-        replaceSels[11] = ArbiterRegistryFacet.getArbiterDeals.selector;
+        replaceSels[11] = ArbiterAccountabilityFacet.getArbiterDeals.selector;
         replaceSels[12] = ArbiterRegistryFacet.getClaimCommitment.selector;
         replaceSels[13] = ArbiterRegistryFacet.activateDAO.selector;
         replaceSels[14] = ArbiterRegistryFacet.applyAsArbiter.selector;
@@ -94,16 +95,16 @@ contract UpgradeArbiterRegistryFacetAppeal is Script {
         replaceSels[25] = ArbiterRegistryFacet.setRewardPerDispute.selector;
         replaceSels[26] = ArbiterRegistryFacet.setDAOAddress.selector;
         replaceSels[27] = ArbiterRegistryFacet.getPendingVerdict.selector;
-        replaceSels[28] = ArbiterRegistryFacet.getArbiterReward.selector;
+        replaceSels[28] = ArbiterAccountabilityFacet.getArbiterReward.selector;
         replaceSels[29] = ArbiterRegistryFacet.getVaultBalance.selector;
         replaceSels[30] = ArbiterRegistryFacet.getRewardPerDispute.selector;
         replaceSels[31] = ArbiterRegistryFacet.getDAOAddress.selector;
         replaceSels[32] = ArbiterRegistryFacet.clearStuckVerdict.selector;
         replaceSels[33] = ArbiterRegistryFacet.notifyArbiterTimeout.selector;
-        replaceSels[34] = ArbiterRegistryFacet.getArbiterMistakeStreak.selector;
+        replaceSels[34] = ArbiterAccountabilityFacet.getArbiterMistakeStreak.selector;
         replaceSels[35] = ArbiterRegistryFacet.resignAsArbiter.selector;
-        replaceSels[36] = ArbiterRegistryFacet.getArbiterBond.selector;
-        replaceSels[37] = ArbiterRegistryFacet.getOpenClaimCount.selector;
+        replaceSels[36] = ArbiterAccountabilityFacet.getArbiterBond.selector;
+        replaceSels[37] = ArbiterAccountabilityFacet.getOpenClaimCount.selector;
 
         bytes4[] memory addSels = new bytes4[](6);
         addSels[0] = ArbiterRegistryFacet.raiseAppeal.selector;

@@ -20,8 +20,11 @@ MinimalForwarder, а человек лежит в хвосте calldata. Про�
 Обращение к `msg.sender` (а также к ассемблерному `caller()`, это то же самое
 другими буквами) внутри файла, который реализует ERC-2771. «Реализует» здесь =
 в файле есть определение `function _msgSender()`. Сейчас таких файлов ровно
-пять, они перечислены в KNOWN_ERC2771_FILES и служат нижней границей: если
-скрипт обнаружит меньше, значит сломался он сам, а не код (см. код возврата 3).
+шесть (arbiter-accountability, задача 8, 15 августа 2026, добавила
+ArbiterAccountabilityFacet.sol — respondToRemoval, единственная гейслесс-функция
+фасета, потребовала собственный _msgSender), они перечислены в
+KNOWN_ERC2771_FILES и служат нижней границей: если скрипт обнаружит меньше,
+значит сломался он сам, а не код (см. код возврата 3).
 
 Проверяются ВСЕ контракты такого файла, а не только тот, что объявил
 `_msgSender`. Причина — Agreement.sol: `MinimalERC721` сам по себе про ERC-2771
@@ -124,6 +127,7 @@ PLACEHOLDERS = ("ЗАПОЛНИТЬ", "TODO", "FIXME", "XXX")
 KNOWN_ERC2771_FILES = (
     "src/Agreement.sol",
     "src/FactoryFacet.sol",
+    "src/facets/ArbiterAccountabilityFacet.sol",
     "src/facets/ArbiterRegistryFacet.sol",
     "src/facets/JobBoardFacet.sol",
     "src/facets/ServiceBoardFacet.sol",

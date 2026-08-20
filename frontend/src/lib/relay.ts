@@ -18,7 +18,9 @@ import {
   type Address,
   type Hex,
 } from 'viem';
-import { ARBITER_REGISTRY_ABI, DIAMOND_ABI, CONTRACTS } from '@/config/contracts';
+import {
+  ARBITER_REGISTRY_ABI, ARBITER_ACCOUNTABILITY_ABI, DIAMOND_ABI, CONTRACTS,
+} from '@/config/contracts';
 import { CHAIN_ID } from '@/config/constants';
 import type { BoxKey, SignKey } from '@/lib/arbiterChatKey';
 import {
@@ -322,6 +324,62 @@ const GAS_DEFAULTS: Record<string, bigint> = {
   // Публикация ключа: два SSTORE (первый раз холодные, 2×22 100) + LOG2.
   // Замер по фасету: max 72 868, медиана 38 656.
   setArbiterChatKey:    120_000n,
+  // ── Четыре арбитрских входа, переведённых на гейслесс 17 августа 2026 ──
+  //
+  // Замер: `forge test --gas-report` на этой ветке (859 тестов). Берётся ХУДШЕЕ
+  // из ДВУХ таблиц — DiamondProxy и самого фасета, — потому что они расходятся в
+  // обе стороны (у finalizeVerdict выше оказалась таблица фасета, у остальных
+  // трёх — таблица прокси), а не потому, что одна из них «правильная». Дальше
+  // общая формула этого файла: измеренное × 1.19 (настоящий USDC — проксированный
+  // FiatTokenV2_2, он дороже мока) × 1.2 (запас), вверх до круглого.
+  //
+  // max 111 789 (прокси) / 85 284 (фасет); 111 789 × 1.19 × 1.2 ≈ 159 635.
+  submitVerdict:         160_000n,
+  // ⚠️ ЕДИНСТВЕННЫЙ ИЗ ЧЕТЫРЁХ, КОМУ ОБЩИЙ ПОТОЛОК 500 000 БЫЛ БЫ МАЛ. Финализация
+  // исполняет `resolveDispute` на агрименте, а тот на ПЕРВОЙ сделке пары
+  // начисляет XP обеим сторонам в холодные слоты — ровно тот худший случай, из-за
+  // которого выше подняты `release` и `triggerAutoApprove`. Оставить эту запись
+  // ненаписанной значило бы отдать вызову умолчание в 500 000 и получить
+  // «out of gas» на запасном пути ровно в тот день, когда узел не смог оценить.
+  // max 529 035 (прокси) / 539 773 (фасет); 539 773 × 1.19 × 1.2 ≈ 770 796.
+  finalizeVerdict:       780_000n,
+  // Один transfer() USDC и обнуление слота награды.
+  // max 65 979 / 44 788; 65 979 × 1.19 × 1.2 ≈ 94 219.
+  withdrawArbiterReward: 100_000n,
+  // Ответ обвинённого арбитра: один холодный SSTORE и событие. USDC не трогает
+  // вовсе, поэтому поправка «настоящий USDC дороже мока» тут ни при чём —
+  // применена всё равно, единообразия ради: завышенный потолок не стоит ничего
+  // (цепь берёт по факту), заниженный валит предварительный staticCall релеера.
+  //
+  // ⚠️ ПОДНЯТ 19 августа 2026 С 80 000. Причина — правка цепи: с этого дня
+  // ответ принимается ещё ВО ВРЕМЯ 48-часовой паузы, и на этой, основной
+  // теперь ветке функция читает ОДИН лишний холодный слот
+  // (`removalProposals[caller].proposedAt` через `hasLiveProposal`).
+  //
+  // База — ХУДШЕЕ ИЗ ДВУХ ТАБЛИЦ, как и у соседей выше. Обе видны только в
+  // ПОЛНОМ прогоне (`forge test --gas-report`): по отдельной сюите строка
+  // прокси не появляется вовсе, и мерить по одной — верный способ занизить.
+  //   max 61 661 (прокси) / 56 704 (фасет);
+  //   61 661 × 1.19 × 1.2 ≈ 88 052 → вверх до круглого 90 000.
+  // Настоящий запас поэтому 2,2 %, а не «с походом»: между 88 052 и 90 000
+  // помещается ОДИН холодный SLOAD и ничего больше.
+  //
+  // ⚠️ Первая редакция этой правки считала от 57 559 (55 235 прежней записи
+  // плюс замеренная добавка 2 324) и получала 82 196 — то есть обещала запас
+  // 9,5 % вместо настоящих 2,2 %. Ошибка была не в числе 90 000, а в базе:
+  // взята таблица фасета вместо худшей.
+  //
+  // ⚠️ И ЭТОГО ПОТОЛКА МАЛО ДЛЯ ОТВЕТА СЛОВАМИ — открытый хвост, см.
+  // docs/OPEN-ITEMS.md, пункт 91: на полных 512 байтах транзакции нужно
+  // ≈ 102 234, то есть потолок придётся поднимать до 110 000. Сегодня не
+  // стреляет только потому, что ABI в `config/contracts.ts` знает
+  // `respondToRemoval(bytes32)` без `string` и послать слова не может.
+  // Чинить долг ABI и этот потолок придётся ОДНОЙ работой: починка ABI в
+  // одиночку оживит кнопку и в тот же день упрёт её в 90 000.
+  //
+  // Ветка «уже снят» короткого замыкания не потеряла (`removedAt != 0`
+  // проверяется первым), так что снятому эта прибавка не стоит ничего.
+  respondToRemoval:       90_000n,
   resolveDispute:       200_000n,
   // transferFrom USDC (permit-authorized, Diamond as spender) + two storage
   // writes (disputeBounty, disputeBountyPayer) + one event.
@@ -1578,6 +1636,188 @@ export async function recordNoResponseGasless(
   }
 }
 
+/* ═══════════════════════════════════════════════════════════════════════════
+ *  ТРИ АРБИТРСКИХ ДЕЙСТВИЯ, ПЕРЕВЕДЁННЫХ НА ГЕЙСЛЕСС (17 августа 2026)
+ *
+ *  Правило владельца о трёх родах: клиент, исполнитель и АРБИТР — это
+ *  пользователи, и гейслесс-путь им обязателен. Не нужен он только админ-роли
+ *  (директор арбитров), владельцу и узлам: у них ETH обязан быть по должности.
+ *
+ *  До этой правки вынесение вердикта, финализация и получение награды шли
+ *  прямой транзакцией из кошелька (`writeContractAsync` на странице арбитра),
+ *  то есть требовали эфира у человека, который по правилу не обязан его иметь.
+ *  Дыра была не в логике каждой кнопки, а в том, что арбитра забыли считать
+ *  пользователем.
+ *
+ *  ⚠️ РЕЛЕЕР ПРАВОК НЕ ПОТРЕБОВАЛ, И ЭТО ПРОВЕРЕНО, А НЕ ПРЕДПОЛОЖЕНО. Вайтлиста
+ *  функций у него нет по замыслу — ограничивается АДРЕС цели
+ *  (`lib/relayTarget.ts` и близнец `relayer/app.js`: диамонд разрешён сверкой с
+ *  константой, без чтения цепи), а все три вызова идут именно в диамонд. Потолок
+ *  газа 7 000 000 на обеих сторонах — наш худший из четырёх (780 000) под ним с
+ *  девятикратным запасом.
+ *
+ *  ⚠️ ПРЯМАЯ ТРАНЗАКЦИЯ ОСТАЁТСЯ ВТОРЫМ ШЛЮЗОМ, а не удаляется: релеер может
+ *  лежать (`isRelayDown`), и тогда человек с эфиром обязан суметь пройти сам.
+ *  Запасной путь уходит ТОЙ ЖЕ калдатой, а не пересобранными заново `args`.
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+// ─── submitVerdictGasless ─────────────────────────────────────────────────────
+
+/**
+ * Арбитр выносит вердикт — gasless. Ещё не исполняется: ждёт `finalizeVerdict`.
+ *
+ * ⚠️ ГЕЙСЛЕСС ЗДЕСЬ РАБОТАЕТ ПОТОМУ, ЧТО КОНТРАКТ ЧИТАЕТ `_msgSender()` и
+ * сверяет его с `disputeClaims[agreement]` (`ArbiterRegistryFacet.submitVerdict`).
+ * Читай он сырой `msg.sender`, через релеер судьёй оказался бы форвардер, и
+ * вызов отвергался бы `NotTheClaimer` всегда — ровно тот баг, который 31 июля
+ * убил платный вызов арбитра (`fundDispute`, фикс `d172064`).
+ *
+ * ⚠️ ABI БЕРЁТСЯ ИЗ `ARBITER_REGISTRY_ABI`, а не объявляется здесь своей
+ * `parseAbi`-строкой: у подписи один хозяин, и он сверяется с исходником фасета
+ * замком `lib/presentationDigestAbi.test.ts`. Вторая копия разошлась бы с
+ * контрактом молча — так уже случалось с записью заявки.
+ */
+export async function submitVerdictGasless(
+  walletClient: WalletClient,
+  publicClient: PublicClient,
+  agreementAddress: Address,
+  clientWins: boolean,
+): Promise<{ txHash: string; fallbackUsed?: boolean }> {
+  const userAddress = walletClient.account?.address;
+  if (!userAddress) throw new Error('Wallet not connected');
+  const releaseLock = await acquireWalletLock(userAddress);
+  try {
+    const calldata = encodeFunctionData({
+      abi: ARBITER_REGISTRY_ABI as Abi,
+      functionName: 'submitVerdict',
+      args: [agreementAddress, clientWins],
+    }) as Hex;
+    try {
+      const result = await _sendForwardRequest(
+        walletClient, publicClient, calldata, 'submitVerdict', DIAMOND,
+      );
+      return { txHash: result.txHash };
+    } catch (err) {
+      if (!isRelayDown(err)) throw err;
+      const account = walletClient.account;
+      if (!account) throw new Error('Wallet not connected');
+      const gas = await callGasLimit(
+        publicClient, userAddress, DIAMOND, calldata, 'submitVerdict');
+      const txHash = await walletClient.sendTransaction({
+        account, to: DIAMOND, data: calldata, gas, chain: walletClient.chain,
+      });
+      await assertFallbackMined(publicClient, txHash);
+      return { txHash, fallbackUsed: true };
+    }
+  } finally {
+    releaseLock();
+  }
+}
+
+// ─── finalizeVerdictGasless ───────────────────────────────────────────────────
+
+/**
+ * Исполнить поданный вердикт — gasless. Диамонд зовёт `resolveDispute` на
+ * агрименте, деньги расходятся, спор закрывается.
+ *
+ * ⚠️ ЕДИНСТВЕННАЯ ИЗ ЧЕТЫРЁХ, КОТОРАЯ ОТПРАВИТЕЛЯ НЕ ЧИТАЕТ ВООБЩЕ — и это не
+ * повод оставить её прямой. Финализировать вправе кто угодно
+ * (`ArbiterRegistryFacet.finalizeVerdict`), а приостановку контракт проверяет у
+ * АРБИТРА ВЕРДИКТА (`_requireNotSuspended(d, v.arbiter)`), не у вызывающего.
+ * Значит форвардер в роли `msg.sender` не меняет здесь ровным счётом ничего —
+ * ни прав, ни исхода. Но НАЖИМАЕТ кнопку арбитр, и требовать от него эфира
+ * ради шага, который ничем от предыдущего не отличается, — та же дыра в правиле
+ * о трёх родах.
+ *
+ * ⚠️ Самый дорогой вызов из четырёх: см. `finalizeVerdict` в `GAS_DEFAULTS` —
+ * общего умолчания 500 000 ему НЕ ХВАТИЛО БЫ.
+ */
+export async function finalizeVerdictGasless(
+  walletClient: WalletClient,
+  publicClient: PublicClient,
+  agreementAddress: Address,
+): Promise<{ txHash: string; fallbackUsed?: boolean }> {
+  const userAddress = walletClient.account?.address;
+  if (!userAddress) throw new Error('Wallet not connected');
+  const releaseLock = await acquireWalletLock(userAddress);
+  try {
+    const calldata = encodeFunctionData({
+      abi: ARBITER_REGISTRY_ABI as Abi,
+      functionName: 'finalizeVerdict',
+      args: [agreementAddress],
+    }) as Hex;
+    try {
+      const result = await _sendForwardRequest(
+        walletClient, publicClient, calldata, 'finalizeVerdict', DIAMOND,
+      );
+      return { txHash: result.txHash };
+    } catch (err) {
+      if (!isRelayDown(err)) throw err;
+      const account = walletClient.account;
+      if (!account) throw new Error('Wallet not connected');
+      const gas = await callGasLimit(
+        publicClient, userAddress, DIAMOND, calldata, 'finalizeVerdict');
+      const txHash = await walletClient.sendTransaction({
+        account, to: DIAMOND, data: calldata, gas, chain: walletClient.chain,
+      });
+      await assertFallbackMined(publicClient, txHash);
+      return { txHash, fallbackUsed: true };
+    }
+  } finally {
+    releaseLock();
+  }
+}
+
+// ─── withdrawArbiterRewardGasless ─────────────────────────────────────────────
+
+/**
+ * Арбитр забирает накопленное вознаграждение — gasless.
+ *
+ * ⚠️ ТОТ ЖЕ СЛУЧАЙ, ЧТО У `withdrawDisputeBounty` НИЖЕ: контракт отдаёт остаток
+ * по `_msgSender()` и обнуляет ЕГО счёт (`ArbiterRegistryFacet
+ * .withdrawArbiterReward`). Суммы в аргументах нет вовсе — второй копии
+ * арифметики выплаты во фронте не существует по конструкции, экран сумму только
+ * показывает (`getArbiterReward`).
+ *
+ * ⚠️ Отдельная гадость этой кнопки без гейслесса: у арбитра деньги ЕСТЬ, но в
+ * USDC, а чтобы их забрать, нужен эфир, которого нет. Награда за разобранный
+ * спор оказывалась заперта ровно тем, что она награда.
+ */
+export async function withdrawArbiterRewardGasless(
+  walletClient: WalletClient,
+  publicClient: PublicClient,
+): Promise<{ txHash: string; fallbackUsed?: boolean }> {
+  const userAddress = walletClient.account?.address;
+  if (!userAddress) throw new Error('Wallet not connected');
+  const releaseLock = await acquireWalletLock(userAddress);
+  try {
+    const calldata = encodeFunctionData({
+      abi: ARBITER_REGISTRY_ABI as Abi,
+      functionName: 'withdrawArbiterReward',
+      args: [],
+    }) as Hex;
+    try {
+      const result = await _sendForwardRequest(
+        walletClient, publicClient, calldata, 'withdrawArbiterReward', DIAMOND,
+      );
+      return { txHash: result.txHash };
+    } catch (err) {
+      if (!isRelayDown(err)) throw err;
+      const account = walletClient.account;
+      if (!account) throw new Error('Wallet not connected');
+      const gas = await callGasLimit(
+        publicClient, userAddress, DIAMOND, calldata, 'withdrawArbiterReward');
+      const txHash = await walletClient.sendTransaction({
+        account, to: DIAMOND, data: calldata, gas, chain: walletClient.chain,
+      });
+      await assertFallbackMined(publicClient, txHash);
+      return { txHash, fallbackUsed: true };
+    }
+  } finally {
+    releaseLock();
+  }
+}
+
 // ─── fundDisputeGasless ───────────────────────────────────────────────────────
 
 /**
@@ -1729,6 +1969,82 @@ export async function withdrawDisputeBountyGasless(
     await assertFallbackMined(publicClient, txHash);
     return { txHash, fallbackUsed: true };
   }
+  } finally {
+    releaseLock();
+  }
+}
+
+// ─── respondToRemovalGasless ──────────────────────────────────────────────────
+
+/**
+ * Ответ обвинённого арбитра — gasless.
+ *
+ * Обвинение против настоящего адреса лежит в цепи вечно. Ответ ничего не
+ * отменяет и ничего не возвращает: он существует, чтобы читатель цепи видел ДВЕ
+ * записи вместо одной (`ArbiterAccountabilityFacet.respondToRemoval`, задача 8).
+ *
+ * ⚠️ ОТВЕЧАЮТ ДВОЕ РАЗНЫХ ЛЮДЕЙ, И ПУТЬ ОБЯЗАН ВЫДЕРЖАТЬ ОБОИХ. С 19 августа
+ * 2026 ответ принимается ВО ВРЕМЯ 48-часовой паузы — то есть чаще всего звонит
+ * ДЕЙСТВУЮЩИЙ арбитр под живым обвинением, а не снятый. Прежняя редакция этого
+ * абзаца утверждала обратное («отвечает человек, который уже не арбитр») и
+ * ссылалась на гейт `removedAt[caller] != 0`, которого больше нет в одиночку.
+ * Проверено по каждому звену, а не предположено:
+ *   • контракт пускает по «живое предложение ЛИБО состоявшийся снос», статуса
+ *     арбитра не спрашивает нигде (`isArbiter` в теле функции не читается
+ *     вовсе) — и это верно для обоих: снос статус снимает, а обвинение нет,
+ *     так что гейт по статусу отсёк бы то одного, то другого;
+ *   • релеер про роли не знает вовсе: он проверяет АДРЕС цели (диамонд) и
+ *     подпись, и ни один из двух путей (`/api/relay`, `relayer/app.js`) не
+ *     читает реестр арбитров;
+ *   • эта обёртка тоже не спрашивает роль ни у цепи, ни у кэша — единственное
+ *     чтение на пути через релеер это счётчик форвардера. Сторожит
+ *     `arbiterGaslessWrites.test.ts`: если сюда однажды добавят «сначала
+ *     проверим, что он арбитр», тест назовёт лишнее чтение.
+ *
+ * ⚠️ ГЕЙСЛЕСС ЗДЕСЬ ОБЯЗАТЕЛЕН СИЛЬНЕЕ, ЧЕМ ГДЕ БЫ ТО НИ БЫЛО. Снос сжигает
+ * залог; человек, у которого только что забрали деньги и имя, — последний, у
+ * кого стоит требовать эфир за право возразить. Контракт это предвидел и берёт
+ * отправителя через `_msgSender()`, назвав себя «ЕДИНСТВЕННОЙ гейслесс-функцией
+ * этого фасета» — то есть путь через релеер там не побочный, а основной.
+ *
+ * ⚠️ ЭКРАНА У ЭТОЙ ОБЁРТКИ ПОКА НЕТ, и это не забывчивость: форму ответа решает
+ * владелец. Если до неё дойдёт чистка мёртвого кода — остановить: обёртка
+ * заведена заранее намеренно.
+ *
+ * `replyDigest` — отпечаток ответа (что под ним, цепь не читает и не хранит).
+ * Нулевой контракт отвергает (`ZeroDigest`).
+ */
+export async function respondToRemovalGasless(
+  walletClient: WalletClient,
+  publicClient: PublicClient,
+  replyDigest: Hex,
+): Promise<{ txHash: string; fallbackUsed?: boolean }> {
+  const userAddress = walletClient.account?.address;
+  if (!userAddress) throw new Error('Wallet not connected');
+  const releaseLock = await acquireWalletLock(userAddress);
+  try {
+    const calldata = encodeFunctionData({
+      abi: ARBITER_ACCOUNTABILITY_ABI as Abi,
+      functionName: 'respondToRemoval',
+      args: [replyDigest],
+    }) as Hex;
+    try {
+      const result = await _sendForwardRequest(
+        walletClient, publicClient, calldata, 'respondToRemoval', DIAMOND,
+      );
+      return { txHash: result.txHash };
+    } catch (err) {
+      if (!isRelayDown(err)) throw err;
+      const account = walletClient.account;
+      if (!account) throw new Error('Wallet not connected');
+      const gas = await callGasLimit(
+        publicClient, userAddress, DIAMOND, calldata, 'respondToRemoval');
+      const txHash = await walletClient.sendTransaction({
+        account, to: DIAMOND, data: calldata, gas, chain: walletClient.chain,
+      });
+      await assertFallbackMined(publicClient, txHash);
+      return { txHash, fallbackUsed: true };
+    }
   } finally {
     releaseLock();
   }

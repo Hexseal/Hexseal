@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { describe, it, expect } from 'vitest';
 import { CLAIM_DISPUTE_ABI, SET_ARBITER_CHAT_KEY_ABI } from './relay';
 import { ARBITER_REGISTRY_ABI } from '@/config/contracts';
@@ -171,10 +171,40 @@ function abiCanonicalReturnNames(abi: readonly unknown[], fnName: string): strin
   return names.join(',');
 }
 
-const FACET = readFileSync(
-  new URL('../../../src/facets/ArbiterRegistryFacet.sol', import.meta.url),
-  'utf8',
-);
+/**
+ * ⚠️ ИСХОДНИК — ВСЕ АРБИТРАЖНЫЕ ФАСЕТЫ СРАЗУ, А НЕ ОДИН ФАЙЛ.
+ *
+ * До 17 августа 2026 здесь стоял единственный путь — `ArbiterRegistryFacet.sol`.
+ * Реестр упёрся в потолок EIP-170, и четырнадцать чтений уехали в
+ * `ArbiterAccountabilityFacet.sol` (коммит a88a2200) — среди них
+ * `getArbiterChatKeys`, ради которой заведены две трети этого файла. Пять
+ * сверок покраснели, и ни одна не была права по существу: ABI фронта с цепью не
+ * разошёлся (даймонд отвечает по одному адресу, каким фасетом смонтирован
+ * селектор — снаружи не видно), замок был прибит к ФАЙЛУ.
+ *
+ * Поэтому правится замок, а не ABI. Список файлов берётся с диска: третий
+ * арбитражный фасет попадёт под сверку сам.
+ *
+ * Склейка безопасна ровно потому, что каждая сверка ниже требует РОВНО ОДНО
+ * объявление искомого имени и падает на двух — то есть функция, объявленная
+ * разом в двух фасетах, даёт явный отказ, а не молчаливый выбор первой.
+ */
+const FACETS_DIR = new URL('../../../src/facets/', import.meta.url);
+
+const FACET_FILES = readdirSync(FACETS_DIR)
+  .filter((f) => /^Arbiter.*\.sol$/.test(f))
+  .sort();
+
+const FACET = FACET_FILES.map((f) => readFileSync(new URL(f, FACETS_DIR), 'utf8')).join('\n');
+
+describe('сверка читает всю арбитражную поверхность, а не один файл', () => {
+  it('арбитражных фасетов найдено больше одного', () => {
+    // Именно так замок ослеп бы обратно: путь сузили до одного файла, всё
+    // зелено, половина поверхности не сторожится ничем.
+    expect(FACET_FILES.length, `найдено: ${FACET_FILES.join(', ') || '(ничего)'}`)
+      .toBeGreaterThanOrEqual(2);
+  });
+});
 
 describe('ABI заявки на спор не расходится с контрактом', () => {
   it('ABI, которым идёт вызов, совпадает с исходником контракта', () => {

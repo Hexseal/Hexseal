@@ -20,6 +20,7 @@ import "../src/FactoryFacet.sol";
 import "../src/AgreementDeployer.sol";
 import "../src/Agreement.sol";
 import "../src/facets/ArbiterRegistryFacet.sol";
+import {ArbiterAccountabilityFacet} from "../src/facets/ArbiterAccountabilityFacet.sol";
 import "../src/facets/ReputationFacet.sol";
 import "../src/MinimalForwarder.sol";
 
@@ -137,64 +138,58 @@ contract DisputeSettlementTest is Test {
         facSels[11] = FactoryFacet.getUsdc.selector;
         facSels[12] = bytes4(0x220f72fc);
 
-        bytes4[] memory arbSels = new bytes4[](46);
-        arbSels[0]  = ArbiterRegistryFacet.setChiefArbiter.selector;
-        arbSels[1]  = ArbiterRegistryFacet.addArbiter.selector;
-        arbSels[2]  = ArbiterRegistryFacet.removeArbiter.selector;
-        arbSels[3]  = ArbiterRegistryFacet.commitDisputeClaim.selector;
-        arbSels[4]  = ArbiterRegistryFacet.claimDispute.selector;
-        arbSels[5]  = ArbiterRegistryFacet.releaseDisputeClaim.selector;
-        arbSels[6]  = ArbiterRegistryFacet.clearDisputeClaim.selector;
-        arbSels[7]  = ArbiterRegistryFacet.getChiefArbiter.selector;
-        arbSels[8]  = ArbiterRegistryFacet.isRegisteredArbiter.selector;
-        arbSels[9]  = ArbiterRegistryFacet.getArbiters.selector;
-        arbSels[10] = ArbiterRegistryFacet.getDisputeClaimer.selector;
-        arbSels[11] = ArbiterRegistryFacet.getArbiterDeals.selector;
-        arbSels[12] = ArbiterRegistryFacet.getClaimCommitment.selector;
-        arbSels[13] = ArbiterRegistryFacet.activateDAO.selector;
-        arbSels[14] = ArbiterRegistryFacet.applyAsArbiter.selector;
-        arbSels[15] = ArbiterRegistryFacet.isDaoActive.selector;
-        arbSels[16] = ArbiterRegistryFacet.getMinXPToRegister.selector;
-        arbSels[17] = ArbiterRegistryFacet.getDaoThreshold.selector;
-        arbSels[18] = ArbiterRegistryFacet.submitVerdict.selector;
-        arbSels[19] = ArbiterRegistryFacet.finalizeVerdict.selector;
-        arbSels[20] = ArbiterRegistryFacet.overturnVerdict.selector;
-        arbSels[21] = ArbiterRegistryFacet.freezeVerdict.selector;
-        arbSels[22] = ArbiterRegistryFacet.unfreezeVerdict.selector;
-        arbSels[23] = ArbiterRegistryFacet.withdrawArbiterReward.selector;
-        arbSels[24] = ArbiterRegistryFacet.fundVault.selector;
-        arbSels[25] = ArbiterRegistryFacet.setRewardPerDispute.selector;
-        arbSels[26] = ArbiterRegistryFacet.setDAOAddress.selector;
-        arbSels[27] = ArbiterRegistryFacet.getPendingVerdict.selector;
-        arbSels[28] = ArbiterRegistryFacet.getArbiterReward.selector;
-        arbSels[29] = ArbiterRegistryFacet.getVaultBalance.selector;
-        arbSels[30] = ArbiterRegistryFacet.getRewardPerDispute.selector;
-        arbSels[31] = ArbiterRegistryFacet.getDAOAddress.selector;
-        arbSels[32] = ArbiterRegistryFacet.clearStuckVerdict.selector;
-        arbSels[33] = ArbiterRegistryFacet.creditDisputeFee.selector;
-        arbSels[34] = ArbiterRegistryFacet.getTreasurySlice.selector;
-        arbSels[35] = ArbiterRegistryFacet.withdrawTreasurySlice.selector;
-        // Оба нужны пути таймаута (Задача 4): hasSubmittedVerdict вызывается
-        // ЖЁСТКО (не в try/catch), без него triggerArbiterTimeout ревертит
-        // «Diamond: function not found» ещё до расчёта котла;
-        // notifyArbiterTimeout под try/catch, но без него ветка «арбитр взялся
-        // и не довёл» молча не наказывала бы арбитра, и тест шёл бы по пути,
-        // которого в проде нет.
-        arbSels[36] = ArbiterRegistryFacet.hasSubmittedVerdict.selector;
-        arbSels[37] = ArbiterRegistryFacet.notifyArbiterTimeout.selector;
-        // Задача 4b: наказание за неявку читается только отсюда — без этого
-        // селектора testLateReleaseCannotDodgeTheArbiterPenalty не смог бы
-        // отличить «ошибка записана» от «функции нет на диамонде».
-        arbSels[38] = ArbiterRegistryFacet.getArbiterMistakeStreak.selector;
-        // Задача 1 (платный вызов арбитра): порог и котировка доплаты.
-        arbSels[39] = ArbiterRegistryFacet.setArbiterFloor.selector;
-        arbSels[40] = ArbiterRegistryFacet.getArbiterFloor.selector;
-        arbSels[41] = ArbiterRegistryFacet.quoteDisputeTopUp.selector;
-        // Задача 2 (платный вызов арбитра): оплата и мягкий возврат доплаты.
-        arbSels[42] = ArbiterRegistryFacet.fundDispute.selector;
-        arbSels[43] = ArbiterRegistryFacet.getDisputeBounty.selector;
-        arbSels[44] = ArbiterRegistryFacet.withdrawDisputeBounty.selector;
-        arbSels[45] = ArbiterRegistryFacet.getRefundableBounty.selector;
+        bytes4[] memory arbSels = new bytes4[](42);
+        arbSels[0] = ArbiterRegistryFacet.setChiefArbiter.selector;
+        arbSels[1] = ArbiterRegistryFacet.addArbiter.selector;
+        arbSels[2] = ArbiterRegistryFacet.commitDisputeClaim.selector;
+        arbSels[3] = ArbiterRegistryFacet.claimDispute.selector;
+        arbSels[4] = ArbiterRegistryFacet.releaseDisputeClaim.selector;
+        arbSels[5] = ArbiterRegistryFacet.clearDisputeClaim.selector;
+        arbSels[6] = ArbiterRegistryFacet.getChiefArbiter.selector;
+        arbSels[7] = ArbiterRegistryFacet.isRegisteredArbiter.selector;
+        arbSels[8] = ArbiterRegistryFacet.getArbiters.selector;
+        arbSels[9] = ArbiterRegistryFacet.getDisputeClaimer.selector;
+        arbSels[10] = ArbiterRegistryFacet.getClaimCommitment.selector;
+        arbSels[11] = ArbiterRegistryFacet.activateDAO.selector;
+        arbSels[12] = ArbiterRegistryFacet.applyAsArbiter.selector;
+        arbSels[13] = ArbiterRegistryFacet.isDaoActive.selector;
+        arbSels[14] = ArbiterRegistryFacet.getMinXPToRegister.selector;
+        arbSels[15] = ArbiterRegistryFacet.getDaoThreshold.selector;
+        arbSels[16] = ArbiterRegistryFacet.submitVerdict.selector;
+        arbSels[17] = ArbiterRegistryFacet.finalizeVerdict.selector;
+        arbSels[18] = ArbiterRegistryFacet.overturnVerdict.selector;
+        arbSels[19] = ArbiterRegistryFacet.freezeVerdict.selector;
+        arbSels[20] = ArbiterRegistryFacet.unfreezeVerdict.selector;
+        arbSels[21] = ArbiterRegistryFacet.withdrawArbiterReward.selector;
+        arbSels[22] = ArbiterRegistryFacet.fundVault.selector;
+        arbSels[23] = ArbiterRegistryFacet.setRewardPerDispute.selector;
+        arbSels[24] = ArbiterRegistryFacet.setDAOAddress.selector;
+        arbSels[25] = ArbiterRegistryFacet.getPendingVerdict.selector;
+        arbSels[26] = ArbiterRegistryFacet.getVaultBalance.selector;
+        arbSels[27] = ArbiterRegistryFacet.getRewardPerDispute.selector;
+        arbSels[28] = ArbiterRegistryFacet.getDAOAddress.selector;
+        arbSels[29] = ArbiterRegistryFacet.clearStuckVerdict.selector;
+        arbSels[30] = ArbiterRegistryFacet.creditDisputeFee.selector;
+        arbSels[31] = ArbiterRegistryFacet.getTreasurySlice.selector;
+        arbSels[32] = ArbiterRegistryFacet.withdrawTreasurySlice.selector;
+        arbSels[33] = ArbiterRegistryFacet.hasSubmittedVerdict.selector;
+        arbSels[34] = ArbiterRegistryFacet.notifyArbiterTimeout.selector;
+        arbSels[35] = ArbiterRegistryFacet.setArbiterFloor.selector;
+        arbSels[36] = ArbiterRegistryFacet.getArbiterFloor.selector;
+        arbSels[37] = ArbiterRegistryFacet.quoteDisputeTopUp.selector;
+        arbSels[38] = ArbiterRegistryFacet.fundDispute.selector;
+        arbSels[39] = ArbiterRegistryFacet.getDisputeBounty.selector;
+        arbSels[40] = ArbiterRegistryFacet.withdrawDisputeBounty.selector;
+        arbSels[41] = ArbiterRegistryFacet.getRefundableBounty.selector;
+
+        // Задача 4.5 (16 августа 2026): эти чтения живут в
+        // ArbiterAccountabilityFacet, значит и монтировать их надо на него.
+        // Оставить их в списке выше значило бы маршрут на фасет, который их
+        // не реализует, — вызов доходит и ревертит.
+        bytes4[] memory accSels = new bytes4[](3);
+        accSels[0] = ArbiterAccountabilityFacet.getArbiterDeals.selector;
+        accSels[1] = ArbiterAccountabilityFacet.getArbiterReward.selector;
+        accSels[2] = ArbiterAccountabilityFacet.getArbiterMistakeStreak.selector;
 
         // Задача 4: счётчик споров без вердикта. Только геттер — запись идёт
         // напрямую из ArbiterRegistryFacet в общее namespaced-хранилище, этот
@@ -218,13 +213,16 @@ contract DisputeSettlementTest is Test {
         ownSels[2] = OwnershipFacet.acceptOwnership.selector;
         ownSels[3] = OwnershipFacet.pendingOwner.selector;
 
-        IDiamondCut.FacetCut[] memory cut = new IDiamondCut.FacetCut[](7);
+        IDiamondCut.FacetCut[] memory cut = new IDiamondCut.FacetCut[](8);
         cut[0] = IDiamondCut.FacetCut(address(registryFacet),        IDiamondCut.FacetCutAction.Add, regSels);
         cut[1] = IDiamondCut.FacetCut(address(factoryFacet),         IDiamondCut.FacetCutAction.Add, facSels);
         cut[2] = IDiamondCut.FacetCut(address(diamondCutFacet),      IDiamondCut.FacetCutAction.Add, cutSels);
         cut[3] = IDiamondCut.FacetCut(address(diamondLoupeFacet),    IDiamondCut.FacetCutAction.Add, loupeSels);
         cut[4] = IDiamondCut.FacetCut(address(ownershipFacet),       IDiamondCut.FacetCutAction.Add, ownSels);
         cut[5] = IDiamondCut.FacetCut(address(arbiterRegistryFacet), IDiamondCut.FacetCutAction.Add, arbSels);
+        cut[7] = IDiamondCut.FacetCut(
+            address(new ArbiterAccountabilityFacet()), IDiamondCut.FacetCutAction.Add, accSels
+        );
         cut[6] = IDiamondCut.FacetCut(address(reputationFacet),      IDiamondCut.FacetCutAction.Add, repSels);
 
         diamond = new DiamondProxy(owner, cut, address(0), "");
@@ -402,7 +400,7 @@ contract DisputeSettlementTest is Test {
 
         assertEq(uint8(a.status()), uint8(Agreement.Status.RESOLVED), "the dispute must still close");
         assertEq(usdc.balanceOf(client) - clientBefore, 33, "no fee taken, winner gets the whole (tiny) pot");
-        assertEq(ArbiterRegistryFacet(address(diamond)).getArbiterReward(arbiterAddr), 0, "nothing credited");
+        assertEq(ArbiterAccountabilityFacet(address(diamond)).getArbiterReward(arbiterAddr), 0, "nothing credited");
         assertEq(ArbiterRegistryFacet(address(diamond)).getTreasurySlice(), 0, "nothing credited");
     }
 
@@ -424,7 +422,7 @@ contract DisputeSettlementTest is Test {
         _assertDisputeFeeSkippedNotEmitted();
 
         assertEq(usdc.balanceOf(client) - clientBefore, 194_000_000, "client gets 97%");
-        assertEq(ArbiterRegistryFacet(address(diamond)).getArbiterReward(arbiterAddr), 4_800_000, "arbiter 80% of the fee");
+        assertEq(ArbiterAccountabilityFacet(address(diamond)).getArbiterReward(arbiterAddr), 4_800_000, "arbiter 80% of the fee");
         assertEq(ArbiterRegistryFacet(address(diamond)).getTreasurySlice(), 1_200_000, "treasury 20% of the fee");
     }
 
@@ -442,7 +440,7 @@ contract DisputeSettlementTest is Test {
         _assertDisputeFeeSkippedNotEmitted();
 
         assertEq(usdc.balanceOf(executor) - executorBefore, 194_000_000, "executor gets 97%");
-        assertEq(ArbiterRegistryFacet(address(diamond)).getArbiterReward(arbiterAddr), 4_800_000, "arbiter 80% of the fee");
+        assertEq(ArbiterAccountabilityFacet(address(diamond)).getArbiterReward(arbiterAddr), 4_800_000, "arbiter 80% of the fee");
         assertEq(ArbiterRegistryFacet(address(diamond)).getTreasurySlice(), 1_200_000, "treasury 20% of the fee");
     }
 
@@ -494,7 +492,7 @@ contract DisputeSettlementTest is Test {
         assertEq(uint8(a.status()), uint8(Agreement.Status.RESOLVED), "the dispute must still close");
         assertEq(usdc.balanceOf(client) - clientBefore, 200_000_000, "no fee taken, winner gets the whole pot");
         assertEq(usdc.balanceOf(address(diamond)) - diamondBefore, 0, "not a cent may be stranded on the diamond");
-        assertEq(ArbiterRegistryFacet(address(diamond)).getArbiterReward(arbiterAddr), 0, "nothing credited");
+        assertEq(ArbiterAccountabilityFacet(address(diamond)).getArbiterReward(arbiterAddr), 0, "nothing credited");
         assertEq(ArbiterRegistryFacet(address(diamond)).getTreasurySlice(), 0, "nothing credited");
     }
 
@@ -518,7 +516,7 @@ contract DisputeSettlementTest is Test {
 
         assertEq(uint8(a.status()), uint8(Agreement.Status.RESOLVED), "the dispute must still close");
         assertEq(
-            ArbiterRegistryFacet(address(diamond)).getArbiterReward(arbiterAddr),
+            ArbiterAccountabilityFacet(address(diamond)).getArbiterReward(arbiterAddr),
             4_800_000,
             "the reward stays credited and withdrawable later"
         );
@@ -778,7 +776,7 @@ contract DisputeSettlementTest is Test {
         Agreement a = Agreement(_createFundedAgreement(200_000_000));
         _activateAndDispute(a);
 
-        uint256 before = ArbiterRegistryFacet(address(diamond)).getArbiterMistakeStreak(arbiterAddr);
+        uint256 before = ArbiterAccountabilityFacet(address(diamond)).getArbiterMistakeStreak(arbiterAddr);
 
         vm.warp(block.timestamp + a.DISPUTE_WINDOW() + 1);
         vm.prank(arbiterAddr);
@@ -788,7 +786,7 @@ contract DisputeSettlementTest is Test {
         a.triggerArbiterTimeout();
 
         assertEq(
-            ArbiterRegistryFacet(address(diamond)).getArbiterMistakeStreak(arbiterAddr),
+            ArbiterAccountabilityFacet(address(diamond)).getArbiterMistakeStreak(arbiterAddr),
             before + 1,
             "the no-show must be recorded"
         );
@@ -1563,7 +1561,7 @@ contract DisputeSettlementTest is Test {
         _claimByArbiter(a);
         _submitAndFinalize(a, true);
 
-        assertEq(ArbiterRegistryFacet(address(diamond)).getArbiterReward(arbiterAddr) >= need, true, "arbiter got at least the bounty");
+        assertEq(ArbiterAccountabilityFacet(address(diamond)).getArbiterReward(arbiterAddr) >= need, true, "arbiter got at least the bounty");
         assertEq(ArbiterRegistryFacet(address(diamond)).getDisputeBounty(address(a)), 0, "bounty cleared after payout");
     }
 
@@ -1599,7 +1597,7 @@ contract DisputeSettlementTest is Test {
         ArbiterRegistryFacet(address(diamond)).finalizeVerdict(address(a));
 
         assertEq(ArbiterRegistryFacet(address(diamond)).getRefundableBounty(client), need, "bounty went to the payer as claimable");
-        assertEq(ArbiterRegistryFacet(address(diamond)).getArbiterReward(arbiterAddr), 0, "overturned arbiter got nothing, including the bounty");
+        assertEq(ArbiterAccountabilityFacet(address(diamond)).getArbiterReward(arbiterAddr), 0, "overturned arbiter got nothing, including the bounty");
         assertEq(ArbiterRegistryFacet(address(diamond)).getDisputeBounty(address(a)), 0, "bounty left the dispute either way");
     }
 

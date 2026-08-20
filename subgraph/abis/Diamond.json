@@ -452,5 +452,245 @@
       }
     ],
     "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "ArbiterSeated",
+    "inputs": [
+      {
+        "name": "arbiter",
+        "type": "address",
+        "indexed": true
+      },
+      {
+        "name": "by",
+        "type": "address",
+        "indexed": true
+      },
+      {
+        "name": "selfService",
+        "type": "bool",
+        "indexed": false
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "ArbiterResigned",
+    "inputs": [
+      {
+        "name": "arbiter",
+        "type": "address",
+        "indexed": true
+      },
+      {
+        "name": "bondRefunded",
+        "type": "uint256",
+        "indexed": false
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "ArbiterDemoted",
+    "inputs": [
+      {
+        "name": "arbiter",
+        "type": "address",
+        "indexed": true
+      },
+      {
+        "name": "by",
+        "type": "address",
+        "indexed": true
+      },
+      {
+        "name": "path",
+        "type": "uint8",
+        "indexed": true
+      },
+      {
+        "name": "agreement",
+        "type": "address",
+        "indexed": false
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "ArbiterSuspended",
+    "inputs": [
+      {
+        "name": "arbiter",
+        "type": "address",
+        "indexed": true
+      },
+      {
+        "name": "by",
+        "type": "address",
+        "indexed": true
+      },
+      {
+        "name": "until",
+        "type": "uint256",
+        "indexed": false
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "ArbiterSuspensionLifted",
+    "inputs": [
+      {
+        "name": "arbiter",
+        "type": "address",
+        "indexed": true
+      },
+      {
+        "name": "by",
+        "type": "address",
+        "indexed": true
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "ArbiterRemovedForCause",
+    "inputs": [
+      {
+        "name": "arbiter",
+        "type": "address",
+        "indexed": true
+      },
+      {
+        "name": "by",
+        "type": "address",
+        "indexed": true
+      },
+      {
+        "name": "cause",
+        "type": "uint8",
+        "indexed": true
+      },
+      {
+        "name": "verifiedByChain",
+        "type": "bool",
+        "indexed": false
+      },
+      {
+        "name": "evidenceDigest",
+        "type": "bytes32",
+        "indexed": false
+      },
+      {
+        "name": "bondForfeited",
+        "type": "uint256",
+        "indexed": false
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "RemovalProposed",
+    "inputs": [
+      {
+        "name": "arbiter",
+        "type": "address",
+        "indexed": true
+      },
+      {
+        "name": "by",
+        "type": "address",
+        "indexed": true
+      },
+      {
+        "name": "cause",
+        "type": "uint8",
+        "indexed": true
+      },
+      {
+        "name": "evidenceDigest",
+        "type": "bytes32",
+        "indexed": false
+      },
+      {
+        "name": "at",
+        "type": "uint256",
+        "indexed": false
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "RemovalProposalWithdrawn",
+    "inputs": [
+      {
+        "name": "arbiter",
+        "type": "address",
+        "indexed": true
+      },
+      {
+        "name": "by",
+        "type": "address",
+        "indexed": true
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "RemovalProposalConsumed",
+    "inputs": [
+      {
+        "name": "arbiter",
+        "type": "address",
+        "indexed": true
+      },
+      {
+        "name": "proposedCause",
+        "type": "uint8",
+        "indexed": true
+      },
+      {
+        "name": "proposedBy",
+        "type": "address",
+        "indexed": true
+      },
+      {
+        "name": "evidenceDigest",
+        "type": "bytes32",
+        "indexed": false
+      },
+      {
+        "name": "proposedAt",
+        "type": "uint256",
+        "indexed": false
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "RemovalAnswered",
+    "inputs": [
+      {
+        "name": "arbiter",
+        "type": "address",
+        "indexed": true
+      },
+      {
+        "name": "replyDigest",
+        "type": "bytes32",
+        "indexed": false
+      }
+    ],
+    "anonymous": false
   }
 ]

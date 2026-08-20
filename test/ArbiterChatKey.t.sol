@@ -3,21 +3,28 @@ pragma solidity ^0.8.20;
 
 import "forge-std/Test.sol";
 import {ArbiterRegistryFacet} from "../src/facets/ArbiterRegistryFacet.sol";
+import {ArbiterAccountabilityFacet} from "../src/facets/ArbiterAccountabilityFacet.sol";
+import {ArbiterTwoFacetBench} from "./ArbiterTwoFacetBench.sol";
 import {FactoryStorage} from "../src/FactoryFacet.sol";
 import {MinimalForwarder} from "../src/MinimalForwarder.sol";
 
-contract ArbiterChatKeyTest is Test {
+contract ArbiterChatKeyTest is Test, ArbiterTwoFacetBench {
+    /// Оба хендла указывают на ОДИН адрес — прокси с обоими фасетами
+    /// (см. test/ArbiterTwoFacetBench.sol). `facet` оставлен под прежним
+    /// именем нарочно: все vm.store(address(facet), ...) ниже продолжают
+    /// бить в то же самое хранилище.
     ArbiterRegistryFacet facet;
+    ArbiterAccountabilityFacet accFacet;
 
     function setUp() public {
-        facet = new ArbiterRegistryFacet();
+        (facet, accFacet) = _deployArbiterBench();
     }
 
     /// Ключей нет — обе половины нули. Отдельный тест, потому что «нет ключа»
     /// и «ключ нулевой» для читателя одно и то же, и это намеренно: 4в считает
     /// нулевой ключ признаком «предъявлять некому».
     function test_ChatKeysEmptyByDefault() public view {
-        (bytes32 box, bytes32 sign) = facet.getArbiterChatKeys(address(0xBEEF));
+        (bytes32 box, bytes32 sign) = accFacet.getArbiterChatKeys(address(0xBEEF));
         assertEq(box, bytes32(0), unicode"boxKey должен быть нулевым");
         assertEq(sign, bytes32(0), unicode"signKey должен быть нулевым");
     }
@@ -32,7 +39,7 @@ contract ArbiterChatKeyTest is Test {
         vm.prank(arb);
         facet.setArbiterChatKey(box, sign);
 
-        (bytes32 gotBox, bytes32 gotSign) = facet.getArbiterChatKeys(arb);
+        (bytes32 gotBox, bytes32 gotSign) = accFacet.getArbiterChatKeys(arb);
         assertEq(gotBox, box);
         assertEq(gotSign, sign);
     }
@@ -71,7 +78,7 @@ contract ArbiterChatKeyTest is Test {
         vm.prank(a);
         facet.setArbiterChatKey(bytes32(uint256(0xAA)), bytes32(uint256(0xAB)));
 
-        (bytes32 bBox, bytes32 bSign) = facet.getArbiterChatKeys(b);
+        (bytes32 bBox, bytes32 bSign) = accFacet.getArbiterChatKeys(b);
         assertEq(bBox, bytes32(0), unicode"запись арбитра A попала арбитру B");
         assertEq(bSign, bytes32(0), unicode"запись арбитра A попала арбитру B");
     }
@@ -103,7 +110,7 @@ contract ArbiterChatKeyTest is Test {
         vm.prank(arb);
         facet.setArbiterChatKey(bytes32(uint256(0x33)), bytes32(uint256(0x44)));
 
-        (bytes32 box, bytes32 sign) = facet.getArbiterChatKeys(arb);
+        (bytes32 box, bytes32 sign) = accFacet.getArbiterChatKeys(arb);
         assertEq(box, bytes32(uint256(0x33)));
         assertEq(sign, bytes32(uint256(0x44)));
     }
@@ -147,7 +154,7 @@ contract ArbiterChatKeyTest is Test {
             unicode"одинаковая перезапись не должна излучать ArbiterChatKeySet"
         );
         // Запись при этом всё равно на месте — идемпотентность, не отказ записи.
-        (bytes32 gotBox, bytes32 gotSign) = facet.getArbiterChatKeys(arb);
+        (bytes32 gotBox, bytes32 gotSign) = accFacet.getArbiterChatKeys(arb);
         assertEq(gotBox, box);
         assertEq(gotSign, sign);
     }
@@ -273,11 +280,11 @@ contract ArbiterChatKeyTest is Test {
         (bool ok, bytes memory ret) = fwd.execute(req, sig);
         assertTrue(ok, string.concat("forwarded setArbiterChatKey failed: ", vm.toString(ret)));
 
-        (bytes32 gotBox, bytes32 gotSign) = facet.getArbiterChatKeys(arb);
+        (bytes32 gotBox, bytes32 gotSign) = accFacet.getArbiterChatKeys(arb);
         assertEq(gotBox, box, unicode"ключ должен быть записан подписанту, а не форвардеру");
         assertEq(gotSign, sign, unicode"ключ должен быть записан подписанту, а не форвардеру");
 
-        (bytes32 fwdBox, bytes32 fwdSign) = facet.getArbiterChatKeys(address(fwd));
+        (bytes32 fwdBox, bytes32 fwdSign) = accFacet.getArbiterChatKeys(address(fwd));
         assertEq(fwdBox, bytes32(0), unicode"ключ утёк на адрес форвардера вместо человека");
         assertEq(fwdSign, bytes32(0), unicode"ключ утёк на адрес форвардера вместо человека");
     }
@@ -329,7 +336,7 @@ contract ArbiterChatKeyTest is Test {
         vm.prank(arb);
         facet.claimDispute(address(agr), salt, box, sign);
 
-        (bytes32 gotBox, bytes32 gotSign) = facet.getArbiterChatKeys(arb);
+        (bytes32 gotBox, bytes32 gotSign) = accFacet.getArbiterChatKeys(arb);
         assertEq(gotBox, box, unicode"успешный клейм не записал boxKey");
         assertEq(gotSign, sign, unicode"успешный клейм не записал signKey");
     }

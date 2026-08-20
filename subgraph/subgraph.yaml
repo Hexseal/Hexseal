@@ -19,6 +19,15 @@ dataSources:
         - ServiceRequest
         - Agreement
         - FeeCollection
+        - Arbiter
+        - ArbiterSeating
+        - ArbiterResignation
+        - ArbiterDemotion
+        - ArbiterRemoval
+        - ArbiterSuspension
+        - ArbiterSuspensionLift
+        - RemovalProposal
+        - RemovalAnswer
       abis:
         - name: Diamond
           file: ./abis/Diamond.json
@@ -57,6 +66,61 @@ dataSources:
           handler: handleAgreementDeployed
         - event: FeeCollected(indexed uint256,indexed address,indexed uint8,uint256)
           handler: handleFeeCollected
+
+        # ── Arbiter accountability ───────────────────────────────────────────
+        # Handlers live in ./src/arbiter.ts and reach the manifest through a
+        # re-export at the bottom of ./src/diamond.ts.
+        #
+        # ⚠️ A SECOND DATA SOURCE WOULD BE THE CLEANER SHAPE AND IS NOT ALLOWED
+        # HERE. One data source takes exactly one mapping file, so keeping the
+        # arbiter code out of diamond.ts costs either a second data source or a
+        # re-export. The second data source was written, and it broke two tests
+        # in a neighbour: frontend/src/lib/arbiterTurn.test.ts reads THIS file
+        # to check its own copy of the diamond's deploy block, and refuses to
+        # guess when it finds two `startBlock:` lines — deliberately, with a
+        # test of its own asserting the refusal. It is right to refuse: with two
+        # data sources nothing in the text says which block belongs to the
+        # diamond. So the manifest keeps one data source, one address and one
+        # start block, and the re-export pays for it.
+        #
+        # ⚠️ THE ADDRESS ABOVE IS THE DIAMOND, NOT A FACET, and it must stay
+        # that way. Facets are replaced by every cut — ArbiterRegistryFacet has
+        # been swapped three times since July — while the proxy address never
+        # changes. Point this at a facet and indexing goes quiet at the next
+        # upgrade, with no error anywhere.
+        #
+        # ⚠️ NONE OF THESE EVENTS EXIST ON CHAIN YET: the cut that mounts
+        # ArbiterAccountabilityFacet and the reworked ArbiterRegistryFacet has
+        # not been made. Until it is, every handler below is simply never
+        # called, which is the expected state and not a fault. The ABI comes
+        # from the branch.
+        #
+        # ⚠️ TWO SIGNATURES CHANGED UNDER EVENTS THAT KEPT THEIR NAME.
+        # ArbiterDemoted used to be ArbiterDemoted(address) and now has four
+        # fields, and the old ArbiterRemoved(address) went with the bare
+        # removeArbiter that emitted it. A log is matched by the hash of its
+        # full signature, so anything the live diamond emitted under the old
+        # shapes before the cut is invisible here.
+        - event: ArbiterSeated(indexed address,indexed address,bool)
+          handler: handleArbiterSeated
+        - event: ArbiterResigned(indexed address,uint256)
+          handler: handleArbiterResigned
+        - event: ArbiterDemoted(indexed address,indexed address,indexed uint8,address)
+          handler: handleArbiterDemoted
+        - event: ArbiterSuspended(indexed address,indexed address,uint256)
+          handler: handleArbiterSuspended
+        - event: ArbiterSuspensionLifted(indexed address,indexed address)
+          handler: handleArbiterSuspensionLifted
+        - event: ArbiterRemovedForCause(indexed address,indexed address,indexed uint8,bool,bytes32,uint256)
+          handler: handleArbiterRemovedForCause
+        - event: RemovalProposed(indexed address,indexed address,indexed uint8,bytes32,uint256)
+          handler: handleRemovalProposed
+        - event: RemovalProposalWithdrawn(indexed address,indexed address)
+          handler: handleRemovalProposalWithdrawn
+        - event: RemovalProposalConsumed(indexed address,indexed uint8,indexed address,bytes32,uint256)
+          handler: handleRemovalProposalConsumed
+        - event: RemovalAnswered(indexed address,bytes32)
+          handler: handleRemovalAnswered
       file: ./src/diamond.ts
 templates:
   - kind: ethereum

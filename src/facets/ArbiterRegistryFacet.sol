@@ -31,6 +31,16 @@ import "../../src/FactoryFacet.sol";         // FactoryStorage (trustedForwarder
 import "../../src/DiamondProxy.sol";          // OwnershipLib
 import "../../src/facets/ReputationFacet.sol"; // ReputationStorage (XP + cleanStreak + uniqueActiveUsers)
 import "../RegistryFacet.sol";                // RegistryStorage — verifying notifyArbiterTimeout's caller
+// ArbiterAccountabilityFacet for ONE event declaration: ArbiterSuspensionLifted.
+// The vindication branch below lifts a suspension, and a lift that leaves no log
+// reads in the feed as a suspension that never ended (review round 1 of task 12).
+// The declaration stays where the other suspension events live — a second copy
+// here would compile, produce an identical log, and drift on the first edit.
+//
+// ⚠️ The import is circular (that file imports this one for ArbiterRegistryStorage)
+// and Solidity resolves it: neither side inherits from the other, both references
+// are to types. Measured by building, not assumed.
+import {ArbiterAccountabilityFacet} from "./ArbiterAccountabilityFacet.sol";
 
 // ---------- INTERFACES ----------
 
@@ -55,6 +65,37 @@ library ArbiterRegistryStorage {
     /// keccak256(abi.encode(uint256(keccak256("hexseal.arbiterregistry.storage")) - 1)) & ~bytes32(uint256(0xff))
     bytes32 constant POSITION = 0xaae71de0594cbcb5434f0ab7f7501c1be178552bf788b418a1c2624ba9718d00;
 
+    /// Сколько держит приостановка арбитра, если её не сняли раньше. Утверждено
+    /// владельцем 15 августа 2026: окно финализации — сутки, окно апелляции —
+    /// четверо; трое суток хватает разобраться и не держит честные стороны
+    /// неделю.
+    ///
+    /// ⚠️ ЖИВЁТ В БИБЛИОТЕКЕ, А НЕ В ФАСЕТЕ (финальный обзор ветки, правка A,
+    /// 16 августа 2026). Приостановку выставляют ДВА места в ДВУХ разных
+    /// файлах — и состав их сменился задачей 12 (18 августа 2026):
+    ///
+    ///   • `ArbiterAccountabilityFacet._performRemoval` — общее тело сноса,
+    ///     то есть обе двери сноса разом (было: только
+    ///     `removeArbiterForCause`);
+    ///   • `ArbiterRegistryFacet._recordArbiterMistake` — ветка порога, где
+    ///     приостановка теперь ГЛАВНОЕ действие, а не побочное: снятия там
+    ///     больше нет, есть обвинение и быстрый рычаг.
+    ///
+    /// СТИРАЕТ отметку с той же задачи и третье место —
+    /// `ArbiterRegistryFacet.resolveAppeal`, когда коллегия оправдала арбитра
+    /// и цепь забирает своё обвинение назад. Копия числа во втором файле
+    /// создала бы ровно тот класс дефекта, который эта же ветка
+    /// разбирала как M-3: два значения, обещание «они совпадают», и ничего, что
+    /// покраснеет при расхождении. Здесь копий не остаётся и сверять нечего —
+    /// оба фасета читают одно объявление.
+    ///
+    /// Наружу отдаётся через ArbiterAccountabilityFacet.getSuspensionWindow() —
+    /// единственный публичный геттер этого числа, и он обязан продолжать отдавать
+    /// то же самое: перенос менял МЕСТО объявления, а не значение.
+    ///
+    /// Константы в хранилище не лежат: `Data` ниже этим объявлением не двигается.
+    uint256 internal constant SUSPENSION_WINDOW = 72 hours;
+
     struct PendingVerdict {
         address arbiter;        // кто подал вердикт
         bool    clientWins;     // результат
@@ -70,6 +111,20 @@ library ArbiterRegistryStorage {
         uint256 appealDeadline;  // дедлайн окна голосования
         uint256 votesUphold;     // голосов "оставить как есть"
         uint256 votesOverturn;   // голосов "перевернуть"
+    }
+
+    /// Предложение директора снести арбитра (задача 7, 15 августа 2026).
+    ///
+    /// `cause` держится как `uint8`, а не как `Cause` — тот enum объявлен в
+    /// ArbiterAccountabilityFacet, и завязывать раскладку хранилища на тип из
+    /// другого файла означало бы, что переименование там двигает хранилище
+    /// здесь. Значение — тот же численный код, что уже используется в событии
+    /// ArbiterRemovedForCause.
+    struct RemovalProposal {
+        uint8   cause;
+        bytes32 evidenceDigest;
+        uint256 proposedAt;
+        address by;
     }
 
     struct Data {
@@ -194,11 +249,423 @@ library ArbiterRegistryStorage {
         // ни удаления, ни переписывания: запись, которую можно снять,
         // доказывает ровно ничего.
         mapping(address => bytes32[]) presentationDigests;
+        // ── Ответственность ручных арбитров, 15 августа 2026 ────────────────
+        //
+        // ⚠️ ДОПИСАНО В КОНЕЦ. Порядок и типы полей выше не трогать: раскладка
+        // append-only, гейт script/check-storage-structs.sh.
+
+        /// Кто посадил этого арбитра. `address(0)` — самозапись через
+        /// applyAsArbiter. Нужен для двух вещей сразу: честно показать
+        /// читателю цепи, что за ручным арбитром не стоит ни залога, ни гейта
+        /// по XP, и посчитать блок директора.
+        mapping(address => address) seatedBy;
+
+        /// Сколько арбитров ЭТОЙ посадки сидят прямо сейчас. Ведётся
+        /// инкрементом при посадке и декрементом при любом уходе — иначе
+        /// потолок запаса директора обходится циклом «посадил-снял».
+        mapping(address => uint256) seatedCountBy;
+
+        /// До какого момента арбитр приостановлен. Ноль — не приостановлен.
+        /// Сравнение всегда строгое: `block.timestamp < suspendedUntil`, — то
+        /// есть на самой границе окно уже отпустило.
+        mapping(address => uint256) suspendedUntil;
+
+        /// Сколько раз вердикт арбитра дошёл до финализации неперевёрнутым.
+        /// Решение владельца, задача 5 того же плана (15 августа 2026): при
+        /// включении ДАО сидящие арбитры конвертируются «залог плюс судейский
+        /// стаж», а считать стаж было нечем. Заводить счётчик позже смысла не
+        /// имеет — к моменту включения ДАО у всех будет ноль. Инкремент — в
+        /// той же ветке finalizeVerdict, что уже сбрасывает arbiterMistakeStreak.
+        ///
+        /// ⚠️ ЭТОТ СЧЁТЧИК ФАРМИТСЯ, И МЫ ЭТО ЗНАЕМ (финальный обзор ветки,
+        /// I-6, 16 августа 2026). Записано здесь намеренно — кодом не чинится
+        /// и в этой ветке не чинилось.
+        ///
+        /// Путь тот же, что замысел уже назвал необнаруживаемым для XP: «сам
+        /// себе контрагент». Один человек с тремя адресами (клиент, исполнитель,
+        /// арбитр) заводит пыльную сделку на минимальную сумму, поднимает спор,
+        /// берёт его третьим адресом, судит сам себя, ждёт FINALIZE_DELAY и
+        /// финализирует. Вердикт неперевёрнутый — перевернуть его мог бы только
+        /// владелец, а ему такая сделка не видна ничем, — и стаж растёт на
+        /// единицу. Цепь при этом не врёт: вердикт действительно дошёл до
+        /// финализации. Она просто не знает и знать не может, что все три
+        /// стороны — один человек.
+        ///
+        /// Цена важнее механики: счётчик заводился ПОД конвертацию ручных
+        /// арбитров при включении ДАО. К моменту, когда конвертацию будут
+        /// проектировать, в цепи уже будут лежать числа, ВЫГЛЯДЯЩИЕ как
+        /// доказательство умения судить. Тот, кто станет их читать, увидит
+        /// готовую метрику с историей и никакой пометки о том, чего она не
+        /// доказывает. Пометка — вот она.
+        ///
+        /// Чем лечится (не сейчас): считать стаж только по спорам, где обе
+        /// стороны имеют XP от ТРЕТЬИХ лиц (приём MIN_COUNTERPARTY_XP из
+        /// ReputationFacet), либо не по количеству, а по спорной сумме, либо
+        /// не давать конвертации опираться на одно это число.
+        mapping(address => uint256) cleanVerdicts;
+
+        /// Предложение директора снести арбитра (задача 7, 15 августа 2026).
+        /// Хранится по адресу арбитра — одно живое предложение на человека, и
+        /// это верно: претензия одна, а не очередь претензий.
+        ///
+        /// ⚠️ Перезаписью её больше не сменить (задача 10, 18 августа 2026).
+        /// Живая запись занимает дверь: proposeRemoval ревертит
+        /// ProposalAlreadyLive(by, proposedAt) — всякому, кто прошёл проверку
+        /// роли, включая самого подавшего (посторонний до этого места не
+        /// доходит: роль отказывает раньше, и это намеренно — «дверь занята»
+        /// само по себе выдало бы ему, что против арбитра что-то висит).
+        /// Сменить обвинение можно, но через отзыв, и тогда сброс
+        /// 48-часовых часов виден в ленте (RemovalProposalWithdrawn), а не
+        /// происходит бесшумно. Замерено на ревью задачи 2: перезапись давала
+        /// директору право гасить чужое обвинение бесконечно, в том числе
+        /// обвинение против него самого.
+        ///
+        /// Живёт ArbiterAccountabilityFacet.PROPOSAL_TTL,
+        /// затем читается как протухшее (hasLiveProposal), но не стирается
+        /// само — стирает либо withdrawProposal, либо ArbiterRegistryStorage.
+        /// clearSeat (круг правок 1, Important 1: ОДНА точка на все двери
+        /// выхода из корпуса, не только успешный removeArbiterForCause).
+        ///
+        /// ⚠️ Здесь стоял поимённый список дверей, и он лгал: третьей
+        /// называлась «автодемоушен», то есть `_recordArbiterMistake`, — а с
+        /// задачи 12 (18 августа 2026) она кресла не отнимает вовсе, третья
+        /// ошибка приостанавливает и обвиняет. Список снят, а не поправлен:
+        /// он протухал от правок в чужой функции, в диф которых эта строка не
+        /// попадала. Актуальный перечень — в докстринге самой `clearSeat`;
+        /// проверяется `grep -rn "clearSeat(" src/`.
+        ///
+        /// resignAsArbiter вдобавок ОТКАЗЫВАЕТ, пока против вызывающего висит
+        /// живое предложение (Important 2, круг правок 1, см.
+        /// HasLiveRemovalProposal ниже) — иначе предупреждённый читает
+        /// публичную запись и уходит сам за одну транзакцию, унося залог
+        /// целиком, и денежная часть наказания обнуляется тем самым сигналом,
+        /// который мы же и опубликовали.
+        mapping(address => RemovalProposal) removalProposals;
+
+        // ── Право ответа обвинённого (задача 8, 15 августа 2026; с 19 августа
+        //    ответ принимается ещё ВО ВРЕМЯ паузы) ────────────────────────────
+        //
+        // ⚠️ ДОПИСАНО В КОНЕЦ. Порядок и типы полей выше не трогать: раскладка
+        // append-only, гейт script/check-storage-structs.sh.
+
+        /// Отпечаток ответа обвинённого арбитра. Один на ОБВИНЕНИЕ, а не на
+        /// человека и не на всю его жизнь: «отвечал ли он на то, что висит
+        /// против него сейчас».
+        ///
+        /// ⚠️ Стирается теперь ЧЕТЫРЬМЯ дверями, а не одной (задача 3,
+        /// 19 августа 2026), и делятся они на две пары:
+        ///
+        ///   • обвинение ПОЯВИЛОСЬ — `ArbiterAccountabilityFacet.proposeRemoval`
+        ///     (человек обвинил) и `_recordArbiterMistake` ниже (обвинила цепь,
+        ///     прямой записью мимо той двери);
+        ///   • обвинение ЗАБРАЛИ — `ArbiterAccountabilityFacet.withdrawProposal`
+        ///     (отзыв) и ветка оправдания в `resolveAppeal` ниже (коллегия
+        ///     признала арбитра правым).
+        ///
+        /// Пятая, `clearRemovalRecord` при посадке, стирала это поле и раньше и
+        /// стирает сейчас — там речь о признаках ПРОШЛОГО сноса.
+        ///
+        /// Причина, по которой одной перестало хватать: ответ стал возможен у
+        /// СИДЯЩЕГО арбитра (замысел 17 августа, решение 3), а он через двери
+        /// посадки не проходит — он никуда не уходил. Без новых очисток он
+        /// терял бы право ответить навсегда, ни разу не будучи снесённым.
+        ///
+        /// ⚠️ СНОС ЭТО ПОЛЕ НЕ ТРОГАЕТ, и это не пропуск: `clearSeat` стирает
+        /// предложение, но не ответ на него — приговор обязан лечь ПОВЕРХ
+        /// возражения, а не вместо него
+        /// (test_AnswerGivenBeforeRemovalSurvivesIt).
+        ///
+        /// Слова при этом не пропадают нигде: они в логах
+        /// `RemovalAnswered`/`RemovalReplyGiven`, а хранилище отвечает только
+        /// на вопрос про ТЕКУЩЕЕ обвинение.
+        mapping(address => bytes32) removalReply;
+
+        /// Момент сноса. ОДНА ИЗ ДВУХ дверей ответа, а не единственная
+        /// (задача 3, 19 августа 2026): `respondToRemoval` пускает либо по
+        /// этой отметке, либо по живому предложению. Здесь — половина «его
+        /// уже сняли, предложения больше нет (его убрал `clearSeat`) — а
+        /// сказать он всё ещё вправе».
+        ///
+        /// Прежде здесь стояло «без этого поля любой посторонний мог бы
+        /// ответить на несуществующее обвинение». Одного поля для этого уже
+        /// мало: границу держат обе половины вместе — ноль здесь И отсутствие
+        /// живого предложения (`test_StrangerWithNoAccusationStillCannotAnswer`).
+        ///
+        /// ⚠️ Пишет это поле ровно ОДНО место — `_performRemoval` в
+        /// `ArbiterAccountabilityFacet`; стирает тоже одно —
+        /// `clearRemovalRecord` ниже. В отличие от `removalReply` выше,
+        /// дверей обвинения оно не знает вовсе.
+        mapping(address => uint256) removedAt;
+
+        // ── Вечная запись о сносах, 16 августа 2026 (п. 72) ─────────────────
+        //
+        // ⚠️ ДОПИСАНО В КОНЕЦ. Порядок и типы полей выше не трогать: раскладка
+        // append-only, гейт script/check-storage-structs.sh.
+        //
+        // Три поля ниже — единственные в этой структуре, которые не стирает
+        // НИЧТО, и это не небрежность, а требование. Два поля выше стираемы
+        // оба, но ПО-РАЗНОМУ, и одной фразой их описывать нельзя:
+        //
+        //   • removalReply живёт не дольше ТЕКУЩЕГО ОБВИНЕНИЯ — его стирает и
+        //     посадка, и всякое новое обвинение, и всякий его отзыв;
+        //   • removedAt живёт до СЛЕДУЮЩЕЙ ПОСАДКИ — стирает его только
+        //     clearRemovalRecord, дверей обвинения он не знает вовсе.
+        //
+        // ⚠️ Здесь стояло «removedAt/removalReply живут ровно до следующей
+        // посадки» — задача 3 (19 августа 2026) сделала это неправдой для
+        // первого. Круг правок 1 той же задачи починил её общей фразой «не
+        // дольше текущего обвинения», и она стала неправдой для ВТОРОГО:
+        // одно правило на два поля с разным сроком жизни неверно в любую
+        // сторону. Отсюда разделение выше. На вопрос
+        // «сколько раз его сносили» стираемое поле отвечать не может —
+        // стирающая дверь принадлежит обвинителю (addArbiter), а после
+        // включения ДАО и самому обвиняемому (applyAsArbiter).
+        //
+        // Единственная неубиваемая копия истории до этой правки — события. Их
+        // не индексирует ни один сабграф и не читает ни один экран: «видно»
+        // существовало только для того, кто вручную сканирует сырые логи по
+        // уже известному адресу.
+
+        /// Сколько раз этого арбитра снимали НЕ ПО ЕГО ВОЛЕ — обеими такими
+        /// дверями: сносом по поводу и автодемоушеном. resignAsArbiter сюда не
+        /// считается: уйти самому — не снос, и смешивать их значило бы клеймить
+        /// того, кто просто остановился.
+        mapping(address => uint256) removalCount;
+
+        /// Момент ПОСЛЕДНЕГО снятия. Не путать с removedAt выше: тот стирается
+        /// повторной посадкой, этот — никогда.
+        mapping(address => uint256) lastRemovalAt;
+
+        /// Повод последнего снятия, ЗАКОДИРОВАННЫЙ (см. REMOVAL_CAUSE_SHIFT и
+        /// AUTO_REMOVAL_BASE рядом с функциями записи): 0 — не снимали ни разу,
+        /// 1..6 — код Cause плюс единица, 252..255 — автодемоушен (повода нет
+        /// вовсе, но путь назван: AUTO_REMOVAL_BASE + DemotionPath).
+        ///
+        /// Тип uint8, а не enum: тот объявлен в
+        /// ArbiterAccountabilityFacet, и завязывать раскладку хранилища на тип
+        /// из другого файла означало бы, что переименование там двигает
+        /// хранилище здесь — та же причина, по которой RemovalProposal.cause
+        /// тоже uint8.
+        mapping(address => uint8) lastRemovalCause;
+
+        // ── Chain-laid removal proposal (task 12, 18 August 2026) ───────────
+        //
+        // ⚠️ APPENDED AT THE END. Do not touch the order or the types of the
+        // fields above: the layout is append-only, gate
+        // script/check-storage-structs.sh, and this is the very class of bug
+        // that broke the live JobBoard in July 2026.
+
+        /// The demotion path, kept until the removal it will be recorded with.
+        ///
+        /// It used to be known at the instant of unseating and went straight
+        /// into recordAutomaticRemoval. Since task 12 the unseating moves two
+        /// days out — through a proposal laid by the chain and the common
+        /// door — while getArbiterStanding must still tell the three paths
+        /// apart (task 4 built that distinction on purpose, item 72).
+        ///
+        /// The value is uint8(ArbiterRegistryFacet.DemotionPath) as-is; the
+        /// AUTO_REMOVAL_BASE offset is added by recordAutomaticRemoval, as
+        /// before. Zero here is MEANINGFUL (DemotionPath.Unspecified), so the
+        /// question "is there a chain proposal" is asked of removalProposals
+        /// (by == address(0) while proposedAt != 0), never of this field.
+        mapping(address => uint8) chainProposalPath;
     }
 
     function data() internal pure returns (Data storage d) {
         bytes32 pos = POSITION;
         assembly { d.slot := pos }
+    }
+
+    /// Снимает провенанс и уменьшает счётчик посадившего. Живёт в БИБЛИОТЕКЕ,
+    /// а не в фасете, потому что зовётся из ВСЕХ дверей выхода из корпуса, а
+    /// они в разных файлах. Три копии разошлись бы при первой же правке.
+    ///
+    /// ⚠️ СОСТАВ ВЫЗЫВАЮЩИХ СМЕНИЛСЯ ЗАДАЧЕЙ 12 (18 августа 2026), и прежний
+    /// список здесь стал неправдой. Было: `resignAsArbiter`,
+    /// `_recordArbiterMistake` (автодемоушен) и `removeArbiterForCause`.
+    /// Стало ДВА вызывающих:
+    ///
+    ///   • `ArbiterRegistryFacet.resignAsArbiter` — уход по своей воле;
+    ///   • `ArbiterAccountabilityFacet._performRemoval` — общее тело сноса, и
+    ///     через него ОБЕ двери сноса: `removeArbiterForCause` (человек
+    ///     обвинил, человек исполнил) и `executeChainRemoval` (обвинила цепь,
+    ///     нажал кто угодно).
+    ///
+    /// `_recordArbiterMistake` сюда больше не ходит вовсе: на третьей ошибке
+    /// кресло не освобождается — цепь только обвиняет.
+    ///
+    /// ⚠️ Стирает и `removalProposals[arbiterAddr]` (найдено ревью, Important
+    /// 1, круг правок 1 задачи 7, 15 августа 2026). До этой правки delete
+    /// стоял ТОЛЬКО в removeArbiterForCause — человек, ушедший через
+    /// resignAsArbiter или снятый автоматическим путём, уносил с собой живое
+    /// предложение: hasLiveProposal продолжал бы отвечать true до двух
+    /// недель против уже отсутствующего арбитра, который снять запись о себе
+    /// не может. Централизация здесь — одна точка на все двери выхода, а не
+    /// копия одной и той же строки в каждой.
+    function clearSeat(Data storage d, address arbiterAddr) internal {
+        address seater = d.seatedBy[arbiterAddr];
+        if (seater != address(0) && d.seatedCountBy[seater] > 0) {
+            d.seatedCountBy[seater]--;
+        }
+        delete d.seatedBy[arbiterAddr];
+        delete d.removalProposals[arbiterAddr];
+        // The saved demotion path belongs to the proposal being erased on the
+        // line above, and outlives it nowhere: leaving it behind would let a
+        // later, unrelated chain accusation inherit the path of an older one.
+        // Same argument as the delete above it, same single point for all
+        // three exit doors (task 12, 18 August 2026).
+        delete d.chainProposalPath[arbiterAddr];
+    }
+
+    /// Сдвиг кода повода на единицу. Хозяин кодировки — эта библиотека, и
+    /// только она: оба фасета пишут через recordRemovalForCause /
+    /// recordAutomaticRemoval и арифметики не делают вовсе. Сдвиг обязателен
+    /// потому, что ноль в lastRemovalCause обязан означать «не снимали ни
+    /// разу», а Cause.OverturnedVerdicts == 0 — без сдвига самый частый
+    /// проверяемый повод был бы неотличим от пустоты.
+    uint8 internal constant REMOVAL_CAUSE_SHIFT = 1;
+
+    /// НАЧАЛО диапазона автодемоушена. Повода у автомата нет: цепь сняла
+    /// арбитра по серии ошибок, а не по чьему-то обвинению, и запись обязана
+    /// говорить это прямо, а не притворяться поводом номер ноль. Диапазон
+    /// взят на другом конце, чтобы никакой будущий Cause в него не дорос.
+    ///
+    /// ⚠️ Это БАЗА, а не одно значение (п. 65 + п. 72, 16 августа 2026).
+    /// Путей у автоснятия ровно три, и ArbiterRegistryFacet.DemotionPath их
+    /// уже различает — но только в ленте событий, то есть ровно там, где п. 72
+    /// и признал, что не читает никто. Карточка getArbiterStanding —
+    /// единственное читаемое место, и единый код терял бы в ней различие,
+    /// которое задача 4 специально завела.
+    ///
+    /// Кодировка: `AUTO_REMOVAL_BASE + uint8(DemotionPath)`, то есть
+    ///   252 — Unspecified (путь не назван; ни один вызывающий его не шлёт),
+    ///   253 — OwnerOverturn, 254 — AgreementTimeout, 255 — AppealVote.
+    /// База 252, а не 255, потому что значений в перечислении четыре и верхний
+    /// конец uint8 обязан остаться достижимым без переполнения. Новый путь
+    /// придётся сажать НИЖЕ базы (или двигать базу) — и это хорошо: молчаливо
+    /// дописать пятый нельзя.
+    uint8 internal constant AUTO_REMOVAL_BASE = 252;
+
+    /// Снос по поводу. `rawCause` — численное значение
+    /// ArbiterAccountabilityFacet.Cause как есть; сдвиг делает библиотека.
+    function recordRemovalForCause(Data storage d, address arbiterAddr, uint8 rawCause) internal {
+        _recordRemoval(d, arbiterAddr, rawCause + REMOVAL_CAUSE_SHIFT);
+    }
+
+    /// Снятие по обвинению ЦЕПИ. Отдельная точка входа, а не «передай сюда
+    /// 253»: если бы код называл вызывающий, кодировка получила бы второго
+    /// хозяина — и разошлась бы при первой же правке.
+    ///
+    /// ⚠️ ВЫЗЫВАЮЩИЙ ПЕРЕЕХАЛ В ДРУГОЙ ФАЙЛ (задача 12, 18 августа 2026):
+    /// зовёт `ArbiterAccountabilityFacet.executeChainRemoval`, а не ветка
+    /// порога в этом файле. Путь при этом известен на двое суток раньше, чем
+    /// записывается, — отсюда поле `chainProposalPath` в `Data`.
+    ///
+    /// `rawPath` — численное значение ArbiterRegistryFacet.DemotionPath как
+    /// есть; базу прибавляет библиотека. Тип uint8, а не сам DemotionPath, по
+    /// той же причине, по которой lastRemovalCause хранится как uint8:
+    /// перечисление объявлено в ФАСЕТЕ, и завязывать на него библиотеку
+    /// хранилища значило бы, что правка там двигает раскладку здесь.
+    function recordAutomaticRemoval(Data storage d, address arbiterAddr, uint8 rawPath) internal {
+        _recordRemoval(d, arbiterAddr, AUTO_REMOVAL_BASE + rawPath);
+    }
+
+    /// ⚠️ ЭТА ФУНКЦИЯ БОЛЬШЕ НЕ ЛЕЖИТ НА ПУТИ ПУСТОГО try/catch, и прежнее
+    /// предупреждение здесь стало неправдой (задача 12, 18 августа 2026).
+    /// Было: «зовётся из ветки, которую Agreement исполняет внутри пустого
+    /// try/catch (Agreement.sol:964, notifyArbiterTimeout), ревертить здесь
+    /// нельзя». Оба сегодняшних вызывающих — `recordRemovalForCause` из
+    /// `removeArbiterForCause` и `recordAutomaticRemoval` из
+    /// `executeChainRemoval` — это ОТДЕЛЬНЫЕ человеческие транзакции, и ревёрт
+    /// в них виден вызывающему.
+    ///
+    /// ⚠️ Запрет ревертить НЕ ИСЧЕЗ, он ПЕРЕЕХАЛ — в ветку порога
+    /// `ArbiterRegistryFacet._recordArbiterMistake`, где он теперь и записан.
+    /// Читать этот абзац как «try/catch прикрывает нас» и ослабить тот запрет
+    /// было бы худшим из возможных выводов: там ревёрт по-прежнему глотается
+    /// молча и оставляет арбитра ненаказанным без единого следа.
+    ///
+    /// Ревертить здесь всё равно нечему: инкремент uint256 и две записи.
+    function _recordRemoval(Data storage d, address arbiterAddr, uint8 code) private {
+        d.removalCount[arbiterAddr] += 1;
+        d.lastRemovalAt[arbiterAddr] = block.timestamp;
+        d.lastRemovalCause[arbiterAddr] = code;
+    }
+
+    /// Стирает признаки ПРЕДЫДУЩЕГО сноса при посадке (задача 8, круг правок
+    /// 1, 15 августа 2026, Important 1 ревью). `removedAt`/`removalReply`
+    /// привязаны к АДРЕСУ, а не к конкретному событию сноса — addArbiter не
+    /// смотрит историю (только `!isDaoActive()` и `!d.isArbiter[arbiter]`), и
+    /// владелец возвращает снятого одной командой (починка ошибочного сноса
+    /// — реальный, не гипотетический сценарий при ручной посадке). Без
+    /// очистки второе обвинение против того же адреса осталось бы либо
+    /// невидимым (respondToRemoval сразу видел бы «уже отвечал» —
+    /// AlreadyAnswered на пустом месте), либо, если бы очистили только
+    /// removalReply, действующий, ещё не снятый арбитр мог бы ответить на
+    /// давно закрытое обвинение (removedAt != 0 у активного человека).
+    ///
+    /// Живёт в БИБЛИОТЕКЕ и зовётся из ОБЕИХ дверей входа —
+    /// ArbiterRegistryFacet.addArbiter (ручная посадка) и .applyAsArbiter
+    /// (самозапись после активации ДАО) — чтобы не разойтись копиями, ровно
+    /// как `clearSeat` выше централизует двери выхода. Сколько именно тех
+    /// дверей, здесь не пишем: число менялось (задача 12 свела три к двум),
+    /// и список в чужом докстринге протухал молча — актуальный держит сама
+    /// `clearSeat`.
+    ///
+    /// ⚠️ Историю это НЕ трёт: события ArbiterRemovedForCause/RemovalAnswered
+    /// лежат в цепи навсегда, читатель по-прежнему видит обе стороны каждого
+    /// прошлого спора. Эти поля — только счётчик «отвечал ли на ТЕКУЩИЙ,
+    /// ещё не отменённый снос».
+    ///
+    /// ⚠️ И с 16 августа 2026 (п. 72) историю не трёт уже не только в логах:
+    /// removalCount / lastRemovalAt / lastRemovalCause эта функция НЕ ТРОГАЕТ
+    /// намеренно, ни при одном значении liftSuspension. Дописать сюда их
+    /// удаление — значит вернуть ровно тот дефект, ради которого поля
+    /// заведены: стирающая дверь принадлежит обвинителю (addArbiter), а после
+    /// включения ДАО и самому обвиняемому (applyAsArbiter), и стираемая
+    /// история — не история.
+    ///
+    /// ⚠️ `suspendedUntil` стирается ТОЛЬКО ПО ЯВНОМУ ТРЕБОВАНИЮ ВЫЗЫВАЮЩЕГО
+    /// (финальный обзор ветки, M-4 + решение владельца по шву, 16 августа 2026).
+    ///
+    /// Довод в одну фразу: **приостановку накладывает не арбитр, значит и
+    /// снимать её не ему.**
+    ///
+    /// Снос теперь ВЫСТАВЛЯЕТ приостановку (ArbiterAccountabilityFacet.
+    /// removeArbiterForCause, C-1), а до правки M-4 её не стирал НИКТО — ни одна
+    /// дверь выхода, ни повторная посадка. Но у двух дверей входа разные
+    /// хозяева, и уравнивать их было ошибкой:
+    ///
+    ///   • `addArbiter` передаёт `liftSuspension = true`. Владелец сознательно
+    ///     отменяет СВОЁ ЖЕ решение; вернуть человека с недожитой приостановкой
+    ///     значит вернуть его немым — тот молча не может ни клеймить, ни
+    ///     финализировать, ни уволиться, и почему, из цепи не видно ничем,
+    ///     кроме getSuspendedUntil.
+    ///   • `applyAsArbiter` передаёт `liftSuspension = false`. Это САМОЗАПИСЬ.
+    ///     Первая редакция правки стирала приостановку и здесь — и тем открывала
+    ///     дыру ровно в C-1: снятый по поводу платил свежие ARBITER_BOND (50
+    ///     USDC) поверх только что сожжённого, возвращался в корпус и
+    ///     финализировал вердикты, взятые ДО сноса, не дожидаясь 72 часов. То
+    ///     есть покупал обход окна, за которое владелец обязан успеть
+    ///     overturnVerdict/freezeVerdict.
+    ///
+    /// Признаки самого сноса (`removedAt`, `removalReply`) стираются в ОБОИХ
+    /// случаях: они про запись о ПРОШЛОМ сносе и не должны мешать ответить на
+    /// будущий (см. два абзаца выше).
+    ///
+    /// ⚠️ И ЭТА ФУНКЦИЯ БОЛЬШЕ НЕ ЕДИНСТВЕННАЯ, КТО СТИРАЕТ `removalReply`
+    /// (задача 3, 19 августа 2026). Ответ стал возможен у СИДЯЩЕГО арбитра, а
+    /// сидящий через двери посадки не проходит — поэтому слот чистят ещё и
+    /// четыре двери самого обвинения. Перечень и довод — в докстринге поля
+    /// `removalReply` выше; здесь важно другое: `removedAt` по-прежнему
+    /// стирается ТОЛЬКО отсюда, и вторая половина инварианта
+    /// «`isArbiter` ⇒ `removedAt == 0`» держится на этом. Разделено параметром, а не второй копией
+    /// функции: копий по-прежнему нет, а разница между дверями видна В МЕСТЕ
+    /// ВЫЗОВА, а не спрятана в теле.
+    function clearRemovalRecord(Data storage d, address arbiterAddr, bool liftSuspension) internal {
+        delete d.removedAt[arbiterAddr];
+        delete d.removalReply[arbiterAddr];
+        if (liftSuspension) delete d.suspendedUntil[arbiterAddr];
     }
 }
 
@@ -228,7 +695,13 @@ contract ArbiterRegistryFacet {
     uint256 private constant NO_RESPONSE_FLOOR = 24 hours;
 
     uint256 private constant MIN_CLEAN_STREAK_TO_REGISTER = 10;   // та же серия, что держит XP исполнителя выше 1000
-    uint256 private constant MAX_ARBITER_MISTAKES         = 3;    // подряд ошибок до снятия статуса
+    /// Подряд ошибок до того, как ЦЕПЬ ОБВИНИТ (не до снятия — задача 12,
+    /// 18 августа 2026). На этом числе `_recordArbiterMistake` приостанавливает
+    /// арбитра и кладёт предложение о сносе от имени цепи; само снятие идёт
+    /// общей дверью через `REMOVAL_DELAY`. Не путать с
+    /// ArbiterAccountabilityFacet.MISTAKE_THRESHOLD (2) — тем ЧЕЛОВЕК
+    /// доказывает повод, и он на единицу ниже намеренно.
+    uint256 private constant MAX_ARBITER_MISTAKES         = 3;
     uint256 private constant DEMOTION_XP_RESET            = 2500; // фиксированный сброс при снятии — не вычитание
     uint256 private constant ARBITER_BOND                 = 50_000_000; // 50 USDC (6 decimals) — форфейтится при демоушене, возвращается при resignAsArbiter()
 
@@ -236,14 +709,105 @@ contract ArbiterRegistryFacet {
     uint256 private constant APPEAL_MIN_VOTES     = 3;          // кворум других арбитров
     uint256 private constant APPEAL_DEPOSIT       = 20_000_000; // 20 USDC (6 decimals) — flat, НЕ % от суммы сделки
 
+    /// Сколько голосов РЕШАЮТ апелляцию при явке ровно в кворум (п. 67,
+    /// 16 августа 2026).
+    ///
+    /// resolveAppeal подводит итог простым большинством ПОДАННЫХ голосов, как
+    /// только их набралось APPEAL_MIN_VOTES, и звать её может кто угодно. При
+    /// трёх поданных решают два — значит охраняемое свойство «директор не
+    /// решает апелляцию» требует блока СТРОГО МЕНЬШЕ двух, а не меньше трёх,
+    /// как считала прежняя редакция потолка.
+    ///
+    /// ВЫВЕДЕНО из кворума, а не записано числом: два значения об одном
+    /// правиле разъехались бы молча — тот же класс, что MISTAKE_THRESHOLD в
+    /// ArbiterAccountabilityFacet, объявленный вычитанием, а не литералом.
+    /// Кворум при этом НЕ меняется: 3 остаётся 3.
+    uint256 private constant APPEAL_DECIDING_VOTES = APPEAL_MIN_VOTES / 2 + 1;
+
     uint256 private constant ARBITER_SHARE_BPS = 8_000; // 80% сбора арбитру, остаток казне
 
     uint256 private constant DEFAULT_ARBITER_FLOOR = 10_000_000; // 10 USDC (6 decimals)
 
+    // ── Потолок споров в руках (arbiter-accountability, задача 3) ──
+    /// Сколько споров арбитр держит одновременно. Ограничивает ферму сборов —
+    /// арбитр зарабатывает долю сбора с КАЖДОГО спора независимо от того,
+    /// куда решил, значит «набрать много и решать наугад» — доход без
+    /// работы. Потолок считает ЧИСЛО, а не сумму: сумму назначает создатель
+    /// сделки, и любой потолок по ней наследовал бы её недоверенность.
+    /// Утверждено владельцем 15 августа 2026.
+    uint256 private constant MAX_CLAIMS_PER_ARBITER = 10;
+
+    // -------- ENUM --------
+
+    /// Каким путём сработало АВТОМАТИЧЕСКОЕ снятие по серии судейских ошибок.
+    /// Значений на одно больше, чем вызывающих у _recordArbiterMistake, и
+    /// каждое отвечает на вопрос «кто это сделал» честно, включая ответ
+    /// «никто»:
+    ///
+    ///   Unspecified      — ⚠️ НУЛЕВОЕ ЗНАЧЕНИЕ НАРОЧНО НЕ ЯВЛЯЕТСЯ ПУТЁМ
+    ///                      (круг правок 1, 16 августа 2026). В Solidity ноль —
+    ///                      значение по умолчанию: его получает всякий, кто
+    ///                      забыл проставить путь, и всякий новый путь, автор
+    ///                      которого не дописал сюда своё значение. Стой на нуле
+    ///                      OwnerOverturn — забывчивость молча обвиняла бы
+    ///                      ВЛАДЕЛЬЦА, и запись выглядела бы обвинением, которого
+    ///                      никто не выдвигал. Ровно то, ради чего задача
+    ///                      делалась, только наизнанку. Ни один вызывающий это
+    ///                      значение не шлёт; увидев его в ленте, читатель обязан
+    ///                      понимать «путь не назван», а не «виноват такой-то».
+    ///   OwnerOverturn    — overturnVerdict. Зовёт владелец либо daoAddress,
+    ///                      проверок обоснованности в ней нет ни одной. Нажавший
+    ///                      есть, и он назван полем `by` — им может быть и НЕ
+    ///                      владелец (см. test_ArbiterDemotedNamesTheDaoNotTheOwner).
+    ///   AgreementTimeout — notifyArbiterTimeout. Зовёт САМ АГРИМЕНТ изнутри
+    ///                      triggerArbiterTimeout (msg.sender == agreement).
+    ///                      Человека за вызовом нет, `by` нулевой.
+    ///   AppealVote       — resolveAppeal. Подводит итог голосования, и звать её
+    ///                      может кто угодно. Это тот случай, где msg.sender лгал
+    ///                      бы громче всего: решают ГОЛОСА, а не нажавший
+    ///                      «подвести итог». `by` нулевой, голосовавшие — в ленте
+    ///                      AppealVoteCast по тому же агрименту.
+    enum DemotionPath { Unspecified, OwnerOverturn, AgreementTimeout, AppealVote }
+
     // -------- EVENTS --------
 
     event ArbiterAdded(address indexed arbiter);
-    event ArbiterRemoved(address indexed arbiter);
+    /// Посадка с указанием того, кто нажал. `ArbiterAdded` остаётся ради
+    /// совместимости сабграфа v2.3.0, который уже в цепи и его читает.
+    event ArbiterSeated(address indexed arbiter, address indexed by, bool selfService);
+    // ArbiterRemoved удалено вместе с removeArbiter (15 августа 2026, задача 6):
+    // единственный emit-сайт исчез вместе с функцией. Замена —
+    // ArbiterAccountabilityFacet.ArbiterRemovedForCause.
+    /// The chain accuses, in its own name, having proved the cause itself
+    /// (task 12, 18 August 2026). Laid by _recordArbiterMistake when the
+    /// mistake streak reaches MAX_ARBITER_MISTAKES: the arbiter is suspended
+    /// on the spot and a removal proposal opens against him with no author —
+    /// `by` in the record is the zero address, and no such field exists here,
+    /// because there is nobody to name.
+    ///
+    /// `path` is uint8(DemotionPath) raw, the same value that goes into the
+    /// permanent record two days later; `agreement` is the deal whose verdict
+    /// tipped him over. Both are carried HERE and not on the removal, because
+    /// here is where they are known.
+    event RemovalProposedByChain(
+        address indexed arbiter,
+        uint8           path,
+        address indexed agreement,
+        uint256         proposedAt
+    );
+
+    /// The panel found the arbiter right, so the chain takes its own accusation
+    /// back (task 12, trap 5, design decision 13). Proposal erased, streak
+    /// zeroed, suspension lifted — one record, because the three happen
+    /// together and mean one thing.
+    ///
+    /// A separate event rather than RemovalProposalWithdrawn: that one names
+    /// `by` and it is always a person: a zero there would read as "withdrawn
+    /// by nobody" and the feed would be guessing which of the two happened.
+    /// Only the CHAIN's accusation is ever cleared this way — a human's stands
+    /// until its author or the authority withdraws it.
+    event ChainAccusationCleared(address indexed arbiter, address indexed agreement);
+
     event ChiefArbiterSet(address indexed prev, address indexed next);
     event DisputeClaimCommitted(address indexed arbiter, bytes32 indexed commitment);
     event DisputeClaimed(address indexed agreement, address indexed arbiter);
@@ -291,7 +855,74 @@ contract ArbiterRegistryFacet {
     event AppealRaised(address indexed agreement, address indexed appellant);
     event AppealVoteCast(address indexed agreement, address indexed arbiter, bool overturn);
     event AppealResolved(address indexed agreement, address indexed appellant, bool overturned);
-    event ArbiterDemoted(address indexed arbiter);
+    /// Снятие по серии судейских ошибок.
+    ///
+    /// ⚠️ ЧЕТЫРЕ ПОЛЯ ВМЕСТО ОДНОГО (п. 65, 16 августа 2026). Прежняя
+    /// редакция — `ArbiterDemoted(address indexed arbiter)` — не называла ни
+    /// повода, ни нажавшего. Снаружи это читалось как «система сама демоутнула
+    /// судью за три ошибки подряд»: запись не просто скрывала обвинителя, она
+    /// перекладывала вину на обвиняемого убедительнее любого обвинения. При том
+    /// что владелец тремя переворотами снимал арбитра мимо двери с поводом, а
+    /// проверок обоснованности в overturnVerdict нет ни одной.
+    ///
+    /// ⚠️ И ЭТО СОБЫТИЕ ТЕПЕРЬ ЗВУЧИТ НЕ ОТСЮДА (задача 12, 18 августа 2026).
+    /// Три переворота больше не снимают: они приостанавливают и открывают
+    /// обвинение от имени цепи (`RemovalProposedByChain` ниже), а «снят»
+    /// становится правдой через 48 часов, в
+    /// `ArbiterAccountabilityFacet.executeChainRemoval`, — оттуда и звучит.
+    /// Объявление остаётся здесь одно: подпись и topic0 те же, живой сабграф
+    /// правки не требует, а гейт script/check_subgraph_arbiter_events.py
+    /// сверяет оба конца.
+    ///
+    /// `by` на новом месте нулевой всегда: руки на том пути нет, а нажавшего
+    /// кнопку называть нельзя — он не обвинитель.
+    ///
+    /// ⚠️ ЦЕНА ЭТОГО ПУТИ ПОДНЯЛАСЬ ДВАЖДЫ 18 августа 2026 (задача 11 и круг
+    /// правок к ней), и прежняя редакция строки выше — «тремя вызовами по
+    /// ОДНОМУ агрименту» — с тех пор неправда:
+    ///
+    ///   • `AlreadyOverturned` закрыл повторное нажатие по одному вердикту:
+    ///     нужны три РАЗНЫХ спора, а не три нажатия;
+    ///   • коллегия, вернувшая вердикт арбитра, забирает записанную ошибку
+    ///     назад (см. resolveAppeal). До этой правки она, наоборот, ДАРИЛА
+    ///     владельцу вторую ошибку своим верным решением, и снятие стоило двух
+    ///     споров вместо трёх.
+    ///
+    /// `by` нулевой там, где нажавшего нет ВООБЩЕ (таймаут, голосование) — это
+    /// утверждение, а не пропуск: см. докстринг DemotionPath.
+    ///
+    /// `agreement` — спор, на котором сработала ПОСЛЕДНЯЯ ошибка серии. Он не
+    /// вся история и ею не притворяется: он вход в неё.
+    ///
+    /// ⚠️ И вход этот НЕПОЛНЫЙ — сказано прямо, потому что прежняя редакция
+    /// докстринга обещала больше, чем цепь отдаёт (круг правок 1, 16 августа
+    /// 2026). Сверено с объявлениями:
+    ///
+    ///   • серия из одних переворотов восстанавливается полностью:
+    ///     VerdictOverturned(address indexed agreement, address indexed arbiter,
+    ///     bool) индексирует арбитра, и все три события фильтруются по нему;
+    ///   • ошибка-ТАЙМАУТ, не ставшая третьей, не оставляет на цепи НИ ОДНОЙ
+    ///     записи, адресуемой по арбитру: notifyArbiterTimeout при первой и
+    ///     второй ошибке не шлёт ничего вообще, а ArbiterTimedOut(address
+    ///     indexed client, uint256) живёт на самом агрименте и арбитра не
+    ///     называет. Найти такую ошибку по этому полю нельзя никак;
+    ///   • по апелляции снятого не называет ни AppealResolved (там appellant),
+    ///     ни AppealVoteCast (там ГОЛОСУЮЩИЙ, а не судимый) — вход остаётся,
+    ///     но ведёт к голосам, а не к судимому.
+    ///
+    /// Значит по смешанной серии (переворот + таймаут + голоса) читатель видит
+    /// последнюю ошибку и её путь, но пересчитать первые две по одному этому
+    /// полю не может. Обещать обратное — та же неправда, что и одно поле.
+    ///
+    /// Событие в селектор функции не входит — состав селекторов фасета этой
+    /// правкой не меняется, и это проверено хешем methodIdentifiers до и после,
+    /// а не принято на веру.
+    event ArbiterDemoted(
+        address      indexed arbiter,
+        address      indexed by,
+        DemotionPath indexed path,
+        address              agreement
+    );
     event ArbiterResigned(address indexed arbiter, uint256 bondRefunded);
     event DisputeFeeCredited(address indexed arbiter, uint256 toArbiter, uint256 toTreasury);
     event TreasurySlicePushed(address indexed to, uint256 amount);
@@ -332,6 +963,17 @@ contract ArbiterRegistryFacet {
     error AppealAlreadyResolved();
     error AppealWindowNotClosed();
     error AlreadyFinalized();
+    /// The flag was written and never read back as a refusal, so three calls
+    /// against the SAME agreement in the SAME block reached the demotion
+    /// threshold — the price of unseating an arbiter was one submitted verdict,
+    /// not three disputes.
+    ///
+    /// ⚠️ This error is only HALF of "one verdict, at most one judicial
+    /// mistake". It shuts the hand pressing twice; it never touched the second
+    /// way to book two, which ran through resolveAppeal and is closed there.
+    /// Alone it was not the promise, and saying otherwise here would be the
+    /// very class of documentation this branch keeps having to correct.
+    error AlreadyOverturned();
     error VerdictFrozenError();
     error VerdictAlreadySubmitted();
     error NotTheClaimer();
@@ -382,6 +1024,125 @@ contract ArbiterRegistryFacet {
     /// прообраз можно показать, у нуля нет.
     error ZeroDigest();
 
+    // ── Потолок запаса директора (arbiter-accountability, задача 2;
+    // переименована и пересчитана 16 августа 2026, п. 67) ──
+    /// Директор не может собрать блок, РЕШАЮЩИЙ апелляцию, СВОИМИ РУКАМИ:
+    /// иначе его ставленники определяют исход любой апелляции, а после передачи
+    /// сноса голосованию — и исход любого сноса, включая его собственный.
+    ///
+    /// ⚠️ ОБЕЩАНИЕ СУЖЕНО ДО ПРАВДЫ (уборка 7а, п. 2.4, Ruling 17). Прежняя
+    /// редакция обещала свойство АБСОЛЮТНО — «директор не может собрать блок».
+    /// Держится оно на гораздо меньшем: на ОДНОЙ двери (`addArbiter`), у ОДНОГО
+    /// нажимающего (директора) и в ОДИН момент (нажатия). После этого инвариант
+    /// «блок ≤ 1» не поддерживается ничем:
+    ///
+    ///   • владелец, посадив директора арбитром ПОСЛЕ его ставленника, доводит
+    ///     блок до настоящей двойки — замерено, `getChiefBloc()` = 2;
+    ///   • `applyAsArbiter` `_chiefBloc` не зовёт ВОВСЕ, то есть после включения
+    ///     ДАО ставленник может вернуться в корпус мимо потолка.
+    ///
+    /// Это не регресс (у прежней редакции потолка тот же порядок давал 3) и не
+    /// дыра в сегодняшнем смысле: обе лазейки открывает владелец, а он же роль
+    /// директора и выдаёт. Честная формулировка одной фразой: свойство
+    /// сторожится на той двери, которой распоряжается ДИРЕКТОР.
+    /// Настоящее лекарство — считать блок в момент ГОЛОСОВАНИЯ, а не посадки;
+    /// это изменение замысла, и оно в OPEN-ITEMS.
+    ///
+    /// ⚠️ Прежнее имя — ChiefBlocWouldReachQuorum — называло неверное
+    /// свойство, и это было опаснее самого числа: следующий читатель оперся
+    /// бы на имя. Кворум и решающее большинство — разные величины, и
+    /// апелляцию решает второе. Имя ошибки в селектор ФУНКЦИИ не входит,
+    /// каскад деплоя переименованием не тронут; на цепи эта ошибка ещё ни
+    /// разу не отдавалась — фасет с ней не выкачен.
+    error ChiefBlocWouldDecideAppeal(uint256 bloc, uint256 decidingVotes);
+
+    // ── Потолок споров в руках (arbiter-accountability, задача 3) ──
+    error TooManyOpenClaims(uint256 held, uint256 cap);
+
+    // ── Зубы приостановки (arbiter-accountability, задача 5) ──
+    /// Арбитр приостановлен: не берёт споров, его вердикты не финализируются,
+    /// уволиться он не может. Последнее — не мелочь: resignAsArbiter возвращает
+    /// залог целиком, и без этого запрета подозреваемый уходит с деньгами за
+    /// одну транзакцию, а весь денежный контур наказания становится надписью.
+    error ArbiterSuspendedError(uint256 until);
+
+    // ── Зубы предложения (arbiter-accountability, задача 7, круг правок 1,
+    // 15 августа 2026, Important 2) ──
+    /// Третий запрет двери резигнации, симметричный ArbiterSuspendedError
+    /// выше — тем же приёмом, но против ДРУГОЙ угрозы. Приостановка не
+    /// годится сюда сама по себе: её окно 72 часа против 14 суток
+    /// предложения, и с одиннадцатых суток дверь снова открыта, даже если
+    /// владелец приостановил в ту же секунду, что предложил. Без отдельного
+    /// запрета обвиняемый читает публичное `RemovalProposed` в цепи и уходит
+    /// сам за одну транзакцию, унося залог целиком (resignAsArbiter
+    /// возвращает бонд без остатка) — единственная материальная санкция
+    /// (форфейт в removeArbiterForCause) обнуляется чтением записи, которую
+    /// мы же и опубликовали.
+    error HasLiveRemovalProposal();
+
+    // ── Передача корпуса ДАО (arbiter-accountability, задача 6, 15 августа
+    // 2026): дословное решение владельца — «никаких ручных», «человек должен
+    // выйти и остаться только даймонд, который пропускает по гейту» ──
+    /// activateDAO() односторонний и не гасится нигде: включить его, не назначив
+    /// daoAddress, значит осиротить корпус одной транзакцией — автоматика ловит
+    /// только то, что видит цепь, а посадка/снятие человеком станут недоступны
+    /// никому.
+    error DaoAddressNotSet();
+    /// addArbiter/setChiefArbiter: вход только через applyAsArbiter (по гейту),
+    /// роль директора упраздняется вместе с активацией ДАО.
+    ///
+    /// ⚠️ ОДНА ОШИБКА, ДВА РАЗНЫХ УСЛОВИЯ — и это не небрежность (финальный
+    /// обзор ветки, правка B, 16 августа 2026). `addArbiter` отказывает по
+    /// передаче посадки (`isDaoActive() && daoAddress != address(0)`,
+    /// _requireSeatingNotHandedOver), `setChiefArbiter` — по упразднению роли
+    /// (`isDaoActive()`), потому что назначать бессильного директора незачем.
+    /// Новую ошибку не заводили намеренно: этот текст уже называет обе
+    /// половины поимённо, а лишний селектор в ABI фасета стоил бы разреза.
+    error SeatingHandedOver();
+    /// setDAOAddress после активации ДАО: назвать преемника может только уже
+    /// действующий daoAddress (самомиграция), не владелец. Без этого гейта
+    /// владелец мог бы вернуть себе снос по поводу лишней транзакцией —
+    /// activateDAO() → setDAOAddress(свой_адрес) → removeArbiterForCause по
+    /// ветке msg.sender == daoAddress — и «человек вышел» осталось бы верным
+    /// только для одной из двух дверей (найдено ревью, C-3, круг правок 1).
+    error NotCurrentDaoAddress();
+
+    // ── Вес приостановки, вторая дверь (п. 66, круг правок 1, 16 августа 2026) ──
+    /// Возврат в корпус СНЕСЁННОГО — владельческое действие, директору
+    /// недоступно. Отмена сноса есть зеркало сноса, а сносить директор не
+    /// вправе вовсе.
+    ///
+    /// Найдено ревью задачи 2: гейт `ArbiterAccountabilityFacet.liftSuspension`
+    /// запер одну дверь, а `addArbiter` вела туда же и была открыта директору.
+    /// `clearRemovalRecord(d, arbiter, true)` ниже стирает `removedAt` И
+    /// `suspendedUntil` разом — то есть директор одной транзакцией снимал то
+    /// самое окно C-1, которое держит деньги по вердиктам снятого, да вдобавок
+    /// возвращал его в реестр с нетронутыми клеймами (снос не трогает ни
+    /// `disputeClaims`, ни `openClaimCount`). Замерено пробой на настоящем
+    /// даймонде: `liftSuspension` директору ревертит, `addArbiter` проходит.
+    ///
+    /// ⚠️ Почему отказ, а не «вернуть, но приостановку оставить» (мягкий
+    /// вариант рассмотрен и отвергнут): `clearRemovalRecord(..., false)` стёр
+    /// бы `removedAt`, оставив окно, — и следующей же транзакцией
+    /// `liftSuspension` прошла бы гейт п. 66, потому что различитель уже ноль.
+    /// Мягкий вариант не закрывает обход, а удлиняет его на одну транзакцию.
+    ///
+    /// Кого НЕ касается: посадку нового человека и возврат ушедшего
+    /// добровольно — `resignAsArbiter` `removedAt` не пишет, у таких он ноль,
+    /// и директор сажает их как раньше. Кого касается дополнительно: возврат
+    /// снятого ПО ОБВИНЕНИЮ ЦЕПИ — `removedAt` пишет общее тело сноса
+    /// (`ArbiterAccountabilityFacet._performRemoval`), одинаково для обеих
+    /// дверей, значит и отменять автоматический путь вправе только владелец.
+    /// Так и задумано: у обвинения цепи нет автора, которому можно возразить,
+    /// кроме того, кто отвечает за корпус целиком.
+    ///
+    /// ⚠️ Задача 12 (18 августа 2026) сдвинула МОМЕНТ, а не правило: до неё
+    /// `removedAt` ставила третья ошибка сама, теперь — нажатие
+    /// `executeChainRemoval` через двое суток. Пока обвинение висит и кнопка не
+    /// нажата, `removedAt` НОЛЬ, человек ещё в корпусе, и эта ветка его не
+    /// касается вовсе.
+    error ReseatingRemovedIsOwnerOnly();
+
     // -------- MODIFIERS --------
 
     modifier onlyOwner() {
@@ -389,10 +1150,22 @@ contract ArbiterRegistryFacet {
         _;
     }
 
+    /// ⚠️ ДИРЕКТОР ПЕРЕСТАЁТ СУЩЕСТВОВАТЬ ПРИ АКТИВНОМ ДАО (финальный обзор
+    /// ветки, I-2, 16 августа 2026). Вторая половина той же правки — в
+    /// ArbiterAccountabilityFacet.onlyOwnerOrChief, где разобрана причина
+    /// целиком: setChiefArbiter — единственный писатель d.chiefArbiter и
+    /// единственный способ его обнулить, а задача 6 закрыла её при активном ДАО.
+    /// Без этой строки «директор упраздняется» означало бы «директор становится
+    /// несменяемым».
+    ///
+    /// Обе половины обязаны меняться синхронно: права директора разложены по
+    /// двум фасетам (здесь — addArbiter, там — приостановка и предложение
+    /// сноса), и закрытая половина без второй ничего не стоила бы.
     modifier onlyOwnerOrChief() {
-        address chief = ArbiterRegistryStorage.data().chiefArbiter;
-        if (msg.sender != OwnershipLib.contractOwner() && msg.sender != chief)
-            revert NotOwnerOrChief();
+        if (msg.sender != OwnershipLib.contractOwner()) {
+            if (isDaoActive() || msg.sender != ArbiterRegistryStorage.data().chiefArbiter)
+                revert NotOwnerOrChief();
+        }
         _;
     }
 
@@ -416,7 +1189,14 @@ contract ArbiterRegistryFacet {
 
     // -------- DAO MODE --------
 
+    /// Требует уже назначенного daoAddress. Без этой проверки владелец мог бы
+    /// включить ДАО раньше, чем назначил его адрес, и осиротить корпус одной
+    /// транзакцией: activateDAO() необратим (флаг не гасится нигде в src/), а
+    /// removeArbiterForCause/addArbiter/setChiefArbiter после активации уже не
+    /// пускают владельца — не по злому умыслу, а просто перепутав порядок
+    /// вызовов setDAOAddress/activateDAO.
     function activateDAO() external onlyOwner {
+        if (ArbiterRegistryStorage.data().daoAddress == address(0)) revert DaoAddressNotSet();
         ArbiterRegistryStorage.data().daoActiveManual = true;
         emit DAOActivated(msg.sender);
     }
@@ -442,8 +1222,22 @@ contract ArbiterRegistryFacet {
         d.isArbiter[caller] = true;
         d.arbiterList.push(caller);
 
+        // Признаки прошлого сноса (если был) не переживают повторную посадку
+        // (задача 8, круг правок 1, Important 1) — respondToRemoval судит о
+        // ТЕКУЩЕМ статусе, не о ветхой истории.
+        //
+        // ⚠️ liftSuspension = FALSE — приостановку самозапись НЕ снимает
+        // (решение владельца по шву M-4, 16 августа 2026): её накладывает
+        // владелец или директор, значит и снимать её не арбитру. Иначе снятый
+        // по поводу покупал бы обход окна C-1 за один свежий залог: вернулся —
+        // и финализировал вердикты, взятые до сноса, не дожидаясь 72 часов.
+        ArbiterRegistryStorage.clearRemovalRecord(d, caller, false);
+
         emit ArbiterAdded(caller);
         emit ArbiterApplied(caller);
+        // Самозапись: seatedBy остаётся нулём — это и есть признак «сел сам».
+        // Событие всё равно шлём, чтобы у читателя был один поток вместо двух.
+        emit ArbiterSeated(caller, address(0), true);
     }
 
     /// @notice Самостоятельный выход из статуса арбитра, без штрафа. Возвращает бонд
@@ -453,6 +1247,8 @@ contract ArbiterRegistryFacet {
     function resignAsArbiter() external {
         address caller = _msgSender();
         ArbiterRegistryStorage.Data storage d = ArbiterRegistryStorage.data();
+        _requireNotSuspended(d, caller);
+        _requireNoLiveRemovalProposal(d, caller);
         if (!d.isArbiter[caller]) revert NotAnArbiter();
         if (d.openClaimCount[caller] > 0) revert HasOpenDisputeClaims();
 
@@ -475,48 +1271,141 @@ contract ArbiterRegistryFacet {
             require(ok, "ArbiterRegistry: bond refund failed");
         }
 
+        ArbiterRegistryStorage.clearSeat(d, caller);
+
         emit ArbiterResigned(caller, bond);
     }
 
     // -------- ADMIN: MANAGE ARBITERS --------
 
+    /// Роль директора упраздняется вместе с активацией ДАО (дословное решение
+    /// владельца, задача 6, 15 августа 2026: «никаких ручных», «человек должен
+    /// выйти и остаться только даймонд, который пропускает по гейту»). Храповик:
+    /// isDaoActive() необратим, назначить нового директора после передачи
+    /// нельзя уже никому.
+    ///
+    /// ⚠️ ПРЕДИКАТ ЗДЕСЬ — УПРАЗДНЕНИЕ РОЛИ, А НЕ ПЕРЕДАЧА ПОСАДКИ (финальный
+    /// обзор ветки, правка B, 16 августа 2026). Это НЕ то же условие, что у
+    /// addArbiter, и разъезжались они на живом состоянии:
+    ///
+    ///   • роль директора УПРАЗДНЕНА, когда `isDaoActive()` — так устроены оба
+    ///     модификатора `onlyOwnerOrChief` (здесь и в
+    ///     ArbiterAccountabilityFacet): при живом ДАО директора они не видят
+    ///     вовсе, ни одного его права не остаётся;
+    ///   • посадка ПЕРЕДАНА, когда `isDaoActive() && daoAddress != address(0)`
+    ///     (_requireSeatingNotHandedOver) — там условие слабее нарочно, I-3:
+    ///     пока преемник не назван, сажать арбитров, кроме владельца, некому,
+    ///     и он обязан мочь.
+    ///
+    /// В промежутке — ДАО заработано, преемник ещё не прописан — прежняя
+    /// редакция писала слот и слала событие, хотя назначенный директор уже
+    /// бессилен: ни одна функция его не пропустит. `getChiefArbiter()` при этом
+    /// честно возвращал адрес, а публичный docs/DECENTRALIZATION.md говорил,
+    /// что роли больше нет. Функция про РОЛЬ директора — значит и отказывать
+    /// обязана тогда, когда роли нет.
+    ///
+    /// `addArbiter` ниже предикат НЕ меняет: она про посадку арбитров, и её
+    /// условие верно.
     function setChiefArbiter(address arbiter) external onlyOwner {
         ArbiterRegistryStorage.Data storage d = ArbiterRegistryStorage.data();
+        if (isDaoActive()) revert SeatingHandedOver();
         emit ChiefArbiterSet(d.chiefArbiter, arbiter);
         d.chiefArbiter = arbiter;
     }
 
-    function addArbiter(address arbiter) external onlyOwnerOrChief {
-        ArbiterRegistryStorage.Data storage d = ArbiterRegistryStorage.data();
-        if (d.isArbiter[arbiter]) revert AlreadyArbiter();
-        d.isArbiter[arbiter] = true;
-        d.arbiterList.push(arbiter);
-        emit ArbiterAdded(arbiter);
+    /// Передача права посадки защёлкивается ТОЛЬКО когда преемник реально
+    /// существует (финальный обзор ветки, I-3, 16 августа 2026) — тем же
+    /// приёмом, что уже применён к setDAOAddress в круге правок 2 (см. его
+    /// докстринг).
+    ///
+    /// ⚠️ ЕДИНСТВЕННЫЙ ВЫЗЫВАЮЩИЙ — `addArbiter` (правка B, 16 августа 2026).
+    /// `setChiefArbiter` эту проверку больше не зовёт: она про РОЛЬ директора и
+    /// отказывает по упразднению (`isDaoActive()`), а не по передаче посадки —
+    /// см. её докстринг выше.
+    ///
+    /// Заработанный порог (`uniqueActiveUsers >= DAO_THRESHOLD`) раньше только
+    /// ОТКРЫВАЛ дверь самозаписи; задача 6 сделала его вдобавок НЕОБРАТИМЫМ
+    /// ЗАМКОМ на addArbiter/setChiefArbiter. Защита `DaoAddressNotSet` стоит
+    /// только ВНУТРИ activateDAO() — то есть на ручной двери; автоматическая не
+    /// была защищена ничем. Цена нажатия замерена в самом проекте
+    /// (src/Treasury.sol: порог достижим за деньги, а на тестнете просто за
+    /// время постороннего) — значит ЧУЖОЙ человек навсегда лишал владельца
+    /// права сажать арбитров, а корпус пополнялся бы только самозаписью с
+    /// гейтом MIN_XP_TO_REGISTER, которому живой ручной арбитр (XP 0) не
+    /// удовлетворяет. Корпус осиротел бы необратимо, единственный выход —
+    /// замена фасета diamondCut'ом.
+    ///
+    /// Правка НЕ в isDaoActive() (соблазн, но нельзя): его читает уже
+    /// развёрнутая и неизменяемая src/Treasury.sol для пропорций дохода, и
+    /// сдвиг момента «ДАО наступила» подвинул бы деньги. Отдельное решение
+    /// владельца, не побочный эффект.
+    function _requireSeatingNotHandedOver(ArbiterRegistryStorage.Data storage d) private view {
+        if (isDaoActive() && d.daoAddress != address(0)) revert SeatingHandedOver();
     }
 
-    function removeArbiter(address arbiter) external onlyOwnerOrChief {
+    /// Вход в корпус арбитров при активном ДАО — только через applyAsArbiter
+    /// (самозапись по гейту XP/cleanStreak/бонда). Дословное решение владельца,
+    /// задача 6, 15 августа 2026: «никаких ручных» — ни владелец, ни директор
+    /// больше не сажают арбитров, когда ДАО включено.
+    ///
+    /// ⚠️ Про `&& d.daoAddress != address(0)` — см. _requireSeatingNotHandedOver.
+    ///
+    /// ⚠️ ВОЗВРАТ СНЕСЁННОГО — ТОЛЬКО ВЛАДЕЛЬЦУ (п. 66, круг правок 1,
+    /// 16 августа 2026). Эта функция — вторая дверь к тому же результату, что
+    /// заперт в `ArbiterAccountabilityFacet.liftSuspension`: `clearRemovalRecord`
+    /// ниже стирает окно сноса заодно с записью о нём. Разбор — у объявления
+    /// ошибки ReseatingRemovedIsOwnerOnly выше.
+    function addArbiter(address arbiter) external onlyOwnerOrChief {
         ArbiterRegistryStorage.Data storage d = ArbiterRegistryStorage.data();
-        if (!d.isArbiter[arbiter]) revert NotAnArbiter();
-        d.isArbiter[arbiter] = false;
-        uint256 len = d.arbiterList.length;
-        for (uint256 i = 0; i < len; i++) {
-            if (d.arbiterList[i] == arbiter) {
-                d.arbiterList[i] = d.arbiterList[len - 1];
-                d.arbiterList.pop();
-                break;
+        _requireSeatingNotHandedOver(d);
+        if (d.isArbiter[arbiter]) revert AlreadyArbiter();
+
+        // Потолок касается только директора. Владелец не ограничен: он и есть
+        // тот, кто решает состав, и ограничивать его этим правилом означало бы
+        // ограничить его же способность разбавить блок директора.
+        //
+        // Считается от РЕШАЮЩЕГО БОЛЬШИНСТВА, а не от кворума (п. 67,
+        // 16 августа 2026): при явке ровно в кворум апелляцию решают два
+        // голоса из трёх, поэтому блок ≤ 1.
+        if (msg.sender != OwnershipLib.contractOwner()) {
+            // Отмена сноса — зеркало сноса, и она не его. Различитель тот же
+            // СТИРАЕМЫЙ `removedAt`, что у гейта liftSuspension: у ушедшего
+            // добровольно и у новичка он ноль, дверь им открыта как прежде.
+            if (d.removedAt[arbiter] != 0) revert ReseatingRemovedIsOwnerOnly();
+
+            uint256 blocAfter = _chiefBloc(d) + 1;
+            if (blocAfter >= APPEAL_DECIDING_VOTES) {
+                revert ChiefBlocWouldDecideAppeal(blocAfter, APPEAL_DECIDING_VOTES);
             }
         }
 
-        uint256 bond = d.arbiterBond[arbiter];
-        if (bond > 0) {
-            d.arbiterBond[arbiter] = 0;
-            address usdc = FactoryStorage.store().usdc;
-            bool ok = IUSDCFull(usdc).transfer(arbiter, bond);
-            require(ok, "ArbiterRegistry: bond refund failed");
-        }
+        d.isArbiter[arbiter] = true;
+        d.arbiterList.push(arbiter);
 
-        emit ArbiterRemoved(arbiter);
+        d.seatedBy[arbiter] = msg.sender;
+        d.seatedCountBy[msg.sender]++;
+        emit ArbiterSeated(arbiter, msg.sender, false);
+
+        // Признаки прошлого сноса (если был) не переживают повторную посадку
+        // (задача 8, круг правок 1, Important 1) — respondToRemoval судит о
+        // ТЕКУЩЕМ статусе, не о ветхой истории. Реальный сценарий: владелец
+        // исправляет ошибочный снос одной командой addArbiter.
+        //
+        // ⚠️ liftSuspension = TRUE — и только здесь (решение владельца по шву
+        // M-4, 16 августа 2026). Владелец отменяет СВОЁ ЖЕ решение: вернуть
+        // человека с недожитой приостановкой значит вернуть его немым — он не
+        // сможет ни клеймить, ни финализировать, ни уволиться, и причина не
+        // будет видна из цепи ничем, кроме getSuspendedUntil.
+        ArbiterRegistryStorage.clearRemovalRecord(d, arbiter, true);
+
+        emit ArbiterAdded(arbiter);
     }
+
+    // removeArbiter(address) удалена 15 августа 2026. Она снимала арбитра без
+    // повода, без записи о том, кто нажал, и возвращала залог целиком — то есть
+    // снятие за дело и тихая зачистка выглядели в цепи одинаково и стоили
+    // одинаково. Замена — ArbiterAccountabilityFacet.removeArbiterForCause.
+    // Селектор удаляется из даймонда разрезом UpgradeArbiterAccountability.
 
     // -------- ARBITER: CLAIM DISPUTE --------
 
@@ -615,6 +1504,14 @@ contract ArbiterRegistryFacet {
         ArbiterRegistryStorage.Data storage d = ArbiterRegistryStorage.data();
 
         if (!d.isArbiter[caller]) revert NotArbiter();
+
+        // Потолок проверяется до staticcall'ов в Agreement: отказывать надо
+        // дёшево, а не после четырёх чтений чужого контракта.
+        uint256 held = d.openClaimCount[caller];
+        if (held >= MAX_CLAIMS_PER_ARBITER) revert TooManyOpenClaims(held, MAX_CLAIMS_PER_ARBITER);
+
+        _requireNotSuspended(d, caller);
+
         if (boxKey == bytes32(0) || signKey == bytes32(0)) revert ZeroChatKey();
         if (d.disputeClaims[agreement] != address(0)) revert AlreadyClaimed();
 
@@ -715,16 +1612,26 @@ contract ArbiterRegistryFacet {
         // openClaimCount, то есть освобождал самого арбитра. Пока сторона не
         // дёрнет triggerArbiterTimeout, счётчик неявившегося остаётся занят, а
         // с ним заперт и выход из статуса вместе с бондом. Осознанный размен:
-        // цена — 50 USDC у того, кто уже нарушил, и её отпирает владелец через
-        // removeArbiter; дыра стоила бы половины любого спорного котла.
-        // Подробности и кандидат на честное лекарство (`abandonClaim`, который
-        // снимает счётчик, пишет ошибку и НЕ трогает Agreement.arbiter) —
-        // docs/OPEN-ITEMS.md, пункт 11.
+        // цена — 50 USDC у того, кто уже нарушил; дыра стоила бы половины
+        // любого спорного котла. Подробности и кандидат на честное лекарство
+        // (`abandonClaim`, который снимает счётчик, пишет ошибку и НЕ трогает
+        // Agreement.arbiter) — docs/OPEN-ITEMS.md, пункт 11.
+        //
+        // ⚠️ Лекарства «владелец расклинит» здесь БОЛЬШЕ НЕТ (финальный обзор
+        // ветки, M-1, 16 августа 2026). Прежняя редакция этих строк называла им
+        // `removeArbiter` — функцию, удалённую 15 августа: она снимала статус и
+        // возвращала залог ЦЕЛИКОМ, то есть действительно распутывала запертого
+        // арбитра без потерь. Её замена,
+        // ArbiterAccountabilityFacet.removeArbiterForCause, залог не возвращает,
+        // а СЖИГАЕТ в банк арбитров, требует кода повода и кладёт в цепь вечное
+        // публичное обвинение. Это наказание, а не расклинивание: применять его
+        // к человеку, который всего лишь застрял на чужом счётчике, значит
+        // обвинить его публично за нашу же незакрытую дыру.
         //
         // Владелец диамонда (второй допустимый вызывающий выше) под гейт
-        // попадает так же. Причина расклинить чужой счётчик у него как раз
-        // есть, но исключение вернуло бы ровно эту дыру, поэтому расклинивает
-        // он через removeArbiter, а не в обход гейта.
+        // попадает так же и обхода не получает: исключение вернуло бы ровно ту
+        // дыру, ради которой гейт и стоит. До появления `abandonClaim` запертый
+        // счётчик отпирает только явка стороны с triggerArbiterTimeout.
         (bool dOk, bytes memory dData) = agreement.staticcall(abi.encodeWithSignature("disputedAt()"));
         require(dOk, "ArbiterRegistry: disputedAt read failed");
         (bool wOk, bytes memory wData) = agreement.staticcall(abi.encodeWithSignature("DISPUTE_WINDOW()"));
@@ -892,6 +1799,9 @@ contract ArbiterRegistryFacet {
         if (v.submittedAt == 0) revert NoVerdict();
         if (v.finalized) revert AlreadyFinalized();
         if (v.frozen) revert VerdictFrozenError();
+        // Проверяем АРБИТРА ВЕРДИКТА, не вызывающего: финализировать может кто
+        // угодно, а держим мы именно приостановленного судью.
+        _requireNotSuspended(d, v.arbiter);
         require(block.timestamp >= v.submittedAt + FINALIZE_DELAY, "ArbiterRegistry: finalize delay not passed");
 
         // Защита от авто-удаления в clearDisputeClaim во время этого вызова
@@ -942,9 +1852,12 @@ contract ArbiterRegistryFacet {
         v.finalized = true;
 
         // Вердикт дошёл до финализации без overturn — судейская ошибка не подтвердилась,
-        // серия ошибок сбрасывается.
+        // серия ошибок сбрасывается. Заодно растёт судейский стаж (задача 5,
+        // 15 августа 2026): счётчик неперевёрнутых финализированных вердиктов,
+        // нужный для будущей конвертации «залог плюс стаж» при включении ДАО.
         if (!v.overturned) {
             d.arbiterMistakeStreak[v.arbiter] = 0;
+            d.cleanVerdicts[v.arbiter]++;
         }
 
         emit VerdictFinalized(agreement, v.arbiter, v.clientWins);
@@ -952,6 +1865,27 @@ contract ArbiterRegistryFacet {
 
     /// @notice Owner или DAO отменяют вердикт до финализации.
     /// Арбитр теряет XP и награду. Новый вердикт исполняется вместо старого.
+    ///
+    /// ONE VERDICT EARNS AT MOST ONE JUDICIAL MISTAKE — and that promise is
+    /// kept by two lines, not by this one. Here: a verdict already overturned,
+    /// by this door or by the appeal vote, refuses with AlreadyOverturned.
+    /// There in resolveAppeal: a panel that overturns a verdict the hand had
+    /// already overturned books nothing, and takes the hand's booking back.
+    ///
+    /// There is no changing one's mind after the press, and none is needed:
+    /// the mind is made up inside the call, through `newClientWins`. Letting
+    /// the hand press twice would let the owner walk a dispute's outcome back
+    /// and forth without limit, and "whoever pressed last decided" is a worse
+    /// property than not being able to reconsider.
+    ///
+    /// ⚠️ No check of MERIT lives on this door — not one. The whole restraint
+    /// on it is arithmetic — three mistakes, and since task 12 (18 August 2026)
+    /// they buy an ACCUSATION plus a 48-hour pause rather than an unseating —
+    /// plus the appeal, which stays open after a press here precisely so that
+    /// it can contradict it. That pause is what makes the arithmetic worth
+    /// something: pressing this three times used to end the matter in one
+    /// transaction, past the door that demands a cause, and it survived the
+    /// handover because this function admits the owner always.
     function overturnVerdict(address agreement, bool newClientWins) external onlyOwnerOrDAO {
         ArbiterRegistryStorage.Data storage d = ArbiterRegistryStorage.data();
         ArbiterRegistryStorage.PendingVerdict storage v = d.pendingVerdicts[agreement];
@@ -959,6 +1893,20 @@ contract ArbiterRegistryFacet {
         if (v.submittedAt == 0) revert NoVerdict();
         if (v.finalized) revert AlreadyFinalized();
         if (v.appealed && !v.appealResolved) revert AppealInProgress();
+        // ⚠️ resolveAppeal sets this flag too, so a verdict already reversed by
+        // the vote can no longer be reversed again by hand — deliberately: one
+        // verdict earns at most one judicial mistake, whoever books it.
+        //
+        // This line alone did NOT deliver that. The reverse order — hand first,
+        // panel second — stayed open, had to stay open (the appeal is the only
+        // check on this door), and booked the second mistake there instead.
+        // That half is closed inside resolveAppeal, not here.
+        //
+        // Stands BELOW the three checks above, and that is load-bearing: both
+        // `finalized` and an appeal in flight are reachable with `overturned`
+        // already true, and in both the older reason is the larger fact and
+        // must be the one the person reads.
+        if (v.overturned) revert AlreadyOverturned();
 
         address slashedArbiter = v.arbiter;
         v.clientWins = newClientWins;
@@ -969,7 +1917,11 @@ contract ArbiterRegistryFacet {
         ReputationStorage.Data storage rep = ReputationStorage.data();
         _slashArbiterXP(rep, slashedArbiter);
 
-        _recordArbiterMistake(d, rep, slashedArbiter);
+        // `by` — СЫРОЙ msg.sender, и это не оплошность: роль на этой двери
+        // проверил модификатор onlyOwnerOrDAO по нему же. Взять здесь
+        // _msgSender() значило бы записать в вечную ленту одного, а решение
+        // приписать другому (запись в script/gasless-sender.allow).
+        _recordArbiterMistake(d, rep, slashedArbiter, msg.sender, DemotionPath.OwnerOverturn, agreement);
 
         emit VerdictOverturned(agreement, slashedArbiter, newClientWins);
     }
@@ -990,7 +1942,9 @@ contract ArbiterRegistryFacet {
         if (arbiterAddr == address(0)) return; // никто не забирал спор — не на кого списывать
 
         ReputationStorage.Data storage rep = ReputationStorage.data();
-        _recordArbiterMistake(d, rep, arbiterAddr);
+        // `by` нулевой: msg.sender здесь — сам агримент (проверено выше),
+        // человека за вызовом нет вовсе.
+        _recordArbiterMistake(d, rep, arbiterAddr, address(0), DemotionPath.AgreementTimeout, agreement);
     }
 
     /// @notice Списывает OVERTURN_XP_SLASH у арбитра, не давая уйти в underflow.
@@ -1003,40 +1957,289 @@ contract ArbiterRegistryFacet {
         }
     }
 
-    /// @notice Общий счётчик судейских ошибок для overturnVerdict и notifyArbiterTimeout.
-    /// На 3-й подряд ошибке: статус снят, XP жёстко сброшен на DEMOTION_XP_RESET (не
-    /// вычитание — одна и та же точка приземления вне зависимости от прежнего баланса),
-    /// счётчик ошибок обнулён. cleanStreak (исполнительская серия) не трогается — судейство
-    /// и исполнение заказов разные навыки.
+    /// Общий запрет для трёх мест: claimDispute, resignAsArbiter, finalizeVerdict.
+    /// Читает то же поле, которое пишет ArbiterAccountabilityFacet.suspendArbiter —
+    /// оба фасета делят один ArbiterRegistryStorage.
+    function _requireNotSuspended(ArbiterRegistryStorage.Data storage d, address who) private view {
+        uint256 until = d.suspendedUntil[who];
+        if (block.timestamp < until) revert ArbiterSuspendedError(until);
+    }
+
+    /// Зеркало ArbiterAccountabilityFacet.PROPOSAL_TTL (arbiter-accountability,
+    /// задача 7, круг правок 1, Important 2, 15 августа 2026) —
+    /// resignAsArbiter обязан знать срок жизни предложения, не вызывая другой
+    /// фасет (тот же приём, что MISTAKE_THRESHOLD/DAO_THRESHOLD в обратную
+    /// сторону). Равенство доказано ПОВЕДЕНЧЕСКИ — граничные тесты на «14
+    /// суток минус секунда» / «ровно 14 суток» в test/ArbiterSuspension.t.sol
+    /// (test_ResignHoldsUntilTheLastSecondOfProposal /
+    /// test_ResignSucceedsAfterProposalExpires), а не идентичностью через
+    /// геттер: отдельный публичный геттер стоил бы нового селектора ради числа,
+    /// которое в этом фасете читает один-единственный помощник, а граничный
+    /// тест ловит рассинхрон надёжнее — он падает, если мираж числа хоть на
+    /// секунду разошёлся с настоящим, идентичность же сравнивала бы два
+    /// одинаково неверных числа как совпадающие.
+    ///
+    /// ⚠️ ЧИСЛО ЧИТАЕТ РОВНО ОДИН ПОМОЩНИК, А ЕГО ЗОВУТ ТРОЕ (задача 12,
+    /// круги правок 1 и 2, 18 августа 2026). Здесь стояло «больше нигде в этом
+    /// фасете не читается», и это устарело дважды подряд — сперва задачей,
+    /// потом её же кругом правок.
+    ///
+    /// Читатель числа один: `_hasLiveProposalHere`. Зовут его:
+    ///   • `_requireNoLiveRemovalProposal` — дверь резигнации;
+    ///   • ветка порога в `_recordArbiterMistake` — цепь молча уступает
+    ///     занятой двери;
+    ///   • ветка оправдания в `resolveAppeal` — гасится только ЖИВОЕ обвинение
+    ///     цепи (круг правок 2: мёртвое стирало счётчик целиком).
+    ///
+    /// ⚠️ Считать вызывающих здесь поимённо — значит держать список, который
+    /// протухает от правки в чужой функции. Он и протух, дважды. Ценность
+    /// абзаца не в списке, а в том, что охраняется: ВТОРОГО НАПИСАНИЯ ФОРМУЛЫ
+    /// ПРОТУХАНИЯ В ФАЙЛЕ НЕТ. Это и проверяйте — грепом по
+    /// `PROPOSAL_TTL_MIRROR`, а не чтением этого перечисления.
+    uint256 private constant PROPOSAL_TTL_MIRROR = 14 days;
+
+    /// Numeric codes of ArbiterAccountabilityFacet.Cause, mirrored here
+    /// because the proposal the chain lays needs a cause and the enum lives in
+    /// the OTHER facet (task 12, 18 August 2026). Same reason the storage
+    /// struct keeps `cause` as uint8: importing a type from another file to
+    /// write a record would mean a rename there moves the record here.
+    ///
+    /// ⚠️ A copy without a guard drifts in silence, so this pair is guarded
+    /// BEHAVIOURALLY, the way PROPOSAL_TTL_MIRROR above is: the tests read the
+    /// expected value out of ArbiterAccountabilityFacet.Cause — an independent
+    /// source, the enum itself — and compare it against the cause the chain
+    /// actually wrote into getRemovalProposal(). Reorder the enum and they go
+    /// red. An identity getter would have cost a second selector and would
+    /// have compared two equally wrong numbers as equal.
+    uint8 private constant CAUSE_OVERTURNED_VERDICTS_MIRROR = 0;
+    uint8 private constant CAUSE_TIMEOUTS_MIRROR            = 1;
+
+    /// Which cause the chain writes for which path. Both codes are
+    /// _isChainVerifiable and both are proved by the SAME counter, so
+    /// _requireProven admits either — while the feed and the standing card
+    /// keep the distinction that task 4 paid a field for.
+    ///
+    /// ⚠️ CANNOT REVERT, and the default is deliberate rather than lazy: this
+    /// runs inside the threshold branch, which notifyArbiterTimeout reaches
+    /// from an EMPTY try/catch in Agreement.sol. DemotionPath.Unspecified is
+    /// sent by no caller (see the enum's docstring); were it ever sent, the
+    /// record would say OverturnedVerdicts, which is the cause the counter
+    /// actually proves.
+    function _causeForPath(DemotionPath path) private pure returns (uint8) {
+        return path == DemotionPath.AgreementTimeout
+            ? CAUSE_TIMEOUTS_MIRROR
+            : CAUSE_OVERTURNED_VERDICTS_MIRROR;
+    }
+
+    /// Is a removal proposal — anyone's — standing against this person right
+    /// now. One owner for the staleness rule inside this facet:
+    /// _requireNoLiveRemovalProposal below is written on top of this, not
+    /// beside it.
+    function _hasLiveProposalHere(ArbiterRegistryStorage.Data storage d, address who)
+        private view returns (bool)
+    {
+        uint256 proposedAt = d.removalProposals[who].proposedAt;
+        return proposedAt != 0 && block.timestamp < proposedAt + PROPOSAL_TTL_MIRROR;
+    }
+
+    /// Третий запрет двери резигнации (см. HasLiveRemovalProposal и докстринг
+    /// поля removalProposals). НЕ через suspendArbiter изнутри proposeRemoval
+    /// (был предложен ревьюером, решение владельца — отклонено): приостановка
+    /// морозит уже поданные вердикты арбитра, то есть каждое предложение
+    /// морозило бы деньги честных сторон в его ОТКРЫТЫХ спорах, не имеющих к
+    /// предложению отношения. Предложение слабее сноса и такой цены не стоит —
+    /// точечный запрет здесь и только здесь, ничего постороннего не морозит.
+    ///
+    /// ⚠️ Известное ограничение, не баг: директор может класть предложение
+    /// заново каждые 14 суток и держать чужой залог запертым бесконечно.
+    /// Сегодня это приемлемо — предложения публично приписаны его адресу
+    /// (RemovalProposed индексирует `by`), а заверяемые коды требуют
+    /// отпечатка, то есть безосновательное перевыставление видно в ленте так
+    /// же явно, как само предложение.
+    function _requireNoLiveRemovalProposal(ArbiterRegistryStorage.Data storage d, address who) private view {
+        if (_hasLiveProposalHere(d, who)) revert HasLiveRemovalProposal();
+    }
+
+    /// Блок директора = арбитры его посадки, сидящие сейчас, ПЛЮС он сам, если
+    /// он арбитр. Второе слагаемое обязательно: setChiefArbiter не запрещает
+    /// директору быть арбитром, и ОДИН его ставленник плюс он сам — это уже
+    /// два голоса, то есть решающее большинство при явке ровно в кворум
+    /// (п. 67, 16 августа 2026; прежняя редакция считала здесь до тройки).
+    ///
+    /// ⚠️ Это МОЩНОСТЬ ОБЪЕДИНЕНИЯ, а не сумма (уборка 7а, М-1 ревью задачи 3).
+    /// Директор, посадивший САМ СЕБЯ, попадает в оба слагаемых сразу:
+    /// `seatedCountBy[chief]` его уже посчитал, и слепое `+1` считало бы его
+    /// вторым голосом, которого нет. Условие `seatedBy[chief] != chief` эту
+    /// вторую копию снимает.
+    ///
+    /// На ИСХОД посадки это не влияет ни в одном достижимом состоянии — при
+    /// самопосадке обе редакции дают `blocAfter >= APPEAL_DECIDING_VOTES` и
+    /// одинаково отказывают, — но геттер `getChiefBloc` публичный и читается
+    /// снаружи, а число, которым он отвечает, объявлено как «сколько голосов
+    /// у блока». Врать на единицу ему нельзя: два — это порог, за которым
+    /// апелляция решена, и читатель принимает по этому числу решение.
+    ///
+    /// ⚠️ Свойство «блок ≤ 1» держится ТОЛЬКО на двери addArbiter, ТОЛЬКО у
+    /// директора и ТОЛЬКО в момент нажатия (И-1, Ruling 17). Владелец, посадив
+    /// директора арбитром ПОСЛЕ его ставленника, доводит блок до настоящей
+    /// двойки — замерено, `getChiefBloc()` = 2. `applyAsArbiter` `_chiefBloc`
+    /// не зовёт вовсе. Настоящее лекарство — считать блок в момент
+    /// ГОЛОСОВАНИЯ, а не посадки; это изменение замысла, оно в OPEN-ITEMS.
+    function _chiefBloc(ArbiterRegistryStorage.Data storage d) private view returns (uint256) {
+        address chief = d.chiefArbiter;
+        if (chief == address(0)) return 0;
+        uint256 bloc = d.seatedCountBy[chief];
+        // Второй раз того же человека не считаем: см. «мощность объединения».
+        if (d.isArbiter[chief] && d.seatedBy[chief] != chief) bloc += 1;
+        return bloc;
+    }
+
+    /// @notice The shared judicial-mistake counter for overturnVerdict,
+    /// notifyArbiterTimeout and resolveAppeal.
+    ///
+    /// On the MAX_ARBITER_MISTAKES-th mistake in a row: XP hard-reset to
+    /// DEMOTION_XP_RESET (a landing point, not a subtraction), suspension for
+    /// SUSPENSION_WINDOW, and a removal proposal opened in the CHAIN'S OWN
+    /// NAME. The seat is NOT taken here any more — see the branch below.
+    /// cleanStreak (the executor streak) is untouched: judging and delivering
+    /// are different skills.
+    ///
+    /// ⚠️ TWO THRESHOLDS LIVE NEXT TO EACH OTHER AND THEY ARE NOT THE SAME
+    /// NUMBER (review of task 11, 18 August 2026 — this is what a reviewer
+    /// tripped over):
+    ///
+    ///   • MAX_ARBITER_MISTAKES = 3 — the AUTOMATIC threshold, right here. The
+    ///     chain acts on its own: suspension plus an accusation with no author.
+    ///   • ArbiterAccountabilityFacet.MISTAKE_THRESHOLD = 2 — the PROOF
+    ///     threshold, read by _requireProven. It is what a HUMAN needs to have
+    ///     against an arbiter before Cause.OverturnedVerdicts/Timeouts counts
+    ///     as proven, and it is one lower on purpose: the manual door is
+    ///     valuable precisely because it fires EARLIER than the automaton.
+    ///
+    /// ⚠️ AND THE CONSEQUENCE IS NOT THE ONE THIS PARAGRAPH USED TO CLAIM
+    /// (review round 2 of task 12, 18 August 2026). It said: "the streak stays
+    /// at 3, and 3 >= 2, so the accusation the chain just laid is provable when
+    /// the button is pressed two days later" — which stopped being true in the
+    /// same commit that wrote it, when executeChainRemoval stopped re-proving
+    /// the cause at all (C-1). The button asks the RECORD, never the counter,
+    /// and works at streak 0.
+    ///
+    /// What the two thresholds still do differ about: MISTAKE_THRESHOLD gates
+    /// the MANUAL door, and only it. The reachable case is not hypothetical —
+    /// the chain's accusation goes stale after PROPOSAL_TTL with nobody having
+    /// pressed, and a human may then propose on the very same evidence, because
+    /// the counter is still standing where the mistakes left it.
+    ///
+    /// `by` is kept in the signature and no longer read: ArbiterDemoted moved
+    /// to the actual removal (ArbiterAccountabilityFacet.executeChainRemoval),
+    /// where nobody pressed anything and the presser is deliberately not named.
+    /// Unnamed rather than deleted — the three call sites still say who acted,
+    /// which is the thing to restore if the record ever wants him again.
     function _recordArbiterMistake(
         ArbiterRegistryStorage.Data storage d,
         ReputationStorage.Data storage rep,
-        address arbiterAddr
+        address arbiterAddr,
+        address /* by */,
+        DemotionPath path,
+        address agreement
     ) private {
         uint256 mistakes = d.arbiterMistakeStreak[arbiterAddr] + 1;
         d.arbiterMistakeStreak[arbiterAddr] = mistakes;
 
         if (mistakes >= MAX_ARBITER_MISTAKES) {
-            d.isArbiter[arbiterAddr] = false;
+            // The seat is no longer taken here. The automatic path stops the
+            // arbiter at once and ACCUSES him; the removal itself runs through
+            // the common door — proposal, 48 hours, a right to answer — like
+            // every other removal. Owner's decision of 18 August 2026: "the
+            // same door, and the suspension is the fast path".
+            //
+            // Before this, the quiet door also survived the handover:
+            // overturnVerdict sits under onlyOwnerOrDAO, which lets the owner
+            // through always, so the ratchet this whole branch exists to build
+            // was bypassed by three presses.
             rep.xp[arbiterAddr] = DEMOTION_XP_RESET;
-            d.arbiterMistakeStreak[arbiterAddr] = 0;
 
-            uint256 forfeited = d.arbiterBond[arbiterAddr];
-            if (forfeited > 0) {
-                d.arbiterBond[arbiterAddr] = 0;
-                d.vaultBalance += forfeited;
+            // ⚠️ THE SUSPENSION IS UNCONDITIONAL and stands ABOVE the guard
+            // below. It is the fast lever, and it must land even when the
+            // accusation cannot: an arbiter whose third mistake arrives while
+            // a human accusation stands is still stopped this second.
+            d.suspendedUntil[arbiterAddr] = block.timestamp + ArbiterRegistryStorage.SUSPENSION_WINDOW;
+
+            // ⚠️ THE STREAK IS NOT CLEARED HERE, AND THE REASON WAS REWRITTEN
+            // (review round 2 of task 12). It used to say that _requireProven
+            // reads this counter and zeroing it would leave the chain's own
+            // accusation unprovable — "a door that looks built and never
+            // opens". C-1 made that false: executeChainRemoval does not ask the
+            // counter at all, and opens at streak 0.
+            //
+            // The reason it stays is plainer. The counter means "judicial
+            // mistakes in an unbroken row", and the arbiter has done nothing to
+            // break the row by being accused — clearing it here would have the
+            // chain assert an end that did not happen. Two readers still live
+            // on that value: the MANUAL door through _requireProven (reachable
+            // once this accusation goes stale unpressed), and resolveAppeal,
+            // which subtracts from it when a panel takes a mistake back.
+            //
+            // ⚠️ WHERE THE "BUILT AND NEVER OPENS" RISK ACTUALLY LIVES NOW: in
+            // WRITING THE RECORD BELOW. That record is the whole proof the
+            // button consults, so the way to build a door that never opens is
+            // to skip it, not to touch this counter.
+            //
+            // The streak clears on the actual removal (_performRemoval), on
+            // withdrawal of this proposal, and when a panel vindicates him.
+            //
+            // ⚠️ AND NOTHING BELOW MAY REVERT. notifyArbiterTimeout reaches
+            // here from Agreement.sol (triggerArbiterTimeout) inside an EMPTY
+            // try/catch: a revert is swallowed in silence and the arbiter walks
+            // away untouched, without a trace. So a live proposal — anyone's —
+            // is yielded to, not fought over: task 10 made proposeRemoval
+            // refuse to overwrite a standing record, and this branch writes
+            // storage directly, past that door. It must obey the same rule
+            // WITHOUT the revert that enforces it there.
+            //
+            // What yielding costs, named rather than hidden: the human
+            // accusation may later be withdrawn, and the chain's proof does not
+            // turn into a proposal by itself — another overturn is needed. The
+            // streak is kept for exactly that, so the next one tries again.
+            if (!_hasLiveProposalHere(d, arbiterAddr)) {
+                // ⚠️ A NEW ACCUSATION IS A NEW RIGHT TO ANSWER, AND THE CHAIN
+                // LAYS ITS OWN PAST proposeRemoval (task 3, 19 August 2026).
+                // The human door clears this flag for the same reason and says
+                // so at length; this branch writes the record directly, so it
+                // must obey the same rule without the door that enforces it.
+                //
+                // Reachable, not theoretical: an accusation nobody presses goes
+                // stale after PROPOSAL_TTL, the arbiter stays seated and the
+                // streak stays standing, so the next overturn lands here and
+                // writes a fresh accusation. Without this line his answer to the
+                // stale one would meet him as AlreadyAnswered — and the chain's
+                // accusation is the one he can neither withdraw nor walk away
+                // from. Guarded by
+                // test_ANewChainAccusationReopensTheRightToAnswer.
+                //
+                // Inside the `if`, deliberately: when a live accusation is being
+                // yielded to, nothing new is laid and the answer to what stands
+                // must not be touched. And nothing here can revert — it is a
+                // delete, which matters because notifyArbiterTimeout reaches
+                // this branch inside an empty try/catch.
+                delete d.removalReply[arbiterAddr];
+                d.removalProposals[arbiterAddr] = ArbiterRegistryStorage.RemovalProposal({
+                    cause:          _causeForPath(path),
+                    // No digest: the evidence is the chain's own state, and a
+                    // hash of nothing would be a promise of a preimage nobody
+                    // can show. _requireProven reads the counter instead.
+                    evidenceDigest: bytes32(0),
+                    proposedAt:     block.timestamp,
+                    // ⚠️ THE ACCUSER IS THE CHAIN, so this is the zero address
+                    // and that is the whole guarantee: executeChainRemoval
+                    // refuses anything else, and nobody's name is dirtied by an
+                    // accusation no person made (design decision 11,
+                    // consequence 2).
+                    by:             address(0)
+                });
+                d.chainProposalPath[arbiterAddr] = uint8(path);
+                emit RemovalProposedByChain(arbiterAddr, uint8(path), agreement, block.timestamp);
             }
-
-            uint256 len = d.arbiterList.length;
-            for (uint256 i = 0; i < len; i++) {
-                if (d.arbiterList[i] == arbiterAddr) {
-                    d.arbiterList[i] = d.arbiterList[len - 1];
-                    d.arbiterList.pop();
-                    break;
-                }
-            }
-
-            emit ArbiterDemoted(arbiterAddr);
         }
     }
 
@@ -1153,13 +2356,187 @@ contract ArbiterRegistryFacet {
 
         if (overturn) {
             address slashedArbiter = v.arbiter;
+
+            // ⚠️ READ BEFORE THE WRITE BELOW (review round 1 of task 11,
+            // 18 August 2026). At this point `overturned` is true if and only
+            // if a HAND already overturned this verdict: overturnVerdict and
+            // this branch are its only writers, and this branch runs at most
+            // once per verdict (appealResolved). That is why telling the two
+            // cases apart needs no new storage field and the layout does not
+            // move.
+            bool alreadyOverturned = v.overturned;
+
             v.clientWins = !v.clientWins;
             v.overturned = true;
 
-            ReputationStorage.Data storage rep = ReputationStorage.data();
-            _slashArbiterXP(rep, slashedArbiter);
-            _recordArbiterMistake(d, rep, slashedArbiter);
+            // ⚠️ A PANEL THAT VINDICATES THE ARBITER TAKES HIS MISTAKE BACK.
+            // The sequence that made this necessary: the arbiter rules, the
+            // owner's hand overturns him (mistake one), the losing side appeals
+            // — which stays open on purpose, it is the only check on the owner
+            // there is — and the panel votes to overturn, flipping the ruling
+            // back to the ARBITER'S OWN. The panel has just said he was right
+            // and the owner was wrong.
+            //
+            // Booking that as HIS mistake slashed his XP twice for one verdict
+            // and wrote DemotionPath.AppealVote into the permanent record: the
+            // chain asserting "the panel found him wrong" precisely where it
+            // found the opposite. Measured before the fix: two disputes unseated
+            // an arbiter instead of three, and no collusion was needed — an
+            // honest panel deciding correctly handed the owner the second
+            // mistake for free.
+            //
+            // So the second booking does not happen, and the first is taken
+            // back: if the panel says there was no judicial mistake, then a
+            // mark standing against him for that verdict is the record lying.
+            // ONE is subtracted, not the whole streak — mistakes on OTHER
+            // disputes are his and stay his.
+            //
+            // ⚠️ XP IS NOT GIVEN BACK, and that is said out loud rather than
+            // passed over. _slashArbiterXP takes OVERTURN_XP_SLASH with a floor
+            // at zero and records nowhere how much it actually took, so adding
+            // the constant back would hand an arbiter who was slashed INTO the
+            // floor points he never had. Storing the amount taken would cost a
+            // storage field for a small truth, and that trade was refused. The
+            // slash he keeps is one instead of two, the second having left
+            // together with the booking.
+            //
+            // ⚠️ HOW FAR THE VINDICATION REACHES, REWRITTEN BY TASK 12
+            // (18 August 2026). This paragraph used to say "the counter comes
+            // back, the seat does not: the demotion already fired inside
+            // _recordArbiterMistake — seat gone, bond forfeited, suspension set
+            // — and none of that is walked back here". Two of its three facts
+            // died with the threshold branch, and the code seven lines below
+            // now contradicts a third.
+            //
+            // As it stands:
+            //   • the third mistake takes NO seat and burns NO bond — it
+            //     suspends and accuses, so on the ordinary timeline there is
+            //     nothing to walk back and the branch below simply cancels the
+            //     accusation, the counter and the suspension together;
+            //   • the seat is still not restored, and that remains true in the
+            //     one case where it was really lost: somebody pressed
+            //     executeChainRemoval before the panel finished. Re-seating a
+            //     removed arbiter is a different decision from arithmetic on a
+            //     counter, and it is not this line's to make;
+            //   • the bond is not returned in that same case, for the same
+            //     reason and by the same silence.
+            //
+            // Named so that it stays a known gap rather than a silent one.
+            if (alreadyOverturned) {
+                // ⚠️ VINDICATION MUST REACH THE CHAIN'S OWN ACCUSATION, not
+                // just the counter (task 12, trap 5, 18 August 2026) — and
+                // since C-1 the reason is STRONGER than the arithmetic first
+                // written here (review round 2).
+                //
+                // The old wording argued by numbers: the streak sits at 3, the
+                // proof threshold is 2, so decrementing to 2 leaves the charge
+                // "still provable". That is no longer how the button decides.
+                // executeChainRemoval consults the RECORD and nothing else, so
+                // the charge would survive the panel's verdict at ANY value of
+                // the counter — decrementing it, zeroing it, none of it would
+                // matter. Forty-eight hours later a passer-by presses, and the
+                // very man the panel found right loses his seat. The button is
+                // nobody's on purpose, so there would be no one to ask.
+                //
+                // Which is why the record itself has to go, and why this branch
+                // is not a nicety: it is the only thing standing between a
+                // vindication and a removal for the thing vindicated.
+                //
+                // He cannot even step aside: resignAsArbiter is barred by the
+                // suspension AND by the live proposal, and withdrawing that
+                // proposal belongs to the owner and the chief alone — otherwise
+                // he waits out PROPOSAL_TTL, fourteen days.
+                //
+                // So the chain withdraws what the chain laid: proposal erased,
+                // streak zeroed (same argument as withdrawal — a vindicated
+                // arbiter must not stand one overturn away from being accused
+                // again), suspension lifted.
+                //
+                // ⚠️ ONLY THE CHAIN'S OWN. A human accusation (`by` non-zero)
+                // is untouched here: a panel deciding one dispute says nothing
+                // about a collusion charge somebody else laid, and quashing it
+                // would hand every accused arbiter a way to clear his record by
+                // appealing an unrelated verdict.
+                //
+                // ⚠️ Known cost, named rather than papered over: the
+                // suspension carries no provenance. If a chief suspended this
+                // person for an unrelated reason AFTER the automatic path
+                // fired, that suspension is lifted here too. Telling the two
+                // apart needs a field the layout does not have, and leaving a
+                // vindicated arbiter frozen was judged the worse of the two.
+                // ⚠️ `_hasLiveProposalHere`, NOT `proposedAt != 0` (review round
+                // 2 of task 12). The same defect as C-2 one door over, and it
+                // was measured here too: a DEAD accusation, stale for a
+                // fortnight and executable by nobody, wiped a streak of 3 down
+                // to 0 in one go — flatly against the paragraph seven lines
+                // above, which promises that ONE is subtracted — and announced
+                // ChainAccusationCleared about a record that had stopped
+                // meaning anything long before. Staleness has a home in this
+                // file; every predicate that asks about a proposal goes through
+                // it.
+                if (_hasLiveProposalHere(d, slashedArbiter)
+                    && d.removalProposals[slashedArbiter].by == address(0)) {
+                    delete d.removalProposals[slashedArbiter];
+                    delete d.chainProposalPath[slashedArbiter];
+                    // The accusation is gone, so the flag "answered the thing
+                    // standing right now" has nothing left to point at (task 3,
+                    // 19 August 2026). Left behind, it would show a reader an
+                    // answer to an accusation the panel took back, and it would
+                    // meet the arbiter as AlreadyAnswered on the next one. The
+                    // words stay in the log, as everywhere else.
+                    delete d.removalReply[slashedArbiter];
+                    d.arbiterMistakeStreak[slashedArbiter] = 0;
+                    d.suspendedUntil[slashedArbiter]       = 0;
+                    emit ChainAccusationCleared(slashedArbiter, agreement);
+                    // ⚠️ AND THE LIFT IS ANNOUNCED, not done in silence (review
+                    // round 1 of task 12). Every other way a suspension ends
+                    // says so — liftSuspension emits, and the 72 hours running
+                    // out is visible because the deadline was in the log when it
+                    // was set. This one erased the deadline instead, so a reader
+                    // saw a suspension that never ended.
+                    //
+                    // `by` is the zero address: the panel decided, and no hand
+                    // pressed anything here — same reading as everywhere else in
+                    // these two facets.
+                    //
+                    // ⚠️ Known cost, named rather than papered over: the
+                    // suspension carries no provenance, so a chief's later,
+                    // unrelated suspension of the same person is lifted here
+                    // too. Reviewed on 18 August 2026 and the field was
+                    // REFUSED: every cheap discriminator produces false
+                    // refusals, and a false refusal is the dearer mistake —
+                    // it leaves a vindicated man locked in, while the chief who
+                    // loses his mark simply sets it again. The log is what
+                    // makes that bearable: he can see it happened.
+                    emit ArbiterAccountabilityFacet.ArbiterSuspensionLifted(
+                        slashedArbiter, address(0)
+                    );
+                } else {
+                    // ⚠️ Underflow is reachable, not theoretical, and since
+                    // task 12 the way in is exact: the accusation the third
+                    // mistake laid was EXECUTED while this appeal was in
+                    // flight, and _performRemoval zeroed the streak on the way
+                    // out. raiseAppeal never asks whether the arbiter is still
+                    // seated, so the vote lands on a counter with nothing left
+                    // to take back. Withdrawal of the accusation reaches the
+                    // same state by a different road. Guarded by
+                    // test_VindicationAfterDemotionDoesNotUnderflowTheStreak.
+                    uint256 streak = d.arbiterMistakeStreak[slashedArbiter];
+                    if (streak > 0) d.arbiterMistakeStreak[slashedArbiter] = streak - 1;
+                }
+            } else {
+                ReputationStorage.Data storage rep = ReputationStorage.data();
+                _slashArbiterXP(rep, slashedArbiter);
+                // `by` нулевой: resolveAppeal зовёт кто угодно, а решают ГОЛОСА.
+                // Назвать нажавшего «подвести итог» виновником было бы худшей из
+                // трёх возможных неправд.
+                _recordArbiterMistake(d, rep, slashedArbiter, address(0), DemotionPath.AppealVote, agreement);
+            }
 
+            // Outside the branch: the appellant won the vote and gets his
+            // deposit back whether or not this verdict had already been
+            // overturned by hand. The deposit is the price of asking, not part
+            // of the arbiter's penalty.
             bool refundOk = IUSDCFull(usdc).transfer(v.appellant, APPEAL_DEPOSIT);
             require(refundOk, "ArbiterRegistry: deposit refund failed");
         } else {
@@ -1426,9 +2803,45 @@ contract ArbiterRegistryFacet {
         return ArbiterRegistryStorage.data().refundableBounty[who];
     }
 
-    function setDAOAddress(address dao) external onlyOwner {
+    /// До активации ДАО назначает владелец (называет преемника заранее —
+    /// activateDAO() требует, чтобы daoAddress уже был ненулевым). После
+    /// активации меняет только уже действующий daoAddress сам себя
+    /// (самомиграция) — НЕ через `onlyOwner`: тот пустил бы владельца назад
+    /// в дверь, которую он якобы навсегда закрыл (найдено ревью, C-3, круг
+    /// правок 1, 15 августа 2026). Без этого гейта owner мог бы вернуть себе
+    /// removeArbiterForCause одной лишней транзакцией:
+    /// activateDAO() → setDAOAddress(свой_адрес) → снос по ветке
+    /// msg.sender == daoAddress.
+    ///
+    /// ⚠️ Храповик защёлкивается только когда `d.daoAddress != address(0)` —
+    /// это НЕ то же самое, что просто `isDaoActive()` (найдено ревью, круг
+    /// правок 2, 15 августа 2026, стык C-3×M-9). isDaoActive() включается САМА
+    /// по заработанному порогу (uniqueActiveUsers >= DAO_THRESHOLD), в обход
+    /// activateDAO() — а значит и в обход его защиты DaoAddressNotSet, которая
+    /// стоит ТОЛЬКО внутри activateDAO(). Если ДАО включилась заработанным
+    /// путём при ещё нулевом daoAddress, а храповик слушал бы один
+    /// isDaoActive(), «звать может только текущий daoAddress» превращалось бы
+    /// в «звать может только address(0)» — то есть никто и никогда: обе
+    /// двери (посадка через SeatingHandedOver и снос через
+    /// removeArbiterForCause, обе завязанные на daoAddress) осиротели бы
+    /// необратимо, единственный выход — замена фасета diamondCut'ом.
+    /// Условие `&& d.daoAddress != address(0)` держит владельца в игре ровно
+    /// до тех пор, пока преемника физически некому передать право.
+    ///
+    /// Правка НЕ в isDaoActive() (соблазн, но нельзя): его же читает
+    /// src/Treasury.sol для выбора пропорции распределения дохода, а казна
+    /// уже развёрнута в цепи и неизменяема — сдвиг момента «ДАО наступила»
+    /// сдвинул бы деньги. Отдельное решение владельца, не побочный эффект
+    /// этой правки.
+    function setDAOAddress(address dao) external {
         if (dao == address(0)) revert ArbiterZeroAddress();
-        ArbiterRegistryStorage.data().daoAddress = dao;
+        ArbiterRegistryStorage.Data storage d = ArbiterRegistryStorage.data();
+        if (isDaoActive() && d.daoAddress != address(0)) {
+            if (msg.sender != d.daoAddress) revert NotCurrentDaoAddress();
+        } else {
+            if (msg.sender != OwnershipLib.contractOwner()) revert NotOwner();
+        }
+        d.daoAddress = dao;
         emit DAOAddressSet(dao);
     }
 
@@ -1524,6 +2937,43 @@ contract ArbiterRegistryFacet {
     }
 
     // -------- VIEWS --------
+    //
+    // ⚠️ ГРАНИЦА С ArbiterAccountabilityFacet (задача 4.5, 16 августа 2026).
+    // Фасет упёрся в потолок EIP-170: 24 516 байт из 24 576, свободно 60. Любая
+    // следующая правка реестра физически не влезала бы. Четырнадцать ЧТЕНИЙ
+    // уехали в соседний фасет, который держит тот же ArbiterRegistryStorage и
+    // тот же POSITION, — снаружи даймонда перенос не виден вовсе: тот же адрес,
+    // тот же селектор, тот же ответ, меняется только строка в таблице маршрутов.
+    //
+    // Граница проведена по смыслу, а не по размеру:
+    //   уехало  — чтения про ПОВЕДЕНИЕ арбитра, его ПОЛОЖЕНИЕ и ДОКАЗАТЕЛЬСТВА
+    //             (счётчики ошибок и чистых вердиктов, залог, споры в руках,
+    //             провенанс посадки, награда, послужной список сделок, ключи
+    //             чата, якорь предъявления, запись о молчании, отпечатки);
+    //   осталось — реестр как ХОЗЯИН СОСТАВА, СПОРОВ, ВЕРДИКТОВ и АПЕЛЛЯЦИЙ
+    //             (getArbiters, isRegisteredArbiter, getChiefArbiter,
+    //             getDisputeClaimer, getClaimCommitment, getPendingVerdict,
+    //             hasSubmittedVerdict, getAppealVotes, hasVotedOnAppeal, деньги
+    //             спора и банка).
+    //
+    // ⚠️ ЧЕТЫРЕ ГЕТТЕРА КОНСТАНТ НЕ УЕХАЛИ, И ЭТО НЕ НЕДОСМОТР.
+    // getMinXPToRegister, getNoResponseFloor, getMaxArbiterMistakes,
+    // getMaxClaimsPerArbiter читают ПРИВАТНЫЕ КОНСТАНТЫ ЭТОГО ФАСЕТА, которые
+    // применяет остающийся здесь код (applyAsArbiter :851, recordNoResponse
+    // :1327, _recordArbiterMistake, claimDispute). Переезд геттера потребовал бы
+    // ВТОРОГО ОБЪЯВЛЕНИЯ числа в соседнем файле — и тогда наружу отвечало бы
+    // зеркало, а боевое правило применялось бы по оригиналу. Ровно тот класс,
+    // что этот план ловит весь: getMaxArbiterMistakes, переехав, превратил бы
+    // test_MistakeThresholdMatchesRegistry в сверку зеркала с самим собой.
+    // Понадобятся эти байты — константу переносят в ArbiterRegistryStorage
+    // ОДНИМ объявлением на оба фасета, как уже сделано с SUSPENSION_WINDOW; это
+    // отдельная работа, здесь не сделана.
+    //
+    // Три чтения не уехали по другой причине — их зовут ИЗНУТРИ: isDaoActive
+    // (модификатор onlyOwnerOrChief), getArbiterFloor (из quoteDisputeTopUp),
+    // quoteDisputeTopUp (из fundDispute). Плюс getChiefBloc — она зовёт
+    // приватную _chiefBloc, которую держит addArbiter, и переезд стоил бы
+    // второй копии тела.
 
     function isDaoActive() public view returns (bool) {
         if (ArbiterRegistryStorage.data().daoActiveManual) return true;
@@ -1533,30 +2983,22 @@ contract ArbiterRegistryFacet {
     function getMinXPToRegister() external pure returns (uint256) { return MIN_XP_TO_REGISTER; }
     function getDaoThreshold()    external pure returns (uint256) { return DAO_THRESHOLD; }
 
+    /// MAX_ARBITER_MISTAKES прочитанное с этой стороны. Совпадает с
+    /// ArbiterAccountabilityFacet.MISTAKE_THRESHOLD и обязано совпадать — одно
+    /// и то же правило серии судейских ошибок, читаемое двумя фасетами.
+    /// Сверяется test_MistakeThresholdMatchesRegistry.
+    function getMaxArbiterMistakes() external pure returns (uint256) { return MAX_ARBITER_MISTAKES; }
+
     function getChiefArbiter()  external view returns (address) { return ArbiterRegistryStorage.data().chiefArbiter; }
     function isRegisteredArbiter(address addr) external view returns (bool) { return ArbiterRegistryStorage.data().isArbiter[addr]; }
     function getArbiters()      external view returns (address[] memory) { return ArbiterRegistryStorage.data().arbiterList; }
     function getDisputeClaimer(address agreement) external view returns (address) { return ArbiterRegistryStorage.data().disputeClaims[agreement]; }
 
-    /// @notice Когда ТЕКУЩИЙ клеймер взял этот спор, в секундах блока. Если он
-    /// брал его несколько раз — момент последнего взятия, от него и считается
-    /// пол. 0 — спор не взят (в том числе отпущен) или взят до разреза 4в-2.
-    ///
-    /// Подпись односоставная намеренно: спрашивающему нужен якорь того, кто
-    /// судит спор сейчас, а не история по каждому арбитру. История есть, она в
-    /// событиях DisputeClaimed/DisputeReleased.
-    function getDisputeClaimedAt(address agreement) external view returns (uint256) {
-        ArbiterRegistryStorage.Data storage d = ArbiterRegistryStorage.data();
-        return d.disputeClaimedAtBy[agreement][d.disputeClaims[agreement]];
-    }
-
-    /// @notice Когда текущий клеймер записал «просил, ответа нет». 0 — не записывал.
-    /// Ноль здесь же означает «спор ничей»: запись принадлежит арбитру, а не
-    /// сделке, и вместе с клеймом уходит из виду, не пропадая из цепи.
-    function getNoResponseAt(address agreement) external view returns (uint256) {
-        ArbiterRegistryStorage.Data storage d = ArbiterRegistryStorage.data();
-        return d.disputeNoResponseAtBy[agreement][d.disputeClaims[agreement]];
-    }
+    // getDisputeClaimedAt / getNoResponseAt переехали в ArbiterAccountabilityFacet
+    // (задача 4.5, 16 августа 2026) — доказательства поведения арбитра. Здесь
+    // остаётся getNoResponseFloor: он читает приватную константу NO_RESPONSE_FLOOR,
+    // которую применяет recordNoResponse (:1327) в этом же файле, и переезд
+    // потребовал бы второго объявления числа. Разбор — в шапке VIEWS ниже.
 
     /// @notice Сколько должно пройти от взятия спора до записи о молчании.
     /// Фронт обязан спрашивать здесь, а не держать своё число (замысел 5.2).
@@ -1564,90 +3006,18 @@ contract ArbiterRegistryFacet {
         return NO_RESPONSE_FLOOR;
     }
 
-    /// @notice Все отпечатки предъявлений по сделке, в порядке появления.
-    /// Порядок и есть содержание ответа: спор решается тем, что легло раньше.
-    ///
-    /// Удобен и честен на обычных числах, но список целиком при большом их
-    /// количестве упирается в потолок газа на eth_call — и ломается чтение У
-    /// АРБИТРА и у второй стороны, а не у того, кто список раздул. Кому нужна
-    /// гарантия — getPresentationDigestsPage ниже. Кто именно положил каждый
-    /// отпечаток, здесь не видно: это в событии PresentationDigestRecorded, и
-    /// туда же ходят за номером блока.
-    function getPresentationDigests(address agreement) external view returns (bytes32[] memory) {
-        return ArbiterRegistryStorage.data().presentationDigests[agreement];
-    }
+    // getPresentationDigests / getPresentationDigestsPage /
+    // getPresentationDigestCount / getArbiterChatKeys / getArbiterDeals переехали
+    // в ArbiterAccountabilityFacet (задача 4.5, 16 августа 2026). Записи в этом
+    // файле (recordPresentationDigest, setArbiterChatKey) остались — уехали
+    // только чтения.
 
-    /// @notice Отпечатки по сделке окном: с `offset`, не больше `limit` штук.
-    /// @dev Полный getPresentationDigests честен на малых числах, но при большом
-    /// списке упирается в потолок eth_call — и ломается чтение У АРБИТРА, а не у
-    /// того, кто список раздул. Окно даёт читателю выход без апгрейда контракта.
-    ///
-    /// ⚠️ На честном запросе НЕ ревертит никогда: читатель не обязан заранее
-    /// знать длину, а узнать её он может только вторым вызовом — то есть в
-    /// другом блоке, когда длина уже другая. Реверт на «offset за концом»
-    /// означал бы, что листающий обязан выиграть гонку с пишущим. Поэтому:
-    ///   - `offset` за концом списка (и пустой список)  → пустой массив;
-    ///   - `limit == 0`                                  → пустой массив;
-    ///   - `offset + limit` больше длины                 → хвост до конца.
-    /// Пустой ответ читается однозначно: «здесь больше ничего нет», и это
-    /// условие остановки для листающего. Отличить его от «мимо» можно
-    /// getPresentationDigestCount, но обычно незачем.
-    ///
-    /// Сумма `offset + limit` не считается нигде намеренно, и это не
-    /// придирка: на checked-арифметике 0.8 наивное `offset + limit` при
-    /// `limit` вроде type(uint256).max ПАНИКУЕТ (0x11), то есть ровно ломает
-    /// обещание «на честном запросе не ревертит» — а «дай всё с этого места»
-    /// запрос честный. Замерено мутацией: наивная сумма → красный тест
-    /// test_Page_HugeLimit_IsUpToTheEnd_NotARevert с panic 0x11.
-    function getPresentationDigestsPage(address agreement, uint256 offset, uint256 limit)
-        external
-        view
-        returns (bytes32[] memory)
-    {
-        bytes32[] storage all = ArbiterRegistryStorage.data().presentationDigests[agreement];
-        uint256 len = all.length;
-        if (offset >= len) return new bytes32[](0);
-
-        uint256 available = len - offset;
-        uint256 n = limit < available ? limit : available;
-
-        bytes32[] memory page = new bytes32[](n);
-        for (uint256 i = 0; i < n; i++) {
-            page[i] = all[offset + i];
-        }
-        return page;
-    }
-
-    /// @notice Сколько отпечатков лежит по сделке. Отдельно от списка — чтобы
-    /// экран, которому нужно только «есть или нет», не тащил весь массив.
-    function getPresentationDigestCount(address agreement) external view returns (uint256) {
-        return ArbiterRegistryStorage.data().presentationDigests[agreement].length;
-    }
-
-    /// Открытые половины ключей чата арбитра. Нули означают «ключей нет» —
-    /// для 4в это признак «предъявлять некому», и различать «нет записи» от
-    /// «записан нуль» незачем: нулевой ключ запрещён при записи.
-    ///
-    /// ⚠️ Обратное неверно: ненулевой ключ НЕ означает «действующий арбитр».
-    /// Ключ не стирается при потере статуса (removeArbiter/resignAsArbiter/
-    /// демоушен) — см. предупреждение в setArbiterChatKey. Статус читается
-    /// отдельно, через isRegisteredArbiter, а не выводится из наличия ключа.
-    function getArbiterChatKeys(address arbiter)
-        external
-        view
-        returns (bytes32 boxKey, bytes32 signKey)
-    {
-        ArbiterRegistryStorage.Data storage d = ArbiterRegistryStorage.data();
-        return (d.arbiterBoxKey[arbiter], d.arbiterSignKey[arbiter]);
-    }
-    function getArbiterDeals(address arbiter) external view returns (address[] memory) { return ArbiterRegistryStorage.data().arbiterDeals[arbiter]; }
     function getClaimCommitment(bytes32 c) external view returns (uint256) { return ArbiterRegistryStorage.data().claimCommitments[c]; }
 
     function getPendingVerdict(address agreement) external view returns (ArbiterRegistryStorage.PendingVerdict memory) {
         return ArbiterRegistryStorage.data().pendingVerdicts[agreement];
     }
 
-    function getArbiterReward(address arbiter) external view returns (uint256) { return ArbiterRegistryStorage.data().arbiterRewards[arbiter]; }
     function getVaultBalance()  external view returns (uint256) { return ArbiterRegistryStorage.data().vaultBalance; }
     /// @notice Путь снят 31 июля 2026 (см. setRewardPerDispute) — поле, которое
     /// эта функция читает, больше никто не пишет, значение всегда 0.
@@ -1660,7 +3030,6 @@ contract ArbiterRegistryFacet {
         uint256 f = ArbiterRegistryStorage.data().arbiterFloor;
         return f == 0 ? DEFAULT_ARBITER_FLOOR : f;
     }
-    function getArbiterMistakeStreak(address addr) external view returns (uint256) { return ArbiterRegistryStorage.data().arbiterMistakeStreak[addr]; }
     function hasSubmittedVerdict(address agreement) external view returns (bool) {
         return ArbiterRegistryStorage.data().pendingVerdicts[agreement].submittedAt != 0;
     }
@@ -1672,9 +3041,6 @@ contract ArbiterRegistryFacet {
     function hasVotedOnAppeal(address agreement, address arbiterAddr) external view returns (bool) {
         return ArbiterRegistryStorage.data().hasVotedAppeal[agreement][arbiterAddr];
     }
-    function getArbiterBond(address addr) external view returns (uint256) { return ArbiterRegistryStorage.data().arbiterBond[addr]; }
-    function getOpenClaimCount(address addr) external view returns (uint256) { return ArbiterRegistryStorage.data().openClaimCount[addr]; }
-
     /// @notice Сколько надо доплатить, чтобы арбитр суммарно получил порог.
     /// Возвращает 0, если котёл и так достаточно велик — тогда кнопку доплаты
     /// показывать не надо вовсе.
@@ -1702,4 +3068,40 @@ contract ArbiterRegistryFacet {
 
         return arbiterGets >= floor_ ? 0 : floor_ - arbiterGets;
     }
+
+    // getSeatedBy / getSeatedCountBy переехали в ArbiterAccountabilityFacet
+    // (задача 4.5, 16 августа 2026) — провенанс посадки. Запись провенанса
+    // (addArbiter, clearSeat) осталась здесь; уехало только чтение. Скрипт
+    // разреза читает их ЧЕРЕЗ ДАЙМОНД, поэтому миграция провенанса не
+    // затронута — адрес один и тот же.
+
+    /// @notice Текущий блок директора: сколько голосов на апелляции достались
+    /// бы ему, если бы все посаженные им арбитры и он сам (если он тоже
+    /// арбитр) проголосовали заодно.
+    ///
+    /// Охраняемое свойство — «директор не РЕШАЕТ апелляцию», не «не набирает
+    /// кворум» (п. 67, 16 августа 2026). resolveAppeal подводит итог простым
+    /// большинством поданных голосов, как только их набралось APPEAL_MIN_VOTES:
+    /// при трёх поданных решают два. addArbiter не даёт этому числу дорасти до
+    /// решающего большинства для посадок директора, то есть держит его на
+    /// единице.
+    ///
+    /// ⚠️ Чего это НЕ даёт и не обещает: при большом корпусе кворум остаётся
+    /// АБСОЛЮТНОЙ тройкой, и любые трое сговорившихся решают всё — потолок
+    /// считает только людей директора и таких троих не касается. Привязка
+    /// кворума к размеру корпуса — отдельная работа, здесь не сделана.
+    function getChiefBloc() external view returns (uint256) {
+        return _chiefBloc(ArbiterRegistryStorage.data());
+    }
+
+    /// @notice Потолок споров, которые арбитр может держать одновременно.
+    /// Единственное место, где число объявлено — фронт обязан читать через
+    /// эту функцию, а не держать копию.
+    function getMaxClaimsPerArbiter() external pure returns (uint256) {
+        return MAX_CLAIMS_PER_ARBITER;
+    }
+
+    // getCleanVerdicts переехал в ArbiterAccountabilityFacet (задача 4.5,
+    // 16 августа 2026) — счётчик чистых вердиктов. Пишет его finalizeVerdict
+    // в этом файле, читают отсюда только снаружи.
 }

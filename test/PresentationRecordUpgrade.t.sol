@@ -3,7 +3,10 @@ pragma solidity ^0.8.20;
 
 import "forge-std/Test.sol";
 import {ArbiterRegistryFacet} from "../src/facets/ArbiterRegistryFacet.sol";
+import {LegacyPreSplitArbiterFacet, ArbiterTwoFacetBench} from "./ArbiterTwoFacetBench.sol";
+import {ArbiterAccountabilityFacet} from "../src/facets/ArbiterAccountabilityFacet.sol";
 import {UpgradePresentationRecord} from "../script/UpgradePresentationRecord.s.sol";
+import {ArbiterChainCensus} from "./ArbiterChainCensus.sol";
 import "../src/DiamondProxy.sol";
 
 /// Двойник, отвечающий на getNoResponseFloor() НЕ тем числом. Нужен ровно для
@@ -16,7 +19,7 @@ contract WrongFloorStub {
     }
 }
 
-contract PresentationRecordUpgradeTest is Test {
+contract PresentationRecordUpgradeTest is Test, ArbiterTwoFacetBench, ArbiterChainCensus {
     UpgradePresentationRecord internal upgrade;
 
     function setUp() public {
@@ -36,48 +39,28 @@ contract PresentationRecordUpgradeTest is Test {
     // Состав cut'а против скомпилированного ABI
     // ════════════════════════════════════════════════════════════════════
 
-    /// Полнота: объединение replaceSelectors() и addSelectors() совпадает (как
-    /// множество, без дубликатов) со всеми селекторами скомпилированного
-    /// ArbiterRegistryFacet.
+    /// ── СНЯТ 15 августа 2026, задача 1 плана arbiter-accountability ────────
     ///
-    /// Что исчезнет из поведения, если снять: забытый в Replace селектор молча
-    /// останется висеть на прежнем адресе фасета — диамонд после апгрейда
-    /// наполовину поедет старым кодом, и никто этого не заметит, пока не
-    /// наткнётся на конкретный вызов. Забытый в Add — новая функция просто не
-    /// смонтируется, и фронт получит «Diamond: Function does not exist».
-    ///
-    /// Этот тест перенял живую роль снятого test_ReplaceAndAddCoverWholeFacet
-    /// из test/ArbiterChatKeyUpgrade.t.sol (см. комментарий там).
-    function test_ReplaceAndAddCoverWholeFacet() public view {
-        bytes4[] memory replaceSels = upgrade.replaceSelectors();
-        bytes4[] memory addSels = upgrade.addSelectors();
-        bytes4[] memory expected = _abiSelectors("ArbiterRegistryFacet");
-
-        bytes4[] memory actual = new bytes4[](replaceSels.length + addSels.length);
-        for (uint256 i = 0; i < replaceSels.length; i++) actual[i] = replaceSels[i];
-        for (uint256 i = 0; i < addSels.length; i++) actual[replaceSels.length + i] = addSels[i];
-
-        assertEq(
-            actual.length, expected.length,
-            unicode"список скрипта разошёлся с ABI фасета"
-        );
-
-        for (uint256 i = 0; i < actual.length; i++) {
-            bool found = false;
-            for (uint256 j = 0; j < expected.length; j++) {
-                if (actual[i] == expected[j]) { found = true; break; }
-            }
-            assertTrue(found, unicode"Replace+Add: монтируется селектор, которого у фасета нет (фантом)");
-        }
-
-        for (uint256 i = 0; i < expected.length; i++) {
-            bool found = false;
-            for (uint256 j = 0; j < actual.length; j++) {
-                if (expected[i] == actual[j]) { found = true; break; }
-            }
-            assertTrue(found, unicode"Replace+Add: у фасета есть селектор, которого cut не монтирует (недомонтаж)");
-        }
-    }
+    /// Здесь стоял test_ReplaceAndAddCoverWholeFacet: он сверял объединение
+    /// replaceSelectors()+addSelectors() ЭТОГО скрипта со свежим ABI
+    /// ArbiterRegistryFacet. Разрез, который описывает этот файл («цепь как
+    /// свидетель предъявления»), исполнен на Base Sepolia 15 августа и сверен
+    /// с цепью (CLAUDE.md) — больше не повторится, а его списки селекторов
+    /// навсегда описывают фасет ТОГО дня (64 метода: 56 Replace + 8 Add).
+    /// Задача 1 плана arbiter-accountability добавила в фасет ещё два —
+    /// getSeatedBy/getSeatedCountBy, 64 → 66 — и этот тест красил в красный,
+    /// не сообщая ничего ни о чём: сверять исполненный разрез с сегодняшним
+    /// кодом бессмысленно (тот же диагноз и то же лечение, что уже применены
+    /// здесь 14 августа для test/ArbiterChatKeyUpgrade.t.sol — см. комментарий
+    /// там). Живую роль (заметить недомонтированный или фантомный селектор ДО
+    /// broadcast) перенимает точно такой же тест против ещё не исполненного
+    /// разреза, который физически смонтирует getSeatedBy/getSeatedCountBy —
+    /// его пишет одна из следующих задач того же плана. Замок не ослаб: он
+    /// снова просто переехал на скрипт, которому ещё предстоит запуститься.
+    /// Остальные тесты этого файла живы и трогать их не за что: они проверяют
+    /// пред/пост-полётные помощники и целостность хранилища, то есть логику,
+    /// которая от роста фасета не зависит (после починки _oldFacetSelectors,
+    /// см. её комментарий выше — 15 августа тот же диагноз задел и стенд).
 
     /// Восемь Add-селекторов — именно те восемь, и названы по ПОДПИСИ, а не по
     /// `.selector` из того же фасета. Сверка `.selector` с `.selector` была бы
@@ -201,30 +184,212 @@ contract PresentationRecordUpgradeTest is Test {
         return new DiamondProxy(address(this), cuts, address(0), "");
     }
 
-    /// Селекторы «старого» (пред-разрезного) фасета — из скомпилированного ABI
-    /// МИНУС восемь новых, а НЕ из upgrade.replaceSelectors().
+    /// Селекторы «старого» (пред-разрезного) фасета — БЫЛИ из скомпилированного
+    /// ABI МИНУС восемь новых; теперь напрямую upgrade.replaceSelectors().
     ///
-    /// Разница принципиальная, и найдена замером. Пока стенд монтировал ровно
-    /// то, что скрипт собирается заменить, недомонтаж был для него невидим:
-    /// выбрось селектор из replaceSelectors() — он же исчезнет и из стенда,
-    /// старый фасет всё равно опустеет, и обе пост-проверки на живом даймонде
-    /// довольно кивнут. Замерено: 2 красных из 661 при таком стенде, обе — из
-    /// сверки списков. С независимым источником стенда пост-проверки начинают
-    /// ловить недомонтаж по ФАКТУ маршрутизации, а не по спискам.
+    /// ⚠️ ПЕРЕДЕЛАНО 15 августа 2026, задача 1 плана arbiter-accountability.
+    /// Разрез «цепь как свидетель предъявления», который описывает этот
+    /// скрипт, исполнен на Base Sepolia в тот же день и сверен с цепью
+    /// (CLAUDE.md) — а значит риск, ради которого стенд когда-то строился
+    /// НЕЗАВИСИМО от replaceSelectors() (поймать забытый в списке скрипта
+    /// селектор ДО broadcast), закрыт: список подтверждён живой цепью,
+    /// backfilling смысла больше не имеет. Тот же формула-минус-addSelectors
+    /// на живом (растущем) ABI фасета стала другим риском вместо старого:
+    /// Задача 1 того же плана дописала getSeatedBy/getSeatedCountBy в фасет
+    /// (64 → 66 селекторов), и «ABI минус восемь» начала молча включать эти
+    /// две ЕЩЁ НЕ существовавшие на 15 августа функции в состав «старого»
+    /// фасета — 7 красных из-за роста, который к этому разрезу отношения не
+    /// имеет (см. test_ReplaceAndAddCoverWholeFacet ниже, ретировка).
+    /// upgrade.removeSelectors() у этого скрипта нет (Replace 56 / Add 8, без
+    /// удалений — CLAUDE.md).
+    ///
+    /// ⚠️ ОГОВОРКА «БЕЗ НЕЗАВИСИМОГО ОРАКУЛА» СНЯТА (задача 4.6, 16 августа
+    /// 2026). Здесь стояло `return upgrade.replaceSelectors();` — стенд выводил
+    /// раскладку цепи из того самого списка, который проверяет, и оба его
+    /// пред-полёта (`checkReplaceGroup`, `checkAddGroupUnmounted`) сходились
+    /// сами с собой. Оракул нашёлся и для исполненного разреза: этот cut
+    /// закончился ровно тем, что лежит в цепи СЕГОДНЯ, — перепись 15 августа
+    /// его и застала. Значит раскладка ДО него отматывается ровно:
+    ///   перепись (64) − то, что он добавил (8) = 56.
+    ///
+    /// Отмотка не берёт из скрипта ничего, кроме `addSelectors()`, а те восемь
+    /// запёрты ЛИТЕРАЛЬНЫМИ ПОДПИСЯМИ соседним тестом
+    /// (test_AddSelectorsAreTheEightNewSignatures) — то есть текстом, а не
+    /// `.selector` из того же фасета. `replaceSelectors()`, ради которого стенд
+    /// и строится, в вычислении не участвует вовсе.
+    ///
+    /// ⚠️ ОТМОТКА ЗАМЕНЕНА НАБЛЮДЕНИЕМ (уборка 7а, п. 4, Ruling 32). Здесь
+    /// стояло `_rewindCut(_chainCensus(), upgrade.addSelectors(), ...)` — то
+    /// есть раскладка ВЫЧИСЛЯЛАСЬ из переписи 16 августа. Вычисление верное, но
+    /// оно живёт ровно до первой ошибки в списках, из которых делается. Теперь
+    /// раскладка ЧИТАЕТСЯ снимком цепи в блоке 45476892 (14 августа): 56
+    /// селекторов на 0xEDE8B010…, 169 маршрутов всего.
+    /// Отмотка не выброшена — она сверяется со снимком в
+    /// test_RewindOfTheCensusMatchesTheChainSnapshot ниже. У одного числа стало
+    /// два независимых источника вместо одного.
     function _oldFacetSelectors() internal view returns (bytes4[] memory out) {
-        bytes4[] memory all = _abiSelectors("ArbiterRegistryFacet");
-        bytes4[] memory addSels = upgrade.addSelectors();
+        out = _chainCensusAfter10Aug(upgrade.scriptPath());
+        require(out.length == 56, unicode"раскладка до разреза 15 августа обязана быть 56 селекторов");
+    }
 
-        out = new bytes4[](all.length - addSels.length);
-        uint256 k;
-        for (uint256 i = 0; i < all.length; i++) {
-            bool isNew = false;
-            for (uint256 j = 0; j < addSels.length; j++) {
-                if (all[i] == addSels[j]) { isNew = true; break; }
-            }
-            if (!isNew) out[k++] = all[i];
+    /// Наблюдение против вычисления: снимок цепи 14 августа обязан совпасть с
+    /// отмоткой переписи 16 августа на один шаг назад.
+    ///
+    /// Что исчезнет из поведения, если снять: два источника снова станут одним.
+    /// Пока они сверяются, ошибка в `addSelectors()` (из которого делается
+    /// отмотка) краснеет ЗДЕСЬ, а не проявляется отвергнутой боевой
+    /// транзакцией; а порча снимка краснеет против отмотки.
+    function test_RewindOfTheCensusMatchesTheChainSnapshot() public view {
+        _assertSameSelectorSet(
+            _chainCensusAfter10Aug(upgrade.scriptPath()),
+            _rewindCut(
+                _censusFromFile(CENSUS_PATH, CENSUS_FACET, 64, "script/UpgradeArbiterAccountability.s.sol"),
+                upgrade.addSelectors(),
+                new bytes4[](0)
+            ),
+            unicode"снимок цепи 14 августа",
+            unicode"отмотка переписи 16 августа"
+        );
+    }
+
+    /// Список из `ArbiterChainCensus._presentationCutAddSelectors()` — вторая,
+    /// текстовая копия восьми Add-селекторов этого разреза. Она нужна стенду
+    /// разреза 10 августа, чтобы отмотать перепись на два шага, не разворачивая
+    /// ради этого второй скрипт (разбор и замер — в шапке той функции). Копий
+    /// две, значит они обязаны сверяться друг с другом, иначе разъедутся молча.
+    ///
+    /// Что исчезнет из поведения, если снять: подпись, изменённая в одном месте
+    /// и забытая в другом, увела бы стенд разреза 10 августа на раскладку,
+    /// которой в цепи никогда не было, — и его пред-полёт начал бы «проверять»
+    /// выдуманный мир, оставаясь зелёным.
+    function test_CensusRewindListMatchesTheCutsOwnAdd() public view {
+        bytes4[] memory literal = _presentationCutAddSelectors();
+        bytes4[] memory declared = upgrade.addSelectors();
+
+        assertEq(literal.length, declared.length, unicode"две копии списка Add разошлись по числу");
+        for (uint256 i = 0; i < literal.length; i++) {
+            assertTrue(_censusContains(declared, literal[i]), unicode"подписи из отмотки нет в Add самого разреза");
         }
-        require(k == out.length, unicode"стенд: список Add не подмножество ABI фасета");
+        for (uint256 i = 0; i < declared.length; i++) {
+            assertTrue(_censusContains(literal, declared[i]), unicode"Add самого разреза несёт селектор, которого нет в отмотке");
+        }
+    }
+
+    /// Двойник `LegacyPreSplitArbiterFacet` обязан РЕАЛЬНО отвечать на всё, что
+    /// монтируют на него стенды исторических разрезов. Сверяется он не с нашими
+    /// списками, а с переписью цепи: КАЖДЫЙ её селектор обязан быть в ABI
+    /// двойника — все 64, включая голую removeArbiter.
+    ///
+    /// ⚠️ ПЕРЕПИСАН УБОРКОЙ 7а (п. 5, 16 августа 2026), и утверждений стало
+    /// ДВА вместо одного. Прежняя редакция требовала от двойника 63 селектора
+    /// и ОТСУТСТВИЯ голой removeArbiter «потому что задача 6 её удалила». Это
+    /// был замок, наведённый не на тот предмет: удаление — свойство
+    /// СЕГОДНЯШНЕГО фасета, а проверялось оно на двойнике, и проходило лишь
+    /// потому, что двойник наследовал сегодняшний фасет. Наследование как раз и
+    /// чинили: двойник заявлен раскладкой ЦЕПИ, а цепь removeArbiter
+    /// маршрутизирует и — фасетом от 15 августа — реально исполняет.
+    ///
+    /// Поэтому теперь проверяются два РАЗНЫХ предмета:
+    ///   1. двойник (=цепь) реализует все 64 селектора переписи;
+    ///   2. сегодняшний ArbiterRegistryFacet голой removeArbiter НЕ реализует —
+    ///      ровно то, что установила задача 6, и ровно то, ради чего разрез
+    ///      уносит этот селектор группой Remove.
+    ///
+    /// Что исчезнет из поведения, если снять первое: двойник, потерявший одно
+    /// чтение, смонтируется как ни в чём не бывало (diamondCut требует от
+    /// адреса только наличия кода), а пред-полёт исторического разреза начнёт
+    /// ревертить `EvmError: Revert` без единого слова о причине — замерено
+    /// ревью задачи 4.5: снятая `getOpenClaimCount` дала 11 таких красных.
+    ///
+    /// Что исчезнет, если снять второе: голая кнопка, воскресшая в боевом
+    /// фасете, пережила бы свой Remove — селектор ушёл бы из маршрутов, а код
+    /// остался бы в репозитории и вернулся следующим же разрезом.
+    function test_LegacyTwinAnswersEverythingTheChainRoutes() public view {
+        // Двойник живёт в чужом файле, поэтому путь артефакта не выводится из
+        // имени контракта, как в _abiSelectors.
+        string memory json = vm.readFile("out/LegacyPreSplitArbiterFacet.sol/LegacyPreSplitArbiterFacet.json");
+        string[] memory sigs = vm.parseJsonKeys(json, ".methodIdentifiers");
+        bytes4[] memory twin = new bytes4[](sigs.length);
+        for (uint256 i; i < sigs.length; i++) twin[i] = bytes4(keccak256(bytes(sigs[i])));
+
+        bytes4[] memory census = _censusFromFile(
+            CENSUS_PATH, CENSUS_FACET, 64, "script/UpgradeArbiterAccountability.s.sol"
+        );
+        bytes4 naked = bytes4(keccak256("removeArbiter(address)"));
+
+        uint256 checked;
+        for (uint256 i = 0; i < census.length; i++) {
+            assertTrue(
+                _censusContains(twin, census[i]),
+                unicode"двойник не реализует селектор, который цепь маршрутизирует"
+            );
+            checked++;
+        }
+        assertEq(checked, 64, unicode"перепись цепи обязана быть 64 селектора");
+        assertTrue(
+            _censusContains(twin, naked),
+            unicode"двойник обязан нести голую removeArbiter: цепь её маршрутизирует, "
+            unicode"и фасет от 15 августа на неё отвечает"
+        );
+
+        // Второй предмет: СЕГОДНЯШНИЙ фасет её уже не реализует.
+        assertFalse(
+            _censusContains(_abiSelectors("ArbiterRegistryFacet"), naked),
+            unicode"голая removeArbiter воскресла в боевом фасете — задача 6 её удалила"
+        );
+    }
+
+    /// ЗАМОК НА ЗАМОРОЖЕННОСТЬ СЛЕПКА (круг правок 1, Ф-4).
+    ///
+    /// `test/legacy/LegacyPreSplitArbiterFacet.sol` — дословная копия
+    /// `src/facets/ArbiterRegistryFacet.sol` с коммита `b110fae1` (=main), из
+    /// которого собран фасет, стоящий на Base Sepolia с 15 августа. Верность
+    /// копии доказана диффом один раз, руками. Дальше её держала только просьба
+    /// в шапке файла: правка ТЕЛА двойника (не селекторов) давала НОЛЬ красных,
+    /// пока 64 селектора на месте. Слепок, который можно молча испортить, —
+    /// не слепок.
+    ///
+    /// Пиннится хеш ИСХОДНИКА, а не байткода: байткод поехал бы от смены версии
+    /// solc или `optimizer_runs`, то есть краснел бы на правках, к двойнику
+    /// отношения не имеющих. Замораживаем текст — он и заморожен.
+    ///
+    /// Хеш берётся не нами, а КОМПИЛЯТОРОМ: solc кладёт keccak256 каждого
+    /// исходника в `metadata.sources[…]` артефакта. Своя реализация чтения и
+    /// хеширования была бы вторым источником того же числа — тем самым
+    /// зеркалом, которое этот план ловит четвёртым правилом.
+    ///
+    /// ⚠️ ЭТОТ ЗАМОК СТОРОЖИТ НЕИЗМЕННОСТЬ, А НЕ ВЕРНОСТЬ. Он говорит «файл тот
+    /// же, что был», и ничего не говорит о том, что он совпадает с `b110fae1`, —
+    /// это доказано отдельно и перепроверяется одной командой, без форджа:
+    ///
+    ///   git show b110fae1:src/facets/ArbiterRegistryFacet.sol \
+    ///     | sed -e 's#"../RegistryFacet.sol"#"../../src/RegistryFacet.sol"#' \
+    ///           -e 's/\bArbiterRegistryStorage\b/LegacyArbiterRegistryStorage/g' \
+    ///           -e 's/\bIUSDCFull\b/ILegacyUSDCFull/g' \
+    ///           -e 's/\bIAgreementStatus\b/ILegacyAgreementStatus/g' \
+    ///           -e 's/^contract ArbiterRegistryFacet {$/contract LegacyPreSplitArbiterFacet {/' \
+    ///     | diff - <(sed -n '/Ниже — исходный заголовок/,$p' \
+    ///                    test/legacy/LegacyPreSplitArbiterFacet.sol | tail -n +3)
+    ///
+    /// Что исчезнет из поведения, если снять: тело слепка снова можно будет
+    /// править молча, и стенды двух исполненных разрезов начнут воспроизводить
+    /// не ту раскладку, которая лежала в цепи, — оставаясь зелёными.
+    ///
+    /// Если правка слепка ОСОЗНАННАЯ (например, заводится второй слепок и этот
+    /// переименован) — обновите литерал ниже вместе с ней. Ровно это и требуется:
+    /// не запрет, а осознанность.
+    function test_LegacyTwinSourceIsFrozen() public view {
+        string memory json = vm.readFile("out/LegacyPreSplitArbiterFacet.sol/LegacyPreSplitArbiterFacet.json");
+        bytes32 actual = vm.parseJsonBytes32(
+            json,
+            ".metadata.sources.['test/legacy/LegacyPreSplitArbiterFacet.sol'].keccak256"
+        );
+        assertEq(
+            actual,
+            bytes32(0x25c2c7fb28c64d4511ee63868223dc77708261b17d771a60d98e80bdbb2c80a0),
+            unicode"слепок выкаченного фасета изменился — он обязан быть неизменным; "
+            unicode"если правка осознанная, обновите литерал и перечитайте шапку файла"
+        );
     }
 
     /// Монтирует «старую» (пред-разрезную) раскладку: 56 селекторов на ОДНОМ
@@ -232,7 +397,14 @@ contract PresentationRecordUpgradeTest is Test {
     /// (169 селекторов всего, из них 56 арбитражных). Восемь новых НЕ
     /// монтируются: их и приносит этот разрез.
     function _mountOldFacet(DiamondProxy diamond) internal returns (address oldFacetAddr) {
-        ArbiterRegistryFacet oldFacet = new ArbiterRegistryFacet();
+        // ⚠️ Двойник «фасет до задачи 4.5» (16 августа 2026), а не боевой
+        // ArbiterRegistryFacet: этот стенд повторяет раскладку цепи НА МОМЕНТ
+        // того разреза — все селекторы на ОДНОМ адресе, — а с тех пор
+        // четырнадцать чтений уехали в ArbiterAccountabilityFacet, и ни один
+        // боевой контракт больше не реализует их все сразу. Голый фасет
+        // смонтировался бы (diamondCut требует лишь наличия кода), но
+        // пред-полёт зовёт getOpenClaimCount по-настоящему и ревертил бы.
+        LegacyPreSplitArbiterFacet oldFacet = new LegacyPreSplitArbiterFacet();
 
         IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](1);
         cuts[0] = IDiamondCut.FacetCut(address(oldFacet), IDiamondCut.FacetCutAction.Add, _oldFacetSelectors());
@@ -263,7 +435,7 @@ contract PresentationRecordUpgradeTest is Test {
     function _setOpenClaimCount(DiamondProxy diamond, address arbiter, uint256 n) internal {
         vm.store(address(diamond), keccak256(abi.encode(arbiter, uint256(ARB_POS) + 13)), bytes32(n));
         assertEq(
-            ArbiterRegistryFacet(address(diamond)).getOpenClaimCount(arbiter), n,
+            ArbiterAccountabilityFacet(address(diamond)).getOpenClaimCount(arbiter), n,
             unicode"смещение openClaimCount в ArbiterRegistryStorage.Data уехало"
         );
     }
@@ -576,7 +748,7 @@ contract PresentationRecordUpgradeTest is Test {
 
         // Сначала доказываем предпосылку: якорь правда не смонтирован до разреза.
         vm.expectRevert();
-        f.getDisputeClaimedAt(address(0xDEAD));
+        ArbiterAccountabilityFacet(address(diamond)).getDisputeClaimedAt(address(0xDEAD));
 
         // А предупреждение при этом отрабатывает без единого revert.
         address[] memory flagged = upgrade.findArbitersWithPreCutClaims(address(diamond));
@@ -605,7 +777,10 @@ contract PresentationRecordUpgradeTest is Test {
 
         uint256 before = upgrade.totalRoutedSelectors(address(diamond));
 
-        ArbiterRegistryFacet newFacet = new ArbiterRegistryFacet();
+        // Двойник «фасет ДО задачи 4.5» (16 августа 2026): этот разрез исполнен
+        // 15 августа, когда пять его чтений ещё жили в ArbiterRegistryFacet, а
+        // смоук ниже зовёт их по-настоящему. Воспроизводим тот день точно.
+        LegacyPreSplitArbiterFacet newFacet = new LegacyPreSplitArbiterFacet();
         IDiamondCut(address(diamond)).diamondCut(upgrade.buildCuts(address(newFacet)), address(0), "");
 
         upgrade.assertRouted(upgrade.replaceSelectors(), address(newFacet), address(diamond));
@@ -623,11 +798,11 @@ contract PresentationRecordUpgradeTest is Test {
         address probe = address(0xDEAD);
 
         assertEq(d.getNoResponseFloor(), 24 hours, unicode"пол записи о молчании через даймонд не сутки");
-        assertEq(d.getDisputeClaimedAt(probe), 0, unicode"якорь взятия по чистой сделке обязан быть нулём");
-        assertEq(d.getNoResponseAt(probe), 0, unicode"запись о молчании по чистой сделке обязана быть нулём");
-        assertEq(d.getPresentationDigestCount(probe), 0, unicode"счётчик отпечатков по чистой сделке обязан быть нулём");
-        assertEq(d.getPresentationDigests(probe).length, 0, unicode"лента отпечатков по чистой сделке обязана быть пустой");
-        assertEq(d.getPresentationDigestsPage(probe, 0, 10).length, 0, unicode"окно отпечатков по чистой сделке обязано быть пустым");
+        assertEq(ArbiterAccountabilityFacet(address(diamond)).getDisputeClaimedAt(probe), 0, unicode"якорь взятия по чистой сделке обязан быть нулём");
+        assertEq(ArbiterAccountabilityFacet(address(diamond)).getNoResponseAt(probe), 0, unicode"запись о молчании по чистой сделке обязана быть нулём");
+        assertEq(ArbiterAccountabilityFacet(address(diamond)).getPresentationDigestCount(probe), 0, unicode"счётчик отпечатков по чистой сделке обязан быть нулём");
+        assertEq(ArbiterAccountabilityFacet(address(diamond)).getPresentationDigests(probe).length, 0, unicode"лента отпечатков по чистой сделке обязана быть пустой");
+        assertEq(ArbiterAccountabilityFacet(address(diamond)).getPresentationDigestsPage(probe, 0, 10).length, 0, unicode"окно отпечатков по чистой сделке обязано быть пустым");
 
         // Две пишущие функции — тоже через даймонд. Отказ ожидаем и он же
         // доказательство, что маршрут исполняет НАШ код: пустой fallback
@@ -688,21 +863,31 @@ contract PresentationRecordUpgradeTest is Test {
         assertEq(afterCut.arbiterCount, before.arbiterCount, unicode"arbiterCount не пережил разрез");
         assertEq(afterCut.vaultBalance, before.vaultBalance, unicode"vaultBalance не пережил разрез");
 
+        // ⚠️ Задача 4.5 (16 августа 2026) — доигрываем переезд чтений, как и в
+        // соседнем тесте цикла. Здесь владение даймондом уже у ownerAddr,
+        // поэтому разрез идёт от его имени: diamondCut пускает только владельца.
+        // startPrank, а не prank: помощник делает несколько внешних вызовов
+        // (деплой фасета, чтения loupe и сам diamondCut), а prank держится
+        // ровно на один.
+        vm.startPrank(ownerAddr);
+        _applyTask45MoveAfterLegacyCut(diamond);
+        vm.stopPrank();
+
         // Сырые байты трёх НОВЫХ полей, записанные ДО того, как их геттеры
         // вообще существовали на этом даймонде, читаются обратно ЧЕРЕЗ НИХ
         // теперь, когда они смонтированы: раскладка append-only пережила
         // замену адреса фасета.
         ArbiterRegistryFacet d = ArbiterRegistryFacet(address(diamond));
         assertEq(
-            d.getDisputeClaimedAt(SEED_AGREEMENT), SEED_CLAIMED_AT,
+            ArbiterAccountabilityFacet(address(diamond)).getDisputeClaimedAt(SEED_AGREEMENT), SEED_CLAIMED_AT,
             unicode"якорь взятия, записанный ДО разреза, не пережил замену фасета"
         );
         assertEq(
-            d.getPresentationDigestCount(SEED_AGREEMENT), 1,
+            ArbiterAccountabilityFacet(address(diamond)).getPresentationDigestCount(SEED_AGREEMENT), 1,
             unicode"счётчик отпечатков, записанный ДО разреза, не пережил замену фасета"
         );
         assertEq(
-            d.getPresentationDigests(SEED_AGREEMENT)[0], SEED_DIGEST,
+            ArbiterAccountabilityFacet(address(diamond)).getPresentationDigests(SEED_AGREEMENT)[0], SEED_DIGEST,
             unicode"отпечаток, записанный ДО разреза, не пережил замену фасета"
         );
     }
@@ -800,6 +985,34 @@ contract PresentationRecordUpgradeTest is Test {
         OwnershipFacet(address(diamond)).transferOwnership(ownerAddr);
         vm.prank(ownerAddr);
         OwnershipFacet(address(diamond)).acceptOwnership();
+        // ⚠️ ГОНКА ЧЕРЕЗ ПРОЦЕСС-ГЛОБАЛЬНЫЙ vm.setEnv (задача 4.6, Ruling 34,
+        // 16 августа 2026). `vm.setEnv` пишет в окружение ПРОЦЕССА, а сюиты
+        // форджа идут параллельно. Три стенда разрезов
+        // (ArbiterAccountabilityUpgrade, PresentationRecordUpgrade,
+        // ArbiterChatKeyUpgrade) кладут сюда DIAMOND_ADDRESS и тут же читают
+        // его внутри run(). Безобидно это ровно потому, что все три кладут
+        // ОДИН И ТОТ ЖЕ адрес: последовательность `new` до создания даймонда у
+        // них совпадает, а значит совпадает и nonce.
+        //
+        // Лишний `new`, дописанный в любой из трёх, сдвигает nonce — адрес
+        // уезжает, чужой run() уходит лупой в посторонний контракт, и полный
+        // прогон начинает падать «случайным EvmError: Revert» примерно раз в
+        // двадцать раз, ничего не говоря о причине (замерено: 2 падения из 40
+        // при зелёном одиночном прогоне 25 из 25).
+        //
+        // Сама гонка этой строкой НЕ чинится — настоящее лекарство в том,
+        // чтобы не передавать адрес через окружение вовсе, и оно записано
+        // отдельным пунктом в OPEN-ITEMS. Строка превращает будущий флейк в
+        // ДЕТЕРМИНИРОВАННЫЙ красный с названной причиной.
+        //
+        // Адрес взят ЗАМЕРОМ (пробой assertEq по всем трём стендам разом), а
+        // не выведен из кода: выведенный уехал бы вместе с гонкой и промолчал.
+        assertEq(
+            address(diamond),
+            0xc7183455a4C133Ae270771860664b6B7ec320bB1,
+            unicode"адрес даймонда уехал: сдвинулся nonce стенда, и DIAMOND_ADDRESS "
+            unicode"в процессе теперь разный у трёх сюит — см. комментарий выше"
+        );
         vm.setEnv("DIAMOND_ADDRESS", vm.toString(address(diamond)));
         vm.setEnv("PRIVATE_KEY", vm.toString(pk));
     }
@@ -893,7 +1106,7 @@ contract PresentationRecordUpgradeTest is Test {
             address(diamond),
             abi.encodeWithSelector(
                 IDiamondLoupe.facetAddress.selector,
-                ArbiterRegistryFacet.getPresentationDigestsPage.selector
+                ArbiterAccountabilityFacet.getPresentationDigestsPage.selector
             ),
             abi.encode(address(0))
         );
@@ -985,7 +1198,7 @@ contract PresentationRecordUpgradeTest is Test {
 
         vm.expectCall(
             address(diamond),
-            abi.encodeWithSelector(ArbiterRegistryFacet.getOpenClaimCount.selector, arb)
+            abi.encodeWithSelector(ArbiterAccountabilityFacet.getOpenClaimCount.selector, arb)
         );
         upgrade.run();
     }

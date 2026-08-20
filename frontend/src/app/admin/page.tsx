@@ -160,6 +160,30 @@ function ArbitersTab() {
   const [removingAddr,  setRemovingAddr]  = useState<string | null>(null);
   const [settingChief,  setSettingChief]  = useState(false);
 
+  /**
+   * ⚠️ ЖЁСТКОГО `gas:` ЗДЕСЬ БОЛЬШЕ НЕТ, И ЭТО НЕ КОСМЕТИКА.
+   *
+   * Явный лимит газа означает «кошелёк, не оценивай вызов»: транзакция уходит в
+   * цепь без пробной прогонки. Дальше два разных несчастья, и оба молчат:
+   *
+   *  1. ОТКАЗ. За август у addArbiter появились три новые двери —
+   *     SeatingHandedOver (право посадки передано ДАО),
+   *     ReseatingRemovedIsOwnerOnly (снесённого возвращает только владелец),
+   *     ChiefBlocWouldDecideAppeal (блок директора решил бы апелляцию сам).
+   *     С явным газом такой вызов отревертит УЖЕ В ЦЕПИ и возьмёт деньги,
+   *     ничего не объяснив. Без него оценка провалится заранее, локально и
+   *     бесплатно, и человек увидит причину до подписи.
+   *  2. НЕХВАТКА. Замер 17 августа 2026 (forge test -vvvv,
+   *     test_AddArbiterWorksBeforeDao): DiamondProxy::fallback → addArbiter
+   *     стоит 134 389 газа, плюс 21 000 внутренних — около 155 900. Потолок
+   *     стоял 120 000, то есть кнопка была мертва ПО ПРАВИЛЬНОМУ пути и
+   *     сжигала весь лимит впустую при каждом нажатии. Прежде функция стоила
+   *     меньше: за август к ней прибавились seatedBy, seatedCountBy, событие
+   *     ArbiterSeated и clearRemovalRecord.
+   *
+   * Литерал был из самого первого коммита репозитория (5d66d355) — привычка, а
+   * не решение: единственное, что он давал, — экономию одного eth_estimateGas.
+   */
   const handleAddArbiter = async () => {
     if (!isAddress(newArbiter)) { toast.error('Invalid address'); return; }
     if (!publicClient) { toast.error('Failed'); return; }
@@ -167,7 +191,7 @@ function ArbitersTab() {
     try {
       const hash = await writeContractAsync({
         address: CONTRACTS.diamond as `0x${string}`, abi: ARBITER_REGISTRY_ABI,
-        functionName: 'addArbiter', args: [newArbiter as `0x${string}`], gas: BigInt(120_000),
+        functionName: 'addArbiter', args: [newArbiter as `0x${string}`],
       });
       const receipt = await publicClient.waitForTransactionReceipt({ hash });
       if (receipt.status === 'reverted') throw new Error('Transaction reverted on-chain');
@@ -180,13 +204,31 @@ function ArbitersTab() {
     } finally { setAddingArbiter(false); }
   };
 
+  /**
+   * ⚠️ КНОПКА УМИРАЮЩАЯ, И ИМЕННО ПОЭТОМУ С НЕЁ СНЯТ ЖЁСТКИЙ ГАЗ.
+   *
+   * Голая `removeArbiter(address)` (селектор 0x3487e08c) удалена из фасета и
+   * уходит из даймонда единственным элементом Remove в разрезе
+   * script/UpgradeArbiterAccountability.s.sol. После разреза селектор не
+   * маршрутизируется никуда — вызов проваливается в fallback даймонда и
+   * ревертит.
+   *
+   * С явным `gas:` это худший из возможных исходов: кошелёк не оценивает вызов,
+   * транзакция уходит в цепь, ревертит и ЗАБИРАЕТ ДЕНЬГИ, не объяснив ничего.
+   * Без явного газа eth_estimateGas провалится заранее — локально, бесплатно и
+   * до подписи.
+   *
+   * Саму кнопку здесь не трогаем: чем её заменить (форма сноса с поводом,
+   * ArbiterAccountabilityFacet.removeArbiterForCause) — решение владельца.
+   * Снята только ловушка.
+   */
   const handleRemove = async (addr: string) => {
     if (!publicClient) { toast.error('Failed'); return; }
     setRemovingAddr(addr);
     try {
       const hash = await writeContractAsync({
         address: CONTRACTS.diamond as `0x${string}`, abi: ARBITER_REGISTRY_ABI,
-        functionName: 'removeArbiter', args: [addr as `0x${string}`], gas: BigInt(120_000),
+        functionName: 'removeArbiter', args: [addr as `0x${string}`],
       });
       const receipt = await publicClient.waitForTransactionReceipt({ hash });
       if (receipt.status === 'reverted') throw new Error('Transaction reverted on-chain');
@@ -207,7 +249,12 @@ function ArbitersTab() {
     try {
       const hash = await writeContractAsync({
         address: CONTRACTS.diamond as `0x${string}`, abi: ARBITER_REGISTRY_ABI,
-        functionName: 'setChiefArbiter', args: [(addr || ZERO) as `0x${string}`], gas: BigInt(80_000),
+        // Без жёсткого газа по тому же доводу, что у двух кнопок выше: за
+        // август setChiefArbiter получила дверь SeatingHandedOver (роль
+        // директора упраздняется при активном ДАО). Самой оценке здесь ничего
+        // не мешало и раньше — 28 792 газа по замеру, потолок 80 000 хватал, —
+        // но с явным литералом отказ стоил бы денег и молчал.
+        functionName: 'setChiefArbiter', args: [(addr || ZERO) as `0x${string}`],
       });
       const receipt = await publicClient.waitForTransactionReceipt({ hash });
       if (receipt.status === 'reverted') throw new Error('Transaction reverted on-chain');

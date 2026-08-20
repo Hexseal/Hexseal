@@ -21,7 +21,7 @@ A two-sided marketplace with per-deal escrow:
 - a **client** posts a job, or an **executor** lists a service — both boards live on chain;
 - when the two agree, the factory deploys an **Agreement** contract for that single deal (an EIP-1167 clone, so it is cheap);
 - USDC sits in that Agreement until it is released by client approval, by timeout, by refund, or by an arbiter's verdict;
-- disputes go to **arbiters**, who claim cases through commit-reveal so that nobody can shop for the case they want. There is a self-service path behind a clean-streak gate and a forfeitable USDC bond (`src/facets/ArbiterRegistryFacet.sol:326-345`), but it is switched off at launch — it reverts while the DAO flag is off — and the first arbiters are seated by hand with `addArbiter`, which posts **no** bond (`:391-396`);
+- disputes go to **arbiters**, who claim cases through commit-reveal so that nobody can shop for the case they want. There is a self-service path behind a clean-streak gate and a forfeitable USDC bond (`applyAsArbiter` in `src/facets/ArbiterRegistryFacet.sol`), but it is switched off at launch — it reverts while the DAO flag is off — and the first arbiters are seated by hand with `addArbiter` in the same file, which posts **no** bond;
 - reputation (XP) is awarded by the contract on completion — not claimed, not granted;
 - transactions are **gasless**: you sign an EIP-712 message, a relayer pays the ETH. If the relayer is down the app falls back to a normal transaction from your own wallet.
 
@@ -38,15 +38,15 @@ The interesting question about an "autonomous" protocol is not what it automates
 | Reputation | **Contract** | Awarded inside the completion call, not mintable — `src/facets/ReputationFacet.sol` |
 | Fee split and treasury ladder | **Contract** | Percentages are compile-time constants; changing them means replacing the contract — `src/Treasury.sol` |
 | **Which code runs (upgrade authority)** | **Owner key** | The known centralization point. The Diamond owner can replace any facet through `diamondCut`. Our own review measured the cheapest bypass of the treasury's reserve gate at **31 717 gas**, invisible to standard Diamond introspection — written down in `src/Treasury.sol:114-170` |
-| **A pending dispute verdict** | **Owner key** (or the DAO address, once set) | `overturnVerdict` flips an unfinalized verdict, `freezeVerdict`/`unfreezeVerdict` stall it — `src/facets/ArbiterRegistryFacet.sol:759,848,858`. The Diamond is authorized to settle a disputed Agreement directly — `src/Agreement.sol:744` |
-| Who the first arbiters are | **Owner key** | Deliberate launch decision: seated by hand via `addArbiter` — which, unlike the self-service path, posts no bond, so there is nothing to forfeit — `src/facets/ArbiterRegistryFacet.sol:391-396` vs `:326-345` |
+| **A pending dispute verdict** | **Owner key** (or the DAO address, once set) | `overturnVerdict` flips an unfinalized verdict, `freezeVerdict`/`unfreezeVerdict` stall it — all three in `src/facets/ArbiterRegistryFacet.sol`. The Diamond is authorized to settle a disputed Agreement directly — `src/Agreement.sol:744` |
+| Who the first arbiters are | **Owner key** | Deliberate launch decision: seated by hand via `addArbiter` — which, unlike the self-service path, posts no bond, so there is nothing to forfeit — compare `addArbiter` with `applyAsArbiter` in `src/facets/ArbiterRegistryFacet.sol` |
 | Relayer, file storage, notifications | **Our servers** | Liveness only, never custody |
 
 A protocol fee (5 % of the deal amount, floor $1) is likewise an owner-settable parameter — `src/FactoryFacet.sol:85,191-192,373,380`.
 
 ### Progressive decentralization, stated plainly
 
-**Today.** The protocol is decentralized in its logic and not yet in its governance. One key — the Diamond owner — can replace any facet (`diamondCut`), can overturn a pending arbiter verdict (`src/facets/ArbiterRegistryFacet.sol:759`), can freeze one (`:848`), and gets past the treasury's own reserve gate for about **31 717 gas** without that showing up in Diamond introspection (`src/Treasury.sol:114-170`). Those are facts about the code as it stands, not accusations someone still has to find.
+**Today.** The protocol is decentralized in its logic and not yet in its governance. One key — the Diamond owner — can replace any facet (`diamondCut`), can overturn a pending arbiter verdict (`overturnVerdict` in `src/facets/ArbiterRegistryFacet.sol`), can freeze one (`freezeVerdict`, same file), and gets past the treasury's own reserve gate for about **31 717 gas** without that showing up in Diamond introspection (`src/Treasury.sol:114-170`). Those are facts about the code as it stands, not accusations someone still has to find.
 
 **Planned.** Governance moves to a **multisig with a timelock before mainnet**, and the powers above are handed over in a fixed order after that — `overturnVerdict` first, `diamondCut` last. The full staging, with the event that triggers each step, is in [`docs/DECENTRALIZATION.md`](docs/DECENTRALIZATION.md). This is the one forward-looking statement on this page: it is a plan, not a property the code enforces today, and nothing in this repository implements it yet.
 

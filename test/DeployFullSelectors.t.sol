@@ -9,6 +9,7 @@ import "../src/FactoryFacet.sol";
 import "../src/facets/JobBoardFacet.sol";
 import "../src/facets/ServiceBoardFacet.sol";
 import "../src/facets/ArbiterRegistryFacet.sol";
+import "../src/facets/ArbiterAccountabilityFacet.sol";
 import "../src/facets/DealMetadataFacet.sol";
 import "../src/facets/ReputationFacet.sol";
 import "../src/JobReceiptFacet.sol";
@@ -49,8 +50,111 @@ import "../src/JobReceiptFacet.sol";
 ///   - `buildInitCuts`/`buildRemainingCuts` wire a correct selector set to the
 ///     wrong `FacetCut.facetAddress`
 ///   - the actual `DiamondProxy` this script would produce does not end up with
-///     exactly 11 facets, exactly 177 routed selectors, and consistent
+///     exactly 12 facets, exactly 202 routed selectors, and consistent
 ///     `facetAddress(sel)` <-> `facets()` routing in both directions
+///     (177 -> 179, 15 Aug 2026: arbiter-accountability task 1 added
+///     getSeatedBy/getSeatedCountBy to ArbiterRegistryFacet; 179 -> 180,
+///     same day: arbiter-accountability task 2 added getChiefBloc to cap
+///     the chief's bloc below the appeal quorum; 180 -> 181, same day:
+///     arbiter-accountability task 3 added getMaxClaimsPerArbiter to cap
+///     how many disputes an arbiter can hold open at once; 181 -> 187, same
+///     day: arbiter-accountability task 4 — ArbiterRegistryFacet sat at 86.4%
+///     of the EIP-170 deployed-bytecode limit, so arbiter suspension shipped
+///     as a twelfth facet, ArbiterAccountabilityFacet, sharing the same
+///     ArbiterRegistryStorage namespace — 11 facets -> 12, six new selectors;
+///     187 -> 186, same day: arbiter-accountability task 5 removed
+///     ArbiterAccountabilityFacet.getChiefArbiterAddress — it duplicated
+///     ArbiterRegistryFacet.getChiefArbiter (both selectors route to the same
+///     diamond address; the "so the frontend doesn't need to hit a second
+///     facet" justification in the task-4 brief was the plan author's own
+///     mistake, its real origin was the standalone-facet test rig); 186 -> 187,
+///     same commit: task 5 added ArbiterRegistryFacet.getCleanVerdicts, a
+///     count of non-overturned finalized verdicts per arbiter, laid down for
+///     a future "bond plus tenure" conversion when DAO mode activates — net
+///     selector count unchanged, composition did; 187 -> 192, same day: task 6
+///     removed the bare `removeArbiter` (no cause recorded, full bond refund —
+///     a for-cause slash and a quiet purge looked identical on chain) and added
+///     `getMaxArbiterMistakes` to ArbiterRegistryFacet (net 0 there), while
+///     ArbiterAccountabilityFacet gained `removeArbiterForCause`,
+///     `getMistakeThreshold`, and three standalone-test-rig getters (+5) —
+///     `addArbiter`/`setChiefArbiter` also started reverting once DAO mode is
+///     active (owner's literal instruction: "no more manual seating"), with no
+///     selector-count effect; 192 -> 191, same day, review round 1 on task 6:
+///     three of those standalone-test-rig getters
+///     (isRegisteredArbiterHere/getMistakeStreakOf/getNoResponseAtHere) turned
+///     out to be exactly the getChiefArbiterAddress mistake from task 5 —
+///     duplicates of live state already exposed by ArbiterRegistryFacet's own
+///     getters through the diamond — and were removed; two getters over
+///     ArbiterAccountabilityFacet's own local constants
+///     (getMaxArbiterMistakesMirror, getDaoThresholdMirror) were added in
+///     their place, needed for cross-checking against ArbiterRegistryFacet's
+///     real numbers and not reachable any other way — net −1; 191 -> 196,
+///     same day, task 7 of the same plan: the chief can now PROPOSE a
+///     removal without being able to EXECUTE it — removal stays the owner's
+///     (or, post-handover, daoAddress's) call, the chief only lays down a
+///     signal record under his own address. ArbiterAccountabilityFacet
+///     gained `proposeRemoval`, `withdrawProposal`, `hasLiveProposal`,
+///     `getRemovalProposal`, `getProposalTTL` (+5); ArbiterRegistryFacet
+///     unchanged (the new `removalProposals` field is storage layout only,
+///     not a selector); 196 -> 198, same day, task 8 of the same plan: a
+///     removed arbiter's right to reply — an accusation against a real
+///     address sits on chain forever, `respondToRemoval` lets the removed
+///     arbiter lay down their own digest next to it, undoing nothing and
+///     refunding nothing. ArbiterAccountabilityFacet gained
+///     `respondToRemoval` and `getRemovalReply` (+2) — the facet's first
+///     gasless function, so it also grew its own `_msgSender()` (see
+///     script/gasless-sender.allow); the new `removalReply`/`removedAt`
+///     fields are storage layout only, not selectors; 198 -> 199, same day,
+///     task 9 of the same plan: `getArbiterStanding` — the arbiter's whole
+///     standing in one read (xp, cleanStreak, mistakeStreak, bond, seatedBy,
+///     suspendedUntil, openClaims, cleanVerdicts, removedAt,
+///     hasLiveRemovalProposal) instead of seven-plus separate calls that
+///     could straddle a block boundary — bond read before a removal, status
+///     read after. ArbiterAccountabilityFacet gained one selector (+1, 16 ->
+///     17); the field set is wider than the task brief, which predates
+///     `cleanVerdicts` and `removedAt` landing in storage — both are read
+///     into the return tuple, plus `hasLiveRemovalProposal` via a call to
+///     the facet's own `hasLiveProposal`, not a copy of its formula. No new
+///     storage fields, ArbiterRegistryFacet unchanged; 199 -> 200, 17 Aug 2026,
+///     task 1 of the removal-due-process plan: the accusation got WORDS.
+///     `Cause` is a numeric code, so the public record of a removal carried no
+///     words at all — "removal for cause" promised an explanation that existed
+///     nowhere. ArbiterAccountabilityFacet gained `getMaxReasonBytes` (+1, 31
+///     -> 32): the cap on those words, in BYTES, asked of the chain so the form
+///     does not keep a copy that can drift. Three already-listed entries
+///     changed SIGNATURE without adding selectors here
+///     (`removeArbiterForCause`/`proposeRemoval` gained `string reason`,
+///     `respondToRemoval` gained `string reply`) — still an Add on chain, not
+///     a Replace: this plan's cut has not been made, so none of the three old
+///     selectors is mounted on the diamond and only the selector VALUE inside
+///     the Add group changed, see script/UpgradeArbiterAccountability.s.sol.
+///     No new storage fields: the words live in events
+///     (RemovalReasonGiven/RemovalReplyGiven), read by the feed and the card;
+///     200 -> 201, 17 Aug 2026, task 2 of the same plan: 48 HOURS NOW STAND
+///     BETWEEN THE ACCUSATION AND THE REMOVAL. The proposal existed but was
+///     optional and changed nothing — removal went through in one transaction
+///     and the person learned of it afterwards, sentence first and word after.
+///     It is now the only way in: the execution window is [48 hours, 14 days)
+///     from the proposal, and the cause at execution must match the one
+///     proposed. ArbiterAccountabilityFacet gained `getRemovalDelay` (+1, 32 ->
+///     33) — the pause itself is a rule rather than a selector, but the form
+///     must ask the chain for the number instead of keeping a copy that drifts.
+///     Four new errors (NoLiveProposal, RemovalTooEarly, ProposalStale,
+///     CauseDiffersFromProposal) add no selectors here and no storage fields:
+///     the proposal record `removalProposals` has been in storage since task 7;
+///     201 -> 202, 18 Aug 2026, task 12 of the same plan: THE QUIET DOOR NOW
+///     LEADS INTO THE COMMON ONE. Three judicial mistakes used to unseat an
+///     arbiter on the spot — no proposal, no pause, no words, no cause to
+///     match — and that door survived the handover the whole branch exists to
+///     build, since overturnVerdict sits under a modifier that lets the owner
+///     through always. The third mistake now suspends at once and lays an
+///     accusation in the CHAIN'S OWN name, and ArbiterAccountabilityFacet
+///     gained `executeChainRemoval` (+1, 33 -> 34): once the 48 hours have
+///     passed anyone may press it, because the chain proved the cause itself
+///     and pressing carries no discretion. One new storage field
+///     (`chainProposalPath`, appended at the end of ArbiterRegistryStorage.Data)
+///     because the demotion path is known at the mistake and recorded at the
+///     removal, two days apart)
 contract DeployFullSelectorsTest is Test {
     DeployFull internal deploy;
 
@@ -67,6 +171,7 @@ contract DeployFullSelectorsTest is Test {
     address constant JOB_BOARD      = address(0x1006);
     address constant SERVICE_BOARD  = address(0x1007);
     address constant ARBITER_FACET  = address(0x1008);
+    address constant ACCOUNTABILITY_FACET = address(0x100C);
     address constant META_FACET     = address(0x1009);
     address constant RECEIPT_FACET  = address(0x100A);
     address constant REPUTATION_FACET = address(0x100B);
@@ -155,6 +260,10 @@ contract DeployFullSelectorsTest is Test {
         _assertSameSelectorSet(deploy.arbiterRegistryFacetSelectors(), _abiSelectors("ArbiterRegistryFacet"), "ArbiterRegistryFacet");
     }
 
+    function testArbiterAccountabilityFacetSelectors() public view {
+        _assertSameSelectorSet(deploy.arbiterAccountabilityFacetSelectors(), _abiSelectors("ArbiterAccountabilityFacet"), "ArbiterAccountabilityFacet");
+    }
+
     function testDealMetadataFacetSelectors() public view {
         _assertSameSelectorSet(deploy.dealMetadataFacetSelectors(), _abiSelectors("DealMetadataFacet"), "DealMetadataFacet");
     }
@@ -180,7 +289,7 @@ contract DeployFullSelectorsTest is Test {
     /// count against ground truth; this test only cares about cross-facet
     /// uniqueness.
     function testNoSelectorCollisionsAcrossFacets() public view {
-        bytes4[][11] memory groups = [
+        bytes4[][12] memory groups = [
             deploy.cutFacetSelectors(),
             deploy.loupeFacetSelectors(),
             deploy.ownershipFacetSelectors(),
@@ -189,6 +298,7 @@ contract DeployFullSelectorsTest is Test {
             deploy.jobBoardFacetSelectors(),
             deploy.serviceBoardFacetSelectors(),
             deploy.arbiterRegistryFacetSelectors(),
+            deploy.arbiterAccountabilityFacetSelectors(),
             deploy.dealMetadataFacetSelectors(),
             deploy.jobReceiptFacetSelectors(),
             deploy.reputationFacetSelectors()
@@ -247,9 +357,9 @@ contract DeployFullSelectorsTest is Test {
 
     function testBuildRemainingCutsMatchesIndividualSelectors() public view {
         IDiamondCut.FacetCut[] memory cuts = deploy.buildRemainingCuts(
-            JOB_BOARD, SERVICE_BOARD, ARBITER_FACET, META_FACET, RECEIPT_FACET, REPUTATION_FACET
+            JOB_BOARD, SERVICE_BOARD, ARBITER_FACET, ACCOUNTABILITY_FACET, META_FACET, RECEIPT_FACET, REPUTATION_FACET
         );
-        assertEq(cuts.length, 6, "buildRemainingCuts: expected 6 FacetCut entries");
+        assertEq(cuts.length, 7, "buildRemainingCuts: expected 7 FacetCut entries");
 
         assertEq(cuts[0].facetAddress, JOB_BOARD);
         _assertSameSelectorSet(cuts[0].functionSelectors, deploy.jobBoardFacetSelectors(), "cuts2[0] JobBoardFacet");
@@ -260,14 +370,17 @@ contract DeployFullSelectorsTest is Test {
         assertEq(cuts[2].facetAddress, ARBITER_FACET);
         _assertSameSelectorSet(cuts[2].functionSelectors, deploy.arbiterRegistryFacetSelectors(), "cuts2[2] ArbiterRegistryFacet");
 
-        assertEq(cuts[3].facetAddress, META_FACET);
-        _assertSameSelectorSet(cuts[3].functionSelectors, deploy.dealMetadataFacetSelectors(), "cuts2[3] DealMetadataFacet");
+        assertEq(cuts[3].facetAddress, ACCOUNTABILITY_FACET);
+        _assertSameSelectorSet(cuts[3].functionSelectors, deploy.arbiterAccountabilityFacetSelectors(), "cuts2[3] ArbiterAccountabilityFacet");
 
-        assertEq(cuts[4].facetAddress, RECEIPT_FACET);
-        _assertSameSelectorSet(cuts[4].functionSelectors, deploy.jobReceiptFacetSelectors(), "cuts2[4] JobReceiptFacet");
+        assertEq(cuts[4].facetAddress, META_FACET);
+        _assertSameSelectorSet(cuts[4].functionSelectors, deploy.dealMetadataFacetSelectors(), "cuts2[4] DealMetadataFacet");
 
-        assertEq(cuts[5].facetAddress, REPUTATION_FACET);
-        _assertSameSelectorSet(cuts[5].functionSelectors, deploy.reputationFacetSelectors(), "cuts2[5] ReputationFacet");
+        assertEq(cuts[5].facetAddress, RECEIPT_FACET);
+        _assertSameSelectorSet(cuts[5].functionSelectors, deploy.jobReceiptFacetSelectors(), "cuts2[5] JobReceiptFacet");
+
+        assertEq(cuts[6].facetAddress, REPUTATION_FACET);
+        _assertSameSelectorSet(cuts[6].functionSelectors, deploy.reputationFacetSelectors(), "cuts2[6] ReputationFacet");
 
         for (uint256 i = 0; i < cuts.length; i++) {
             assertTrue(cuts[i].action == IDiamondCut.FacetCutAction.Add, "cuts2: all entries must be Add");
@@ -284,9 +397,9 @@ contract DeployFullSelectorsTest is Test {
     // ServiceBoard selectors) and none of them exercises DeployFull's actual
     // buildInitCuts/buildRemainingCuts output end to end.
     //
-    // This deploys all eleven real facets, builds the diamond exactly the way
+    // This deploys all twelve real facets, builds the diamond exactly the way
     // run() does, and asserts the diamond that comes out the other end has
-    // exactly 11 facets, exactly 177 routed selectors, and that
+    // exactly 12 facets, exactly 198 routed selectors, and that
     // facetAddress(sel) and facets() agree with each other in both directions.
     // This is the only check in the suite that would catch a selector set
     // wired to the wrong facet address — diamondCut() itself does not validate
@@ -300,6 +413,7 @@ contract DeployFullSelectorsTest is Test {
         JobBoardFacet          jobBoard     = new JobBoardFacet();
         ServiceBoardFacet      serviceBoard = new ServiceBoardFacet();
         ArbiterRegistryFacet   arbiterFacet = new ArbiterRegistryFacet();
+        ArbiterAccountabilityFacet accFacet = new ArbiterAccountabilityFacet();
         DealMetadataFacet      metaFacet    = new DealMetadataFacet();
         JobReceiptFacet        receiptFacet = new JobReceiptFacet();
         ReputationFacet        repFacet     = new ReputationFacet();
@@ -310,13 +424,13 @@ contract DeployFullSelectorsTest is Test {
         DiamondProxy diamond = new DiamondProxy(address(this), initCuts, address(0), "");
 
         IDiamondCut.FacetCut[] memory cuts2 = deploy.buildRemainingCuts(
-            address(jobBoard), address(serviceBoard), address(arbiterFacet),
+            address(jobBoard), address(serviceBoard), address(arbiterFacet), address(accFacet),
             address(metaFacet), address(receiptFacet), address(repFacet)
         );
         IDiamondCut(address(diamond)).diamondCut(cuts2, address(0), "");
 
         IDiamondLoupe.Facet[] memory facetsList = IDiamondLoupe(address(diamond)).facets();
-        assertEq(facetsList.length, 11, "diamond should end up with exactly 11 distinct facet addresses");
+        assertEq(facetsList.length, 12, "diamond should end up with exactly 12 distinct facet addresses");
 
         uint256 totalRouted;
         for (uint256 i = 0; i < facetsList.length; i++) {
@@ -330,12 +444,12 @@ contract DeployFullSelectorsTest is Test {
                 );
             }
         }
-        assertEq(totalRouted, 177, "diamond should route exactly 177 selectors total");
+        assertEq(totalRouted, 202, "diamond should route exactly 202 selectors total");
 
         // Reverse direction: facetAddresses() must report exactly the same set
         // of addresses facets() reported them under.
         address[] memory addrs = IDiamondLoupe(address(diamond)).facetAddresses();
-        assertEq(addrs.length, 11, "facetAddresses() should also report exactly 11 facets");
+        assertEq(addrs.length, 12, "facetAddresses() should also report exactly 12 facets");
         for (uint256 i = 0; i < addrs.length; i++) {
             bool found = false;
             for (uint256 j = 0; j < facetsList.length; j++) {

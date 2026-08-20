@@ -4,6 +4,7 @@ pragma solidity ^0.8.20;
 import "forge-std/Script.sol";
 import "forge-std/console.sol";
 import {ArbiterRegistryFacet} from "../../src/facets/ArbiterRegistryFacet.sol";
+import {ArbiterAccountabilityFacet} from "../../src/facets/ArbiterAccountabilityFacet.sol";
 import {IDiamondCut, IDiamondLoupe} from "../../src/DiamondProxy.sol";
 
 /**
@@ -47,6 +48,22 @@ import {IDiamondCut, IDiamondLoupe} from "../../src/DiamondProxy.sol";
  * доказательство на реальных данных, а не на факте, что cut прошёл.
  */
 contract UpgradeArbiterChatKey is Script {
+    /// Собственное имя скрипта — им снимок цепи, снятый ДЛЯ ЭТОГО разреза,
+    /// сверяется с тем, кого он валидирует (уборка 7а, круг правок 1, Ф-5).
+    /// Литерала в стенде здесь быть не должно: стенд следующего разреза
+    /// копируется с этого, и литерал переехал бы вместе с копипастой молча.
+    /// Значение, взятое у самого проверяемого скрипта, не переносится.
+    ///
+    /// ⚠️ Разрез ИСПОЛНЕН, и это добавление ничего в нём не меняет: `pure`
+    /// getter, никакого состояния, ни одной строки `run()`. Запись о том, что
+    /// произошло, осталась записью.
+    ///
+    /// Строка обязана совпадать с полем `forScript` в
+    /// test/fixtures/chain-2026-08-10-arbiter-selectors.json.
+    function scriptPath() public pure returns (string memory) {
+        return "script/archive/UpgradeArbiterChatKey.s.sol";
+    }
+
     function run() external {
         address diamond = vm.envAddress("DIAMOND_ADDRESS");
         uint256 pk = vm.envUint("PRIVATE_KEY");
@@ -79,11 +96,11 @@ contract UpgradeArbiterChatKey is Script {
 
         // ── Апгрейд ───────────────────────────────────────────────────────
         vm.startBroadcast(pk);
-        ArbiterRegistryFacet facet = new ArbiterRegistryFacet();
-        IDiamondCut(diamond).diamondCut(buildCuts(address(facet)), address(0), "");
+        address facet = _deployRegistryFacet();
+        IDiamondCut(diamond).diamondCut(buildCuts(facet), address(0), "");
         vm.stopBroadcast();
 
-        console.log("ArbiterRegistryFacet:", address(facet));
+        console.log("ArbiterRegistryFacet:", facet);
         console.log("Remove 1 / Replace", replaceSels.length, "/ Add", addSels.length);
         console.log("");
 
@@ -190,6 +207,28 @@ contract UpgradeArbiterChatKey is Script {
         }
     }
 
+    /// Какой контракт разворачивается под все селекторы этого разреза.
+    ///
+    /// ⚠️ ВЫНЕСЕНО В ОТДЕЛЬНУЮ `virtual` ФУНКЦИЮ ЗАДАЧЕЙ 4.5 (16 августа 2026),
+    /// и это не переписывание исполненного разреза: в бою тело возвращает ровно
+    /// то же, что стояло здесь строкой раньше, — `new ArbiterRegistryFacet()`.
+    /// Ни один селектор, ни один адрес, ни один порядок действий не изменились.
+    ///
+    /// Понадобилось вот зачем. Разрез исполнен 10 августа 2026, когда
+    /// `getArbiterChatKeys` жил в ArbiterRegistryFacet. Задача 4.5 увезла это
+    /// чтение (и ещё тринадцать) в ArbiterAccountabilityFacet. Пост-полёт ниже
+    /// зовёт смоук по-настоящему — значит на сегодняшнем исходнике разрез
+    /// смонтировал бы селектор на фасет, который его больше не реализует, и
+    /// упал бы на собственной проверке.
+    ///
+    /// В цепи это ничего не значит (разрез отработал год назад по своему
+    /// коду), но тест, повторяющий run() дословно, обязан оставаться честным.
+    /// Он подменяет эту функцию двойником «фасет до 4.5» и получает точное
+    /// воспроизведение того дня — вместо того чтобы ослаблять проверку.
+    function _deployRegistryFacet() internal virtual returns (address) {
+        return address(new ArbiterRegistryFacet());
+    }
+
     /// Функциональный смоук: getArbiterChatKeys ЧЕРЕЗ ДАЙМОНД (не прямой
     /// вызов фасета) не ревертит и отдаёт нули для адреса без записанных
     /// ключей. Отличает «селектор числится смонтированным по loupe» от
@@ -198,7 +237,7 @@ contract UpgradeArbiterChatKey is Script {
     function smokeGetArbiterChatKeys(address diamond, address probe)
         public view returns (bytes32 boxKey, bytes32 signKey)
     {
-        return ArbiterRegistryFacet(diamond).getArbiterChatKeys(probe);
+        return ArbiterAccountabilityFacet(diamond).getArbiterChatKeys(probe);
     }
 
     // ════════════════════════════════════════════════════════════════════
@@ -276,11 +315,15 @@ contract UpgradeArbiterChatKey is Script {
     function findArbitersWithOpenClaimsMissingKeys(address diamond) public view returns (address[] memory flagged) {
         ArbiterRegistryFacet f = ArbiterRegistryFacet(diamond);
         address[] memory arbiters = f.getArbiters();
+        // getOpenClaimCount переехал в фасет ответственности задачей 4.5
+        // (16 августа 2026). Адрес прежний — это диамонд; каст называет только
+        // ABI. Разрез исполнен 10 августа и не переписывается.
+        ArbiterAccountabilityFacet claims = ArbiterAccountabilityFacet(diamond);
 
         uint256 count;
         bool[] memory hit = new bool[](arbiters.length);
         for (uint256 i = 0; i < arbiters.length; i++) {
-            if (f.getOpenClaimCount(arbiters[i]) == 0) continue;
+            if (claims.getOpenClaimCount(arbiters[i]) == 0) continue;
             hit[i] = true;
             count++;
         }
@@ -301,7 +344,7 @@ contract UpgradeArbiterChatKey is Script {
         }
         for (uint256 i = 0; i < flagged.length; i++) {
             console.log("  MISSING KEY - arbiter:", flagged[i]);
-            console.log("    openClaimCount:", ArbiterRegistryFacet(diamond).getOpenClaimCount(flagged[i]));
+            console.log("    openClaimCount:", ArbiterAccountabilityFacet(diamond).getOpenClaimCount(flagged[i]));
             console.log("    -> must call setArbiterChatKey(boxKey, signKey) after this upgrade");
         }
         console.log("Total arbiters needing setArbiterChatKey after upgrade:", flagged.length);
@@ -331,7 +374,7 @@ contract UpgradeArbiterChatKey is Script {
         sels = new bytes4[](3);
         sels[0] = ArbiterRegistryFacet.claimDispute.selector;
         sels[1] = ArbiterRegistryFacet.setArbiterChatKey.selector;
-        sels[2] = ArbiterRegistryFacet.getArbiterChatKeys.selector;
+        sels[2] = ArbiterAccountabilityFacet.getArbiterChatKeys.selector;
     }
 
     /// Все смонтированные селекторы фасета, КРОМЕ трёх новых и удаляемого.
@@ -350,7 +393,7 @@ contract UpgradeArbiterChatKey is Script {
         // Admin: управление арбитрами
         sels[3]  = ArbiterRegistryFacet.setChiefArbiter.selector;
         sels[4]  = ArbiterRegistryFacet.addArbiter.selector;
-        sels[5]  = ArbiterRegistryFacet.removeArbiter.selector;
+        sels[5]  = bytes4(0x3487e08c) /* removeArbiter(address), удалена 15 августа 2026 (задача 6 arbiter-accountability) */;
 
         // Клейм спора (commit-reveal) — сама claimDispute здесь НЕ стоит:
         // подпись сменилась, новый селектор идёт в Add.
@@ -386,19 +429,19 @@ contract UpgradeArbiterChatKey is Script {
         sels[27] = ArbiterRegistryFacet.isRegisteredArbiter.selector;
         sels[28] = ArbiterRegistryFacet.getArbiters.selector;
         sels[29] = ArbiterRegistryFacet.getDisputeClaimer.selector;
-        sels[30] = ArbiterRegistryFacet.getArbiterDeals.selector;
+        sels[30] = ArbiterAccountabilityFacet.getArbiterDeals.selector;
         sels[31] = ArbiterRegistryFacet.getClaimCommitment.selector;
         sels[32] = ArbiterRegistryFacet.getPendingVerdict.selector;
-        sels[33] = ArbiterRegistryFacet.getArbiterReward.selector;
+        sels[33] = ArbiterAccountabilityFacet.getArbiterReward.selector;
         sels[34] = ArbiterRegistryFacet.getVaultBalance.selector;
         sels[35] = ArbiterRegistryFacet.getRewardPerDispute.selector;
         sels[36] = ArbiterRegistryFacet.getDAOAddress.selector;
-        sels[37] = ArbiterRegistryFacet.getArbiterMistakeStreak.selector;
+        sels[37] = ArbiterAccountabilityFacet.getArbiterMistakeStreak.selector;
         sels[38] = ArbiterRegistryFacet.hasSubmittedVerdict.selector;
         sels[39] = ArbiterRegistryFacet.getAppealVotes.selector;
         sels[40] = ArbiterRegistryFacet.hasVotedOnAppeal.selector;
-        sels[41] = ArbiterRegistryFacet.getArbiterBond.selector;
-        sels[42] = ArbiterRegistryFacet.getOpenClaimCount.selector;
+        sels[41] = ArbiterAccountabilityFacet.getArbiterBond.selector;
+        sels[42] = ArbiterAccountabilityFacet.getOpenClaimCount.selector;
 
         // Сбор со спора (3% от спорной суммы) — 80/20 арбитр/казна
         sels[43] = ArbiterRegistryFacet.creditDisputeFee.selector;

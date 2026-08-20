@@ -3,14 +3,40 @@ pragma solidity ^0.8.20;
 
 import "forge-std/Test.sol";
 import {ArbiterRegistryFacet} from "../src/facets/ArbiterRegistryFacet.sol";
+import {LegacyPreSplitArbiterFacet, ArbiterTwoFacetBench} from "./ArbiterTwoFacetBench.sol";
+import {ArbiterAccountabilityFacet} from "../src/facets/ArbiterAccountabilityFacet.sol";
 import {UpgradeArbiterChatKey} from "../script/archive/UpgradeArbiterChatKey.s.sol";
+import {ArbiterChainCensus} from "./ArbiterChainCensus.sol";
 import "../src/DiamondProxy.sol";
 
-contract ArbiterChatKeyUpgradeTest is Test {
+/// Тот же разрез, но разворачивающий двойник «фасет ДО задачи 4.5».
+///
+/// ⚠️ Зачем он есть. Разрез исполнен 10 августа 2026, когда все его селекторы
+/// реализовывал один ArbiterRegistryFacet. Задача 4.5 (16 августа 2026) увезла
+/// четырнадцать чтений — включая getArbiterChatKeys, на котором стоит
+/// ФУНКЦИОНАЛЬНЫЙ СМОУК внутри самого run(), — в ArbiterAccountabilityFacet.
+/// На сегодняшнем исходнике дословный повтор run() смонтировал бы этот селектор
+/// на фасет, который его не реализует, и упал бы на собственной пост-проверке.
+///
+/// Подменяется РОВНО деплой фасета и ничего больше: списки селекторов, порядок
+/// действий, пред- и пост-полёт остаются теми же самыми и исполняются целиком.
+/// Это точное воспроизведение того дня, а не ослабленная проверка.
+contract UpgradeArbiterChatKeyOnPreSplitFacet is UpgradeArbiterChatKey {
+    function _deployRegistryFacet() internal override returns (address) {
+        return address(new LegacyPreSplitArbiterFacet());
+    }
+}
+
+contract ArbiterChatKeyUpgradeTest is Test, ArbiterTwoFacetBench, ArbiterChainCensus {
     UpgradeArbiterChatKey internal upgrade;
 
+    /// ⚠️ РОВНО ОДИН `new` (задача 4.6, 16 августа 2026). Второй развёрнутый
+    /// здесь контракт сдвигает nonce тестового контракта, а с ним — адрес
+    /// локального даймонда, и полный `forge test` начинает падать раз в
+    /// двадцать прогонов через процесс-глобальный `vm.setEnv`. Разбор и замер —
+    /// в шапке `_presentationCutAddSelectors()` (test/ArbiterChainCensus.sol).
     function setUp() public {
-        upgrade = new UpgradeArbiterChatKey();
+        upgrade = new UpgradeArbiterChatKeyOnPreSplitFacet();
     }
 
     /// Старого входа заявки в фасете БОЛЬШЕ НЕТ. Замок против того, чтобы
@@ -181,19 +207,90 @@ contract ArbiterChatKeyUpgradeTest is Test {
     /// развёрнутом ArbiterRegistryFacet, не воскрешая удалённую сигнатуру в
     /// исходниках.
     function _mountOldFacet(DiamondProxy diamond) internal returns (address oldFacetAddr) {
-        ArbiterRegistryFacet oldFacet = new ArbiterRegistryFacet();
-        bytes4[] memory replaceSels = upgrade.replaceSelectors();
-        bytes4[] memory removeSels = upgrade.removeSelectors();
-
-        bytes4[] memory mountSels = new bytes4[](replaceSels.length + removeSels.length);
-        for (uint256 i = 0; i < replaceSels.length; i++) mountSels[i] = replaceSels[i];
-        for (uint256 i = 0; i < removeSels.length; i++) mountSels[replaceSels.length + i] = removeSels[i];
+        // ⚠️ Двойник «фасет до задачи 4.5» (16 августа 2026), а не боевой
+        // ArbiterRegistryFacet: этот стенд повторяет раскладку цепи НА МОМЕНТ
+        // того разреза — все селекторы на ОДНОМ адресе, — а с тех пор
+        // четырнадцать чтений уехали в ArbiterAccountabilityFacet, и ни один
+        // боевой контракт больше не реализует их все сразу. Голый фасет
+        // смонтировался бы (diamondCut требует лишь наличия кода), но
+        // пред-полёт зовёт getOpenClaimCount по-настоящему и ревертил бы.
+        LegacyPreSplitArbiterFacet oldFacet = new LegacyPreSplitArbiterFacet();
 
         IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](1);
-        cuts[0] = IDiamondCut.FacetCut(address(oldFacet), IDiamondCut.FacetCutAction.Add, mountSels);
+        cuts[0] = IDiamondCut.FacetCut(address(oldFacet), IDiamondCut.FacetCutAction.Add, _preCutLayout());
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
 
         oldFacetAddr = address(oldFacet);
+    }
+
+    /// Раскладка цепи ДО этого разреза, ОТМОТАННАЯ ОТ ПЕРЕПИСИ (задача 4.6,
+    /// 16 августа 2026).
+    ///
+    /// ⚠️ Здесь стояло `upgrade.replaceSelectors() + upgrade.removeSelectors()` —
+    /// стенд выводил «что было смонтировано в цепи» ИЗ ТОГО САМОГО СПИСКА,
+    /// который проверяет, и пред-полёты сходились сами с собой (docs/PROCESS.md,
+    /// «Четвёртый способ: замок, который смотрится в зеркало»).
+    ///
+    /// Оракул — перепись живой цепи (test/ArbiterChainCensus.sol), отмотанная
+    /// назад через ДВА исполненных разреза:
+    ///   перепись 16 августа                                        64
+    ///   − Add разреза «цепь как свидетель предъявления» (15.08)     −8  → 56
+    ///   − Add этого разреза (10.08)                                 −3  → 53
+    ///   + Remove этого разреза (старая двухаргументная claimDispute) +1  → 54
+    ///
+    /// Из скриптов в отмотке участвуют ТОЛЬКО списки Add и Remove, и оба
+    /// запёрты литеральными подписями: восемь у разреза предъявления
+    /// (`_presentationCutAddSelectors()`, сверяется с боевым списком того
+    /// скрипта соседним тестом), одна здесь
+    /// (test_OldSelectorRemovedAndAbsentFromNewAbi). `replaceSelectors()`, ради
+    /// которого стенд и строится, в вычислении не участвует вовсе.
+    ///
+    /// ⚠️ ОТМОТКА ЗАМЕНЕНА НАБЛЮДЕНИЕМ (уборка 7а, п. 4, Ruling 32). Здесь
+    /// раскладка ВЫЧИСЛЯЛАСЬ отмоткой переписи 16 августа на ДВА шага. Отмотка
+    /// верна, но это вывод — а вывод живёт до первой ошибки в списках, из
+    /// которых делается, и здесь таких списков два, а не один. Теперь раскладка
+    /// ЧИТАЕТСЯ снимком цепи в блоке 45281830 (последний блок перед
+    /// транзакцией разреза 10 августа): 54 селектора на 0x42E9f172…,
+    /// 167 маршрутов всего.
+    /// Отмотка не выброшена — она сверяется со снимком в
+    /// test_TwoStepRewindMatchesTheChainSnapshot ниже.
+    function _preCutLayout() internal view returns (bytes4[] memory out) {
+        out = _chainCensusBefore10Aug(upgrade.scriptPath());
+        require(out.length == 54, unicode"раскладка до разреза 10 августа обязана быть 54 селектора");
+    }
+
+    /// Наблюдение против вычисления, два шага: снимок цепи 10 августа обязан
+    /// совпасть с отмоткой переписи 16 августа назад через ОБА исполненных
+    /// разреза.
+    ///
+    /// Что исчезнет из поведения, если снять: два независимых источника снова
+    /// станут одним. Пока они сверяются, ошибка в любом из трёх списков, из
+    /// которых делается отмотка (восемь подписей разреза предъявления, Add и
+    /// Remove этого разреза), краснеет ЗДЕСЬ — а не отвергнутой боевой
+    /// транзакцией; и наоборот, подменённый снимок краснеет против отмотки.
+    function test_TwoStepRewindMatchesTheChainSnapshot() public view {
+        bytes4[] memory afterThisCut = _rewindCut(
+            _censusFromFile(CENSUS_PATH, CENSUS_FACET, 64, "script/UpgradeArbiterAccountability.s.sol"),
+            _presentationCutAddSelectors(),
+            new bytes4[](0)
+        );
+        // Снимок ЧУЖОГО разреза — литералом осознанно, разбор в докстринге
+        // `_censusFromFile` (круг правок 1, Ф-5): развернуть чужой скрипт ради
+        // его имени значит добавить `new` и вернуть гонку nonce, а защиты это
+        // не прибавляет — тип копируется копипастой так же, как строка.
+        _assertSameSelectorSet(
+            _chainCensusAfter10Aug("script/UpgradePresentationRecord.s.sol"),
+            afterThisCut,
+            unicode"снимок цепи 14 августа",
+            unicode"отмотка переписи на один шаг"
+        );
+
+        _assertSameSelectorSet(
+            _chainCensusBefore10Aug(upgrade.scriptPath()),
+            _rewindCut(afterThisCut, upgrade.addSelectors(), upgrade.removeSelectors()),
+            unicode"снимок цепи 10 августа",
+            unicode"отмотка переписи на два шага"
+        );
     }
 
     bytes32 constant ARB_POS = 0xaae71de0594cbcb5434f0ab7f7501c1be178552bf788b418a1c2624ba9718d00;
@@ -223,7 +320,7 @@ contract ArbiterChatKeyUpgradeTest is Test {
         bytes32 slot = keccak256(abi.encode(arbiter, uint256(ARB_POS) + 13));
         vm.store(address(diamond), slot, bytes32(n));
         assertEq(
-            ArbiterRegistryFacet(address(diamond)).getOpenClaimCount(arbiter), n,
+            ArbiterAccountabilityFacet(address(diamond)).getOpenClaimCount(arbiter), n,
             unicode"смещение openClaimCount в ArbiterRegistryStorage.Data уехало"
         );
     }
@@ -395,7 +492,10 @@ contract ArbiterChatKeyUpgradeTest is Test {
         uint256 before = upgrade.totalRoutedSelectors(address(diamond));
 
         // ── Сам cut — buildCuts(), та же функция, что зовёт run() ───────
-        ArbiterRegistryFacet newFacet = new ArbiterRegistryFacet();
+        // Двойник «фасет ДО задачи 4.5»: этот разрез исполнен 10 августа 2026,
+        // когда getArbiterChatKeys ещё жил в реестре. Смоук ниже зовёт его
+        // по-настоящему, поэтому воспроизводим тот день точно, а не приблизительно.
+        LegacyPreSplitArbiterFacet newFacet = new LegacyPreSplitArbiterFacet();
         IDiamondCut(address(diamond)).diamondCut(upgrade.buildCuts(address(newFacet)), address(0), "");
 
         // ── Post-flight (как в run()) ─────────────────────────────────
@@ -420,7 +520,7 @@ contract ArbiterChatKeyUpgradeTest is Test {
         // helper скрипта) — подтверждает, что делегирование реально
         // исполняет код нового фасета, а не просто не ревертит на пустом
         // fallback.
-        (bytes32 boxKey2, bytes32 signKey2) = ArbiterRegistryFacet(address(diamond)).getArbiterChatKeys(address(0xDEAD));
+        (bytes32 boxKey2, bytes32 signKey2) = ArbiterAccountabilityFacet(address(diamond)).getArbiterChatKeys(address(0xDEAD));
         assertEq(boxKey2, bytes32(0));
         assertEq(signKey2, bytes32(0));
     }
@@ -465,6 +565,34 @@ contract ArbiterChatKeyUpgradeTest is Test {
         OwnershipFacet(address(diamond)).acceptOwnership();
         assertEq(OwnershipFacet(address(diamond)).owner(), ownerAddr, "ownership transfer did not take");
 
+        // ⚠️ ГОНКА ЧЕРЕЗ ПРОЦЕСС-ГЛОБАЛЬНЫЙ vm.setEnv (задача 4.6, Ruling 34,
+        // 16 августа 2026). `vm.setEnv` пишет в окружение ПРОЦЕССА, а сюиты
+        // форджа идут параллельно. Три стенда разрезов
+        // (ArbiterAccountabilityUpgrade, PresentationRecordUpgrade,
+        // ArbiterChatKeyUpgrade) кладут сюда DIAMOND_ADDRESS и тут же читают
+        // его внутри run(). Безобидно это ровно потому, что все три кладут
+        // ОДИН И ТОТ ЖЕ адрес: последовательность `new` до создания даймонда у
+        // них совпадает, а значит совпадает и nonce.
+        //
+        // Лишний `new`, дописанный в любой из трёх, сдвигает nonce — адрес
+        // уезжает, чужой run() уходит лупой в посторонний контракт, и полный
+        // прогон начинает падать «случайным EvmError: Revert» примерно раз в
+        // двадцать раз, ничего не говоря о причине (замерено: 2 падения из 40
+        // при зелёном одиночном прогоне 25 из 25).
+        //
+        // Сама гонка этой строкой НЕ чинится — настоящее лекарство в том,
+        // чтобы не передавать адрес через окружение вовсе, и оно записано
+        // отдельным пунктом в OPEN-ITEMS. Строка превращает будущий флейк в
+        // ДЕТЕРМИНИРОВАННЫЙ красный с названной причиной.
+        //
+        // Адрес взят ЗАМЕРОМ (пробой assertEq по всем трём стендам разом), а
+        // не выведен из кода: выведенный уехал бы вместе с гонкой и промолчал.
+        assertEq(
+            address(diamond),
+            0xc7183455a4C133Ae270771860664b6B7ec320bB1,
+            unicode"адрес даймонда уехал: сдвинулся nonce стенда, и DIAMOND_ADDRESS "
+            unicode"в процессе теперь разный у трёх сюит — см. комментарий выше"
+        );
         vm.setEnv("DIAMOND_ADDRESS", vm.toString(address(diamond)));
         vm.setEnv("PRIVATE_KEY", vm.toString(pk));
 
@@ -481,7 +609,7 @@ contract ArbiterChatKeyUpgradeTest is Test {
         uint256 afterTotal = upgrade.totalRoutedSelectors(address(diamond));
         assertEq(afterTotal, before_ - upgrade.removeSelectors().length + upgrade.addSelectors().length);
 
-        (bytes32 boxKey, bytes32 signKey) = ArbiterRegistryFacet(address(diamond)).getArbiterChatKeys(address(0xDEAD));
+        (bytes32 boxKey, bytes32 signKey) = ArbiterAccountabilityFacet(address(diamond)).getArbiterChatKeys(address(0xDEAD));
         assertEq(boxKey, bytes32(0));
         assertEq(signKey, bytes32(0));
 
@@ -491,7 +619,7 @@ contract ArbiterChatKeyUpgradeTest is Test {
         assertEq(afterCut.arbiterCount, before.arbiterCount, unicode"arbiterCount не пережил cut");
         assertEq(afterCut.vaultBalance, before.vaultBalance, unicode"vaultBalance не пережил cut");
 
-        (bytes32 seededBox, bytes32 seededSign) = ArbiterRegistryFacet(address(diamond)).getArbiterChatKeys(seededArbiter);
+        (bytes32 seededBox, bytes32 seededSign) = ArbiterAccountabilityFacet(address(diamond)).getArbiterChatKeys(seededArbiter);
         assertEq(seededBox, SEED_BOX_KEY, unicode"arbiterBoxKey, записанный ДО cut'а, не пережил замену фасета");
         assertEq(seededSign, SEED_SIGN_KEY, unicode"arbiterSignKey, записанный ДО cut'а, не пережил замену фасета");
     }
@@ -679,7 +807,7 @@ contract ArbiterChatKeyUpgradeTest is Test {
         // Сначала доказываем предпосылку: getArbiterChatKeys правда не
         // смонтирован на этом даймонде до cut'а.
         vm.expectRevert();
-        f.getArbiterChatKeys(arb);
+        ArbiterAccountabilityFacet(address(diamond)).getArbiterChatKeys(arb);
 
         // А предупреждение при этом отрабатывает без единого revert.
         address[] memory flagged = upgrade.findArbitersWithOpenClaimsMissingKeys(address(diamond));

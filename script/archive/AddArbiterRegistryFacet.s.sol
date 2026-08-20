@@ -9,6 +9,7 @@ pragma solidity ^0.8.20;
 import "forge-std/Script.sol";
 import "forge-std/console.sol";
 import "../../src/facets/ArbiterRegistryFacet.sol";
+import {ArbiterAccountabilityFacet} from "../../src/facets/ArbiterAccountabilityFacet.sol";
 import "../../src/RegistryFacet.sol";
 import "../../src/DiamondProxy.sol";
 
@@ -31,13 +32,13 @@ contract AddArbiterRegistryFacet is Script {
 
         bytes4[] memory arbiterSelectors = new bytes4[](8);
         arbiterSelectors[0] = ArbiterRegistryFacet.addArbiter.selector;
-        arbiterSelectors[1] = ArbiterRegistryFacet.removeArbiter.selector;
+        arbiterSelectors[1] = bytes4(0x3487e08c) /* removeArbiter(address), удалена 15 августа 2026 (задача 6 arbiter-accountability) */;
         arbiterSelectors[2] = bytes4(keccak256("claimDispute(address,bytes32)")) /* frozen: old 2-arg selector, historical cut */;
         arbiterSelectors[3] = ArbiterRegistryFacet.releaseDisputeClaim.selector;
         arbiterSelectors[4] = ArbiterRegistryFacet.isRegisteredArbiter.selector;
         arbiterSelectors[5] = ArbiterRegistryFacet.getArbiters.selector;
         arbiterSelectors[6] = ArbiterRegistryFacet.getDisputeClaimer.selector;
-        arbiterSelectors[7] = ArbiterRegistryFacet.getArbiterDeals.selector;
+        arbiterSelectors[7] = ArbiterAccountabilityFacet.getArbiterDeals.selector;
 
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: address(arbiterFacet),
