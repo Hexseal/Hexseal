@@ -10,13 +10,18 @@ import { Input } from '@/components/ui/input';
 import { toast } from 'react-hot-toast';
 import {
   Loader2, DollarSign, Settings,
-  Shield, UserCog, AlertTriangle, UserPlus, UserMinus,
+  Shield, UserCog, AlertTriangle, UserPlus,
   Search, ExternalLink, Crown, BarChart3, Gavel, Activity,
   TrendingUp, Wallet, CheckCircle2, XCircle,
 } from 'lucide-react';
 import { isAddress, parseAbi } from 'viem';
 import { cn } from '@/lib/utils';
 import { PageCenter } from '@/components/PageCenter';
+import {
+  ArbiterAccountabilityCard,
+  ArbiterAccountabilityNotice,
+} from '@/components/AdminArbiterAccountability';
+import { useRemovalRules } from '@/hooks/useRemovalRules';
 
 // ─── Mini ABI ────────────────────────────────────────────────────────────────
 
@@ -157,8 +162,17 @@ function ArbitersTab() {
   const [newArbiter,    setNewArbiter]    = useState('');
   const [newChief,      setNewChief]      = useState('');
   const [addingArbiter, setAddingArbiter] = useState(false);
-  const [removingAddr,  setRemovingAddr]  = useState<string | null>(null);
   const [settingChief,  setSettingChief]  = useState(false);
+
+  /**
+   * ⚠️ ОДНА ПРОБА НА ВЕСЬ СПИСОК, А НЕ ПО ОДНОЙ НА АРБИТРА. Правила сноса
+   * (пауза, срок годности, потолок слов, порог и потолок судейских ошибок)
+   * одинаковы для всех, и они же служат пробой «смонтирован ли фасет»: разрез
+   * ещё не сделан, и до него КАЖДОЕ чтение из него ревертит в fallback
+   * даймонда. Спрашивать это на каждой строке значило бы двадцать одинаковых
+   * отказов вместо одной внятной фразы.
+   */
+  const removalRules = useRemovalRules();
 
   /**
    * ⚠️ ЖЁСТКОГО `gas:` ЗДЕСЬ БОЛЬШЕ НЕТ, И ЭТО НЕ КОСМЕТИКА.
@@ -205,41 +219,26 @@ function ArbitersTab() {
   };
 
   /**
-   * ⚠️ КНОПКА УМИРАЮЩАЯ, И ИМЕННО ПОЭТОМУ С НЕЁ СНЯТ ЖЁСТКИЙ ГАЗ.
+   * ⚠️ ЗДЕСЬ БЫЛА КНОПКА `removeArbiter(address)`, И ЕЁ БОЛЬШЕ НЕТ.
    *
-   * Голая `removeArbiter(address)` (селектор 0x3487e08c) удалена из фасета и
-   * уходит из даймонда единственным элементом Remove в разрезе
-   * script/UpgradeArbiterAccountability.s.sol. После разреза селектор не
-   * маршрутизируется никуда — вызов проваливается в fallback даймонда и
-   * ревертит.
+   * Голая `removeArbiter` (селектор `0x3487e08c`) уходит из даймонда
+   * единственным элементом `Remove` в разрезе
+   * `script/UpgradeArbiterAccountability.s.sol`: после разреза селектор не
+   * маршрутизируется никуда, вызов проваливается в fallback даймонда и
+   * ревертит. Кнопку сняли ДО разреза, а не после, — иначе живая кнопка
+   * умерла бы молча.
    *
-   * С явным `gas:` это худший из возможных исходов: кошелёк не оценивает вызов,
-   * транзакция уходит в цепь, ревертит и ЗАБИРАЕТ ДЕНЬГИ, не объяснив ничего.
-   * Без явного газа eth_estimateGas провалится заранее — локально, бесплатно и
-   * до подписи.
+   * ⚠️ И ЗАМЕНИЛА ЕЁ НЕ ДРУГАЯ КНОПКА, А ПРОЦЕСС. Снос теперь идёт четырьмя
+   * шагами (замысел `docs/superpowers/specs/2026-08-21-arbiter-screens-design.md`,
+   * раздел 4): предложить с поводом → 48 часов паузы, в которые обвинённый
+   * отвечает → исполнить тем же поводом или отозвать. Всё это живёт в
+   * `components/AdminArbiterAccountability.tsx`; здесь остался только список.
    *
-   * Саму кнопку здесь не трогаем: чем её заменить (форма сноса с поводом,
-   * ArbiterAccountabilityFacet.removeArbiterForCause) — решение владельца.
-   * Снята только ловушка.
+   * Прежний комментарий на этом месте объяснял, почему с умирающей кнопки снят
+   * жёсткий `gas:` (чтобы после разреза она падала до подписи и бесплатно). Он
+   * не протух — правило переехало вместе с работой и теперь стоит замком на
+   * ВЕСЬ арбитражный фасет, а не на одну кнопку: `lib/arbiterWritesEstimateGas.test.ts`.
    */
-  const handleRemove = async (addr: string) => {
-    if (!publicClient) { toast.error('Failed'); return; }
-    setRemovingAddr(addr);
-    try {
-      const hash = await writeContractAsync({
-        address: CONTRACTS.diamond as `0x${string}`, abi: ARBITER_REGISTRY_ABI,
-        functionName: 'removeArbiter', args: [addr as `0x${string}`],
-      });
-      const receipt = await publicClient.waitForTransactionReceipt({ hash });
-      if (receipt.status === 'reverted') throw new Error('Transaction reverted on-chain');
-      toast.success('Arbiter removed');
-      refetchArbiters();
-    } catch (err: unknown) {
-      const e = err as { shortMessage?: string; message?: string };
-      toast.error(e?.shortMessage ?? e?.message ?? 'Failed');
-    }
-    finally { setRemovingAddr(null); }
-  };
 
   const handleSetChief = async () => {
     const addr = newChief.trim();
@@ -277,6 +276,11 @@ function ArbitersTab() {
         hint="Pool of human arbiters who can claim disputed cases. Chief arbiter can manage this list."
         icon={Shield}
       >
+        {/* ⚠️ Одна фраза на весь список, если фасета в цепи ещё нет: до разреза
+             КАЖДОЕ чтение и КАЖДАЯ кнопка ниже отвечают отказом даймонда, и без
+             этой фразы страница выглядела бы сломанной. */}
+        <ArbiterAccountabilityNotice presence={removalRules.presence} />
+
         {/* List */}
         {!arbiters ? (
           <div className="flex justify-center py-4"><Loader2 className="w-4 h-4 animate-spin text-white/20" /></div>
@@ -287,33 +291,15 @@ function ArbitersTab() {
           </div>
         ) : (
           <div className="space-y-1.5">
-            {arbiters.map((addr) => {
-              const isChief = addr.toLowerCase() === chiefArbiter;
-              return (
-                <div key={addr} className={cn(
-                  "flex items-center justify-between gap-3 rounded-[14px] border px-3 py-2.5",
-                  isChief ? "border-amber-500/20 bg-amber-500/[0.05]" : "border-white/[0.06] bg-white/[0.02]"
-                )}>
-                  <div className="flex items-center gap-2 min-w-0">
-                    {isChief && <Crown className="w-3.5 h-3.5 text-amber-400 shrink-0" />}
-                    <span className="font-mono text-xs text-white/60 truncate">{addr}</span>
-                    {isChief && (
-                      <span className="text-[10px] px-1.5 py-0.5 rounded border border-amber-500/30 text-amber-400 shrink-0">Chief</span>
-                    )}
-                  </div>
-                  <button
-                    className="flex items-center gap-1.5 text-xs text-red-400/50 hover:text-red-400 transition-colors shrink-0 disabled:opacity-30"
-                    disabled={removingAddr === addr}
-                    onClick={() => handleRemove(addr)}
-                  >
-                    {removingAddr === addr
-                      ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                      : <UserMinus className="w-3.5 h-3.5" />}
-                    Remove
-                  </button>
-                </div>
-              );
-            })}
+            {arbiters.map((addr) => (
+              <ArbiterAccountabilityCard
+                key={addr}
+                arbiter={addr}
+                isChief={addr.toLowerCase() === chiefArbiter}
+                rules={removalRules}
+                onChanged={refetchArbiters}
+              />
+            ))}
           </div>
         )}
 

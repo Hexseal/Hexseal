@@ -11,7 +11,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
   Loader2, AlertTriangle, CheckCircle, History, ShieldCheck, Scale,
-  UserCheck, UserX, Search, Crown, UserPlus, UserMinus, MessageCircle,
+  UserCheck, UserX, Search, Crown, UserPlus, MessageCircle,
   Coins, Lock, Inbox,
 } from "lucide-react";
 import { toast } from "react-hot-toast";
@@ -41,6 +41,11 @@ import {
 import { fetchPeerChatKeys } from "@/hooks/useChatSession";
 import { requestBagPass } from "@/lib/chatTransport";
 import { ArbiterPresentationsTab, type ArbiterCase } from "@/components/ArbiterPresentations";
+import {
+  ArbiterAccountabilityCard,
+  ArbiterAccountabilityNotice,
+} from "@/components/AdminArbiterAccountability";
+import { useRemovalRules } from "@/hooks/useRemovalRules";
 // ⚠️ Число статуса — ИЗ ОДНОГО МЕСТА НА ВЕСЬ ФРОНТ (итоговое ревью ветки 4в-2,
 // правка 2). Своей копии здесь больше нет: она была третьей, и сверялась
 // только сама с собой. Хозяин один, и он заперт на исходник контракта
@@ -1565,8 +1570,15 @@ function ManagePanel({ isOwner }: { isOwner: boolean }) {
   const publicClient = usePublicClient();
   const { writeContractAsync } = useWriteContract();
   const [newArbiter,   setNewArbiter]   = useState("");
-  const [removingAddr, setRemovingAddr] = useState<string | null>(null);
   const [isAdding,     setIsAdding]     = useState(false);
+
+  /**
+   * ⚠️ ОДНА ПРОБА НА ВЕСЬ СПИСОК — та же, что в админке. Правила сноса
+   * одинаковы для всех арбитров и служат заодно пробой «смонтирован ли фасет»:
+   * разрез ещё не сделан, и до него КАЖДОЕ чтение из него ревертит в fallback
+   * даймонда.
+   */
+  const removalRules = useRemovalRules();
 
   // `useWriteContract().isPending` — единственное, чем эти две кнопки гейтились
   // раньше, — гаснет на БРОДКАСТЕ, а не на включении в блок. Между этими двумя
@@ -1600,26 +1612,26 @@ function ManagePanel({ isOwner }: { isOwner: boolean }) {
     finally { setIsAdding(false); }
   };
 
-  const handleRemove = async (addr: string) => {
-    if (!publicClient) { toast.error(t("common.error")); return; }
-    setRemovingAddr(addr);
-    try {
-      const hash = await writeContractAsync({
-        address: CONTRACTS.diamond as Address, abi: ARBITER_REGISTRY_ABI as Abi,
-        // ⚠️ Кнопка умирающая: голая removeArbiter(address) уходит из даймонда
-        // единственным Remove разреза UpgradeArbiterAccountability. Разбор — в
-        // близнеце, app/admin/page.tsx (handleRemove). Жёсткий газ снят, чтобы
-        // после разреза оценка провалилась ДО подписи, а не транзакция в цепи
-        // после неё: иначе отказ забирает деньги и не объясняет ничего. Сама
-        // кнопка не трогается — чем её заменить, решает владелец.
-        functionName: "removeArbiter", args: [addr as Address],
-      });
-      assertMined(await publicClient.waitForTransactionReceipt({ hash }));
-      toast.success(t("arbiter.removed_success"));
-      refetch();
-    } catch (err: any) { toast.error(err?.shortMessage || err?.message || t("common.error")); }
-    finally { setRemovingAddr(null); }
-  };
+  /**
+   * ⚠️ ЗДЕСЬ БЫЛА ВТОРАЯ КНОПКА `removeArbiter(address)`, И ЕЁ БОЛЬШЕ НЕТ.
+   *
+   * Голая `removeArbiter` (селектор `0x3487e08c`) уходит из даймонда
+   * единственным элементом `Remove` разреза
+   * `script/UpgradeArbiterAccountability.s.sol`. Кнопок было ДВЕ — эта и
+   * близнец в `app/admin/page.tsx`; замысел экранов назвал только вторую, и
+   * первый заход снял только её. Живая дорога сюда шла через вкладку
+   * «Управление» под `isOwner`, то есть разрез убил бы её так же молча.
+   *
+   * ⚠️ И КОММЕНТАРИЙ, СТОЯВШИЙ НА ЭТОМ МЕСТЕ, УСПЕЛ СОВРАТЬ: он отсылал за
+   * разбором «к близнецу в `app/admin/page.tsx (handleRemove)`», которого с
+   * 21 августа 2026 не существует. Ссылка по имени функции переживает переезд
+   * строки, но не переживает удаления самой функции — а протухает молча.
+   *
+   * Заменил не второй поток, а ТОТ ЖЕ компонент, что в админке
+   * (`components/AdminArbiterAccountability.tsx`): предложить с поводом → 48
+   * часов → исполнить тем же поводом или отозвать. Двух реализаций одного
+   * процесса в проекте быть не должно — они разойдутся, и разойдутся тихо.
+   */
 
   return (
     <div className="space-y-4">
@@ -1629,26 +1641,35 @@ function ManagePanel({ isOwner }: { isOwner: boolean }) {
       </div>
       <p className="text-xs text-white/35 -mt-2">{t("arbiter.chief_desc")}</p>
 
+      {/* ⚠️ Уведомление только владельцу: поток сноса живёт под `isOwner`, и
+           фраза «этой части ещё нет в цепи» относится именно к нему. Директору
+           показывать её незачем — у него и после разреза этих кнопок не
+           появится (дверь под владельцем, а контракт пускает и директора —
+           заведено пунктом в docs/OPEN-ITEMS.md). */}
+      {isOwner && <ArbiterAccountabilityNotice presence={removalRules.presence} />}
+
       {!arbiters || arbiters.length === 0 ? (
         <p className="text-sm text-white/30 py-4 text-center">{t("arbiter.no_arbiters")}</p>
       ) : (
         <div className="space-y-2">
           {arbiters.map(addr => (
-            <div key={addr} className="flex items-center justify-between gap-3 rounded-[14px] border border-white/[0.07] bg-[#0d0d0f] px-3 py-2.5">
-              <span className="font-mono text-xs text-white/60 truncate">{addr}</span>
-              {isOwner && (
-                <button
-                  className="flex items-center gap-1 text-xs text-red-400/60 hover:text-red-400 transition-colors shrink-0 disabled:opacity-40"
-                  disabled={!!removingAddr || isAdding}
-                  onClick={() => handleRemove(addr)}
-                >
-                  {removingAddr === addr
-                    ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                    : <UserMinus className="w-3.5 h-3.5" />}
-                  {t("arbiter.remove_btn")}
-                </button>
-              )}
-            </div>
+            isOwner ? (
+              /* ⚠️ ТОТ ЖЕ КОМПОНЕНТ, ЧТО В АДМИНКЕ, А НЕ ВТОРАЯ РЕАЛИЗАЦИЯ.
+                 Процесс сноса один; две его копии разошлись бы в тишине, и
+                 узнали бы мы об этом от человека, у которого на одной странице
+                 повод проверяется, а на другой нет. */
+              <ArbiterAccountabilityCard
+                key={addr}
+                arbiter={addr as Address}
+                isChief={false}
+                rules={removalRules}
+                onChanged={refetch}
+              />
+            ) : (
+              <div key={addr} className="flex items-center justify-between gap-3 rounded-[14px] border border-white/[0.07] bg-[#0d0d0f] px-3 py-2.5">
+                <span className="font-mono text-xs text-white/60 truncate">{addr}</span>
+              </div>
+            )
           ))}
         </div>
       )}
@@ -1665,7 +1686,7 @@ function ManagePanel({ isOwner }: { isOwner: boolean }) {
                 onChange={e => setNewArbiter(e.target.value)}
                 className="font-mono text-sm bg-transparent border-white/[0.08] rounded-[14px]"
               />
-              <Button onClick={handleAdd} disabled={isAdding || !!removingAddr || !newArbiter} className="gap-1 shrink-0">
+              <Button onClick={handleAdd} disabled={isAdding || !newArbiter} className="gap-1 shrink-0">
                 {isAdding ? <Loader2 className="w-4 h-4 animate-spin" /> : <UserPlus className="w-4 h-4" />}
                 {t("arbiter.add_btn")}
               </Button>
