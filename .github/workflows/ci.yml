@@ -119,6 +119,29 @@ jobs:
       - name: Check submodule pins (git vs foundry.lock)
         run: ./script/check-submodule-pins.sh
 
+      # ── The ninth gate, added 21 August 2026 ──────────────────────────────
+      #
+      # The repository is public since 14 August; the design specs and the
+      # working notes are not, and nothing stopped a comment from pointing into
+      # them. By 21 August eight tracked files did — a dead link for every
+      # reader, and a disclosure of the date and subject of a document nobody
+      # outside is going to get.
+      #
+      # It belongs in CI rather than in a habit, because the two sweeps done by
+      # hand before it BOTH found some of the references and missed the rest.
+      # One of the misses is why this gate does not read physical lines: the
+      # reference in relayer/bagStore.js was wrapped across a line break, so
+      # every grep for the directory came back clean while the pointer stayed
+      # perfectly readable.
+      #
+      # Measured, three consecutive runs: 0.85 s, 0.85 s, 0.84 s. It reads the
+      # 692 tracked files and needs no build, no node_modules and no network,
+      # so unlike the eight gates above it does not even depend on the warm
+      # cache — it would hold on a bare checkout with the submodules missing.
+      # python3 is already proven present by the gates above.
+      - name: Check internal refs (nothing tracked points at withheld material)
+        run: ./script/check-internal-refs.sh
+
   # Симметрия к `contracts`: у фронта и релеера тесты были написаны и зелены,
   # но не запускались нигде — то есть памяти о поломках у них не было вовсе.
   # Всё, что здесь перечислено, уже существует в репозитории; job ничего не

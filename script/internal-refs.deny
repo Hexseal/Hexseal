@@ -1,0 +1,88 @@
+# Registry of what a tracked file must NOT point at.
+#
+# Checked by: ./script/check-internal-refs.sh
+# Rule:       the repository is public. A file in it may not carry a pointer to
+#             material that is deliberately not in it — neither the path to the
+#             directory, nor the bare name of a document inside it.
+#
+# Two harms in one pointer, and the second is the one that is easy to forget:
+# the link is dead for every reader of a fresh clone, AND it tells an outside
+# reader the date and the subject of a document being withheld.
+#
+# Every entry must carry a line starting literally with
+#
+#     because: ...
+#
+# Without it the gate treats this file as damaged and exits 2. The format is
+# deliberately inconvenient: a path cannot be forbidden here without saying out
+# loud why that path is not in the repository.
+#
+# ── WHY THIS LIST IS WRITTEN OUT BY HAND ──────────────────────────────────────
+#
+# It cannot be derived from the ignore rules, and the reason is structural:
+# `docs/superpowers/` is excluded through `.git/info/exclude`, which is NOT a
+# tracked file and does not exist in a CI checkout. A gate that read the ignore
+# rules would be green in CI for the largest entry on this list, and green for
+# the wrong reason — the worst kind.
+#
+# So a new directory of withheld material has to be added here by hand. That is
+# the standing cost of the arrangement, and it is written down so nobody has to
+# rediscover it.
+#
+# ── WHAT IS DELIBERATELY NOT ON THIS LIST ─────────────────────────────────────
+#
+# Not everything absent from git belongs here. These are ignored too, and they
+# are named in tracked files on purpose:
+#
+#   `.claude/`, `deploy-local.sh`
+#       operator-side files that the documentation names because the operator
+#       has to run them. Naming them is the point, not a leak.
+#
+#   `broadcast/`, `out/`, `cache/`, `node_modules/`, `.next/`
+#       build and deployment artefacts. Documents point at them constantly and
+#       correctly — that is where a reader is told to look on their own machine.
+#
+#   the personal `.txt` drafts under `docs/`
+#       ignored, never referenced by anything, and their names disclose
+#       nothing. Add an entry here the day one of them is referenced.
+#
+#   `task-<n>.md`, `task-<n>-report.md` and similar plan-step names
+#       referenced from sixteen places in tracked comments as of 21 August
+#       2026. Same class, weaker harm: the name gives up no subject and no
+#       date, only that an internal report exists. Cleaning those up is its own
+#       piece of work, and putting the pattern here before that work is done
+#       would leave the gate red on arrival — a gate that ships red is a gate
+#       that gets switched off.
+
+path :: docs/superpowers/
+  because: the design specs, the plans and the per-task reports. Withheld from
+  because: publication on 13 August 2026 by the owner, before the repository
+  because: was opened on the 14th, and excluded through `.git/info/exclude`
+  because: rather than `.gitignore` so the public file does not advertise them.
+
+path :: .superpowers/
+  because: the agent's own working notes, reviews and diffs for the task in
+  because: hand. Same decision, same day; excluded through `.gitignore`, which
+  because: is why this one name is visible there and nowhere else.
+
+path :: docs/thoughts/
+  because: personal drafts. Ignored since long before the repository was
+  because: public, and never a document anyone else could open.
+
+path :: .worktrees/
+  because: throwaway isolated worktrees. A path into one is dead even on the
+  because: machine that made it, as soon as that worktree is removed.
+
+name :: \d{4}-\d{2}-\d{2}-[A-Za-z0-9][A-Za-z0-9._-]*\.md
+  because: the naming convention of the design documents: a date, a subject, a
+  because: `-design.md` or `-sketch.md` suffix. Written on its own, without any
+  because: directory in front of it, such a name slips past every search for
+  because: the directory — that is how five of the eight references found on
+  because: 21 August 2026 were written — while disclosing the date and the
+  because: subject just as loudly as the full path would.
+  because:
+  because: A name matching this shape is a violation only when NO TRACKED FILE
+  because: carries it. Dated documents that live in the repository — the audit
+  because: reports under `docs/audits/`, for one — are named freely, and the
+  because: answer to "does this one live here" comes from `git ls-files`, not
+  because: from the text being checked.

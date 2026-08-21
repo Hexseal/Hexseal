@@ -1,0 +1,104 @@
+# Registry of tracked files that may name withheld material, and of tracked
+# files this scanner cannot read.
+#
+# Checked by: ./script/check-internal-refs.sh
+# Rule:       a file in a public repository does not point at material that is
+#             deliberately not in it — see script/internal-refs.deny.
+#
+# This is NOT a place to silence findings. Every entry must carry a line
+# starting literally with
+#
+#     because: ...
+#
+# and every `file ::` entry must carry
+#
+#     occurrences: <number>
+#
+# Without either one the gate calls this file damaged and exits 2.
+#
+# ── WHY THE COUNT IS PINNED ───────────────────────────────────────────────────
+#
+# An exception without a number covers not only the reference that was read and
+# accepted, but every reference the file will ever grow. That is how an
+# exception turns into a hiding place: the one file allowed to name the
+# withheld directories becomes the one file where a new dead link can be added
+# in silence.
+#
+# So the number is part of the entry. A new reference in an allowed file
+# changes the count and the gate goes red on it, naming the file — which is the
+# point: somebody has to read the new line and raise the number on purpose.
+#
+# A count that falls to zero is red as well. An exception that is no longer
+# needed is a stale claim about the code, and this repository has paid for
+# stale claims more than once.
+
+# ── files that legitimately name the withheld directories ────────────────────
+
+file :: .gitignore
+  occurrences: 3
+  because: this is the file that DOES the excluding. Two of the three names
+  because: here are entries that keep those directories out of the repository,
+  because: and the third is the throwaway-worktree entry. A rule cannot be
+  because: written without naming what it applies to, and there is nothing dead
+  because: about these: they are the reason the paths resolve to nothing.
+  because:
+  because: The count moving is worth a look rather than a shrug: a new line
+  because: here that names withheld material is usually a NEW withheld
+  because: directory, and that is exactly the moment it also has to be added
+  because: to script/internal-refs.deny — which nothing else would remind
+  because: anybody to do.
+
+file :: script/textgrep.py
+  occurrences: 1
+  because: a scanner, told not to descend into the agent's own notes. Same
+  because: shape as the line above: naming a directory in order to skip it is
+  because: not a pointer to a document inside it. Left un-named, the scanner
+  because: would walk into thousands of untracked files on the owner's machine
+  because: and answer questions about material nobody asked about.
+
+file :: script/internal-refs.deny
+  occurrences: 5
+  because: the list of forbidden paths, which cannot exist without spelling
+  because: them out. It names the directories and nothing inside them — no
+  because: document, no date, no section — and the reader who follows it finds
+  because: the explanation of why the path is absent, which is the opposite of
+  because: a dead link.
+
+file :: script/check_internal_refs.py
+  occurrences: 2
+  because: both are inside worked examples in comments, showing where the
+  because: match ends: the directory name matches, the same name with letters
+  because: glued onto it does not. Concrete beats abstract for the person who
+  because: has to change this matcher, and the examples name a directory, not
+  because: anything in it.
+
+# ── files this scanner cannot read, and what they are ────────────────────────
+#
+# Not skipping them quietly is deliberate. The one thing worse than a scanner
+# that misses a file is a scanner that misses it in silence and reports a clean
+# tree — which is not hypothetical here. The search wrapper the shells in this
+# project get runs with `-I`, so a file carrying a raw NUL is skipped without a
+# word: measured on a file whose text plainly contains a withheld path, the
+# wrapper answers "no match" and /usr/bin/grep finds it. That silence has left
+# "single source" checks green forever before.
+#
+# Every file listed here has been opened and confirmed to be what it claims to
+# be. If one of them ever starts decoding as text, the gate goes red and asks
+# for a second look, because a picture that turned into text is not a picture.
+
+unscannable :: docs/audits/2026-07-25-slither/raw/slither.json.gz
+  because: gzip of the raw Slither JSON from the 25 July 2026 audit, kept
+  because: compressed because the uncompressed report is megabytes of machine
+  because: output nobody reads end to end.
+
+unscannable :: frontend/public/icon-192.png
+  because: PWA icon, 192px. A PNG.
+
+unscannable :: frontend/public/icon-512.png
+  because: PWA icon, 512px. A PNG.
+
+unscannable :: frontend/src/app/favicon.ico
+  because: the browser tab icon, in the ICO container format.
+
+unscannable :: frontend/src/app/icon.png
+  because: the app icon Next.js serves from the app directory. A PNG.
