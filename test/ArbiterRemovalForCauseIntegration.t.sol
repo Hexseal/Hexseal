@@ -2500,6 +2500,91 @@ contract ArbiterRemovalForCauseIntegrationTest is Test {
         );
     }
 
+    /// ⚠️ A TIMEOUT MUST LEAVE A RECORD NAMING THE ARBITER (round of edits 1,
+    /// 21 August 2026).
+    ///
+    /// Before this, the FIRST and SECOND timeouts left nothing on chain that a
+    /// reader could address by arbiter: notifyArbiterTimeout emitted nothing at
+    /// all, and Agreement.ArbiterTimedOut(address indexed client, uint256)
+    /// lives on the deal and names the CLIENT. The counter grew in silence.
+    ///
+    /// Why that mattered: the chain's accusation stands on three disputes and
+    /// only two could be recovered from the logs. The accused was shown two of
+    /// the three, and the third was not "marked missing" — it was invisible.
+    ///
+    /// The scene takes the FIRST timeout, where no accusation exists yet and
+    /// nothing else is emitted. That is the one that was mute.
+    function test_TheTimeoutLeavesARecordNamingTheArbiter() public {
+        address agr = _fundedDisputeClaimedBy(address(0x9E1), address(0x9E2));
+        vm.warp(vm.getBlockTimestamp() + 4 days + 1);
+
+        // Both fields are indexed and the event carries no data, so both topics
+        // and the empty body are checked.
+        vm.expectEmit(true, true, false, true, address(diamond));
+        emit ArbiterRegistryFacet.ArbiterTimeoutRecorded(arbiter, agr);
+
+        vm.prank(address(0x9E1));
+        Agreement(agr).triggerArbiterTimeout();
+
+        assertEq(
+            ArbiterAccountabilityFacet(address(diamond)).getArbiterMistakeStreak(arbiter),
+            1,
+            "the mistake was booked - otherwise there is nothing for the event to be about"
+        );
+        assertFalse(
+            ArbiterAccountabilityFacet(address(diamond)).hasLiveProposal(arbiter),
+            "and it is the FIRST mistake: no accusation yet, one log in the receipt"
+        );
+    }
+
+    /// A run of three with a timeout in the middle is recoverable FROM THE LOGS
+    /// in full — owner decision 15a, checked against the chain rather than
+    /// against the indexer.
+    ///
+    /// The scene builds three disputes: an overturn, a timeout, an overturn.
+    /// The chain's accusation will name the last; the first two have to be
+    /// findable in the logs by the arbiter's address. Before the fix the middle
+    /// one was findable by nothing.
+    function test_TheWholeRunIsRecoverableFromLogsWithATimeoutInIt() public {
+        vm.recordLogs();
+
+        _disputeAndOverturn(address(0x9F1), address(0x9F2));
+
+        address timedOut = _fundedDisputeClaimedBy(address(0x9F3), address(0x9F4));
+        vm.warp(vm.getBlockTimestamp() + 4 days + 1);
+        vm.prank(address(0x9F3));
+        Agreement(timedOut).triggerArbiterTimeout();
+
+        _disputeAndOverturn(address(0x9F5), address(0x9F6));
+
+        (, , , , bool live) = ArbiterAccountabilityFacet(address(diamond)).getRemovalProposal(arbiter);
+        assertTrue(live, "three mistakes - the chain has accused");
+
+        // Collect the disputes off the logs the way a reader does: two kinds of
+        // event, and the arbiter is a topic in both.
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        uint256 found;
+        bool sawTimedOut;
+        for (uint256 i = 0; i < logs.length; i++) {
+            if (logs[i].topics.length < 3) continue;
+            bytes32 sig = logs[i].topics[0];
+            bool overturn = sig == ArbiterRegistryFacet.VerdictOverturned.selector;
+            bool timeout  = sig == ArbiterRegistryFacet.ArbiterTimeoutRecorded.selector;
+            if (!overturn && !timeout) continue;
+
+            // VerdictOverturned(agreement, arbiter, ...) puts the arbiter
+            // second; ArbiterTimeoutRecorded(arbiter, agreement) puts him first.
+            address who = address(uint160(uint256(overturn ? logs[i].topics[2] : logs[i].topics[1])));
+            if (who != arbiter) continue;
+
+            found++;
+            if (timeout && address(uint160(uint256(logs[i].topics[2]))) == timedOut) sawTimedOut = true;
+        }
+
+        assertEq(found, 3, "all three disputes of the run must be readable from the logs");
+        assertTrue(sawTimedOut, "and the middle one is the timeout");
+    }
+
     /// Общий кусок для сцен таймаута: сделка доведена до забранного спора.
     function _fundedDisputeClaimedBy(address cli, address exec) internal returns (address agr) {
         usdc.mint(cli, 1_000_000 * 10 ** 6);

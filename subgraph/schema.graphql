@@ -191,6 +191,7 @@ type Arbiter @entity(immutable: false) {
   suspensionLiftCount: Int!
   removalProposalCount: Int!
   answerCount: Int!
+  timeoutCount: Int!
 
   # The accusation currently standing against this address, if any: at most one
   # of the two is set, and both are cleared on re-seating because the chain
@@ -204,13 +205,66 @@ type Arbiter @entity(immutable: false) {
   # PROPOSAL, and neither pointer is set. The old wording here said the gate was
   # "removedAt != 0, and an automatic demotion sets that too"; both halves are
   # false now — task 12 stopped the automatic path from writing removedAt at
-  # all. handleRemovalAnswered logs a warning and keeps the answer unlinked in
-  # that case. Linking it to latestProposal is feed work nobody has ordered, and
-  # it is blocked upstream anyway: RemovalProposedByChain is not indexed at all
-  # (script/check_subgraph_arbiter_events.py says so out loud), so for the
-  # chain-accused there is no proposal record to hang anything off.
+  # all.
+  #
+  # ⚠️ AND THE ANSWER IS NO LONGER LEFT UNLINKED IN THAT CASE (21 August 2026).
+  # The line here used to end "linking it to latestProposal is feed work nobody
+  # has ordered, and it is blocked upstream anyway: RemovalProposedByChain is
+  # not indexed at all" — both halves have since stopped being true. The chain's
+  # accusation is indexed and has its own pointer below; the director's proposal
+  # is reachable through latestProposal. RemovalAnswer now carries four possible
+  # links and handleRemovalAnswered tries them in the order the contract's own
+  # gate reads them.
   openRemoval: ArbiterRemoval
   openDemotion: ArbiterDemotion
+
+  # The chain's own accusation currently standing, if any. A THIRD pointer and
+  # not a third state of the two above: the chain writes its proposal into the
+  # very same storage slot a director's proposal uses, so at most one of
+  # `openChainAccusation` and a live `latestProposal` can exist — but the two
+  # carry different fields (the chain names no accuser, no digest and no words)
+  # and folding them into one entity would mean inventing the missing ones.
+  openChainAccusation: ChainAccusation
+  chainAccusationCount: Int!
+
+  # ⚠️ THE DISPUTES OF THE MISTAKE STREAK THAT IS RUNNING RIGHT NOW, oldest
+  # first — the half of owner decision 15a an indexer can supply and the chain
+  # cannot. `RemovalProposedByChain` carries ONE agreement, the one that tipped
+  # him over, while the accusation stands on three; the other two are in the
+  # log and nowhere else, because storing them would cost an array write on
+  # each of the five writers of a counter in a facet with 6% of its bytecode
+  # budget left.
+  #
+  # This list is a WORKING SET, not a record: it is appended to on every
+  # judicial mistake this indexer can see, emptied on every reset it can see,
+  # and copied into ChainAccusation.disputes at the moment of an accusation.
+  # The frozen copy there is what a card should read; this one moves.
+  #
+  # ⚠️ AND SINCE 21 AUGUST 2026 IT IS THE WHOLE STREAK. The line here used to
+  # warn that a timeout mistake leaves no log naming the arbiter, so a run
+  # containing one came out short. That was true and it was fixed in the
+  # contract rather than worked around here: notifyArbiterTimeout now emits
+  # ArbiterTimeoutRecorded(arbiter, agreement). All three mistake paths are
+  # observable, and the list is as long as the counter it mirrors.
+  currentSeries: [Bytes!]!
+
+  # The pair of numbers of owner decision 16: "judged" and "overturned", so a
+  # reader can divide. Both MIRROR chain counters that already exist
+  # (getArbiterStanding().cleanVerdicts / .overturnedVerdicts) and neither
+  # replaces them — the chain is authoritative and one contract read away. They
+  # are here so a feed page showing twenty arbiters is one query rather than
+  # twenty calls.
+  #
+  # ⚠️ THE TIMEOUT IS ABSENT FROM `overturnedVerdicts` HERE BECAUSE IT IS ABSENT
+  # ON CHAIN: a timeout is a judicial mistake that overturned nothing — there
+  # was no ruling to overturn — so counting it would put an overturn in the
+  # numerator of a fraction whose denominator counts verdicts. The contract says
+  # this in an allow-list over demotion paths; this mirror says it by having no
+  # handler that touches the number on that path. No threshold reads either
+  # number, deliberately: decision 16 stops at "visible, counted", and the
+  # dividing is the reader's.
+  cleanVerdicts: Int!
+  overturnedVerdicts: Int!
 
   # Most recent records of their kind, whatever state they ended in. Named
   # "latest" and not "live" on purpose: a suspension window expires and a
@@ -219,6 +273,9 @@ type Arbiter @entity(immutable: false) {
   # current time, and the reader is the only one who knows what time it is.
   latestSuspension: ArbiterSuspension
   latestProposal: RemovalProposal
+  # The answer the words of the reply hang off: RemovalAnswered and
+  # RemovalReplyGiven are two logs of one transaction, in that order.
+  latestAnswer: RemovalAnswer
 
   seatings: [ArbiterSeating!]! @derivedFrom(field: "arbiter")
   resignations: [ArbiterResignation!]! @derivedFrom(field: "arbiter")
@@ -228,6 +285,12 @@ type Arbiter @entity(immutable: false) {
   suspensionLifts: [ArbiterSuspensionLift!]! @derivedFrom(field: "arbiter")
   proposals: [RemovalProposal!]! @derivedFrom(field: "arbiter")
   answers: [RemovalAnswer!]! @derivedFrom(field: "arbiter")
+  timeouts: [ArbiterTimeout!]! @derivedFrom(field: "arbiter")
+  chainAccusations: [ChainAccusation!]! @derivedFrom(field: "arbiter")
+  reasons: [RemovalReason!]! @derivedFrom(field: "arbiter")
+  replies: [RemovalReply!]! @derivedFrom(field: "arbiter")
+  verdicts: [Verdict!]! @derivedFrom(field: "arbiter")
+  overturns: [VerdictOverturn!]! @derivedFrom(field: "arbiter")
 }
 
 type ArbiterSeating implements ArbiterRecord @entity(immutable: true) {
@@ -314,6 +377,13 @@ type ArbiterRemoval implements ArbiterRecord @entity(immutable: false) {
   # "proposed for X, removed for Y" is one query rather than two.
   consumedProposal: RemovalProposal
 
+  # The accuser's own words, when he gave any. Derived rather than a pointer
+  # because RemovalReasonGiven is a separate log of the same transaction and
+  # points here itself; a pointer would mean loading and re-saving a record
+  # that has nothing else left to learn. At most one — removeArbiterForCause
+  # emits at most one reason per call.
+  reasons: [RemovalReason!]! @derivedFrom(field: "removal")
+
   answer: RemovalAnswer
   answeredAt: BigInt
 }
@@ -388,6 +458,16 @@ type RemovalProposal implements ArbiterRecord @entity(immutable: false) {
   # never happen; if it does, the removal keeps its link instead of losing the
   # proposal, and the mapping logs a warning naming the arbiter.
   reconstructed: Boolean!
+
+  # The accuser's words at the PROPOSAL stage — the half of the design that
+  # made the 48-hour pause worth having, since the accused has to be told what
+  # he is answering before he answers it. Same derivation as on ArbiterRemoval.
+  reasons: [RemovalReason!]! @derivedFrom(field: "proposal")
+
+  # The reply given while this proposal was still standing. Since 19 August
+  # 2026 that is the ORDINARY case: the answer is taken during the pause, when
+  # nothing has been removed yet.
+  answers: [RemovalAnswer!]! @derivedFrom(field: "proposal")
 }
 
 # The other half of owner decision 2: the accused answers, and the answer is
@@ -416,4 +496,310 @@ type RemovalAnswer implements ArbiterRecord @entity(immutable: true) {
   # thing being answered is a proposal. See the note on Arbiter.openRemoval.
   removal: ArbiterRemoval
   demotion: ArbiterDemotion
+
+  # ⚠️ AND THE TWO ABOVE ARE NO LONGER THE WHOLE LIST. Both accusations that
+  # can stand against a SEATED arbiter — a director's proposal and the chain's
+  # own — are answered during the pause, before anything is removed, and until
+  # 21 August 2026 neither could be pointed at: the chain's accusation was not
+  # indexed at all. Exactly one of the four is set on a well-formed answer.
+  proposal: RemovalProposal
+  chainAccusation: ChainAccusation
+
+  # The words of the answer, when the arbiter gave any. RemovalAnswered carries
+  # only a digest; RemovalReplyGiven carries the text, in the next log of the
+  # same transaction.
+  words: [RemovalReply!]! @derivedFrom(field: "answer")
+}
+
+# =============================================================================
+#  THE CHAIN AS ACCUSER, AND THE WORDS ON BOTH SIDES
+#
+#  Nine logs, in three groups.
+#
+#  THE FOUR THE ACCOUNTABILITY WORK WAS FOR. All four existed on the branch and
+#  reached nobody outside the chain:
+#
+#    RemovalReasonGiven / RemovalReplyGiven — the words of the accusation and
+#      the words of the defence. Without them the feed showed a cause code and
+#      two digests: an accusation nobody had to explain, answered by a hash.
+#    RemovalProposedByChain — the accusation the chain lays in its own name on
+#      the third judicial mistake. Until it was indexed, a removal that followed
+#      one read as a seat taken away with no accusation, no pause and no right
+#      of reply: handleArbiterDemoted closed a proposal the feed had never
+#      shown.
+#    ChainAccusationCleared — that accusation withdrawn, because a panel found
+#      the arbiter right.
+#
+#  THE FOUR THAT MAKE THE EVIDENCE READABLE. Owner decision 15a: the accused
+#  must see every dispute the accusation stands on, not the last of them. The
+#  accusation names one and stands on three, so the rest come from
+#  VerdictOverturned — and with them the RESETS, because a streak is mistakes in
+#  an unbroken ROW. VerdictFinalized zeroes it when, and only when, the verdict
+#  was not overturned, which no single log states; VerdictSubmitted is what a
+#  finalization is held against; AppealResolved is a judicial mistake that
+#  VerdictOverturned never mentions, since the appeal path emits no overturn log
+#  at all.
+#
+#  THE NINTH, AND THE ONLY ONE THAT DID NOT EXIST BEFORE THIS WORK.
+#  ArbiterTimeoutRecorded was added to notifyArbiterTimeout on 21 August 2026,
+#  for this feed and for no other reader. The timeout was the one judicial
+#  mistake the chain booked in complete silence — Agreement's own ArbiterTimedOut
+#  names the CLIENT — so a run containing one could not be rebuilt by any reading
+#  whatever, and the accused was shown two of the three disputes his removal
+#  stood on. That is the shape of gap an indexer cannot close from the outside.
+# =============================================================================
+
+# The chain's accusation, laid by _recordArbiterMistake when the streak reaches
+# MAX_ARBITER_MISTAKES. A record of its own rather than a RemovalProposal with a
+# zero proposer, because the two disagree about their fields rather than about
+# one of them: the chain names no cause the log can carry (it is derived from
+# the demotion path inside the contract), and no evidence digest, "because the
+# evidence is the chain's own state and a hash of nothing would be a promise of
+# a preimage nobody can show". Filling either in here would mean this indexer
+# deciding what the chain accused him of — the one thing the whole file refuses
+# to do.
+#
+# Mutable: the answer, the clearing and the withdrawal all arrive later.
+type ChainAccusation implements ArbiterRecord @entity(immutable: false) {
+  id: ID!
+  arbiter: Arbiter!
+  kind: String!       # "removalProposedByChain"
+  by: Bytes!          # ALWAYS address(0), and here that is the whole point:
+                      # executeChainRemoval refuses any accusation with an
+                      # author, so nobody's name is on this one.
+  timestamp: BigInt!
+  blockNumber: BigInt!
+  txHash: Bytes!
+
+  path: Int!          # raw ArbiterRegistryFacet.DemotionPath of the tipping mistake
+  agreement: Bytes!   # the dispute whose mistake tipped him over
+  proposedAt: BigInt! # the chain's own stamp, which is also the start of the 48 hours
+
+  # ⚠️ EVERY DISPUTE THE ACCUSATION STANDS ON, oldest first, the tipping one
+  # last — owner decision 15a, and the reason VerdictOverturned is indexed at
+  # all. Frozen at the moment of the accusation: Arbiter.currentSeries keeps
+  # moving afterwards, this does not.
+  #
+  # ⚠️ ALL THREE MISTAKE PATHS ARE RECOVERABLE, and until 21 August 2026 one of
+  # them was not. What each rests on:
+  #
+  #   • OwnerOverturn    — VerdictOverturned(agreement, arbiter, ...) names him
+  #                        outright.
+  #   • AppealVote       — no log names the judged arbiter: AppealResolved
+  #                        carries the appellant and AppealVoteCast the voters.
+  #                        Recovered from AppealResolved plus the arbiter of the
+  #                        Verdict it is about, which is why VerdictSubmitted is
+  #                        indexed.
+  #   • AgreementTimeout — recovered from ArbiterTimeoutRecorded, an event added
+  #                        to the contract FOR this list. Before it,
+  #                        notifyArbiterTimeout emitted nothing at all and
+  #                        Agreement's own ArbiterTimedOut named the client, so a
+  #                        run with a timeout in it came out one dispute short
+  #                        and the accused was shown two of the three things he
+  #                        was being removed over. Reading could not fix that;
+  #                        only the contract could.
+  #
+  # ⚠️ AND THE TIMEOUT EVENT CANNOT GO MISSING WHILE ITS MISTAKE LANDS. Both
+  # happen in one call frame of notifyArbiterTimeout, which Agreement reaches
+  # inside an EMPTY try/catch: if anything there reverts, the booking and the
+  # log are lost together and the streak never grew. There is no state in which
+  # the counter counts a mistake this list cannot name.
+  #
+  # What is left is the ordinary one: `disputes` is what the indexer saw. A
+  # disputeCount below the contract's MAX_ARBITER_MISTAKES now means the feed
+  # missed something, and is worth a look rather than a shrug.
+  disputes: [Bytes!]!
+  disputeCount: Int!
+
+  # The reply, when he gave one during the pause. This is the only accusation
+  # in the file that CANNOT be withdrawn by its author and cannot be walked
+  # away from, so for those forty-eight hours the answer is the only thing the
+  # accused can do on chain at all.
+  answer: RemovalAnswer
+  answeredAt: BigInt
+
+  # A panel found him right, so the chain took its own accusation back: the
+  # proposal, the streak and the suspension all go together.
+  clearedAt: BigInt
+  clearedOn: Bytes    # the dispute whose appeal vindicated him
+
+  # Withdrawn by the removal authority or the chief before it was executed.
+  withdrawnAt: BigInt
+  withdrawnBy: Bytes
+
+  # ⚠️ MIRRORS CONTRACT BEHAVIOUR THAT EMITS NOTHING, exactly as
+  # RemovalProposal.voidedAt does and with the same warning attached.
+  # ArbiterRegistryStorage.clearSeat wipes the accusation on every exit door,
+  # and the resignation and the chain's own removal say nothing about it.
+  # Leaving the record open would show a standing accusation next to
+  # getArbiterStanding().hasLiveRemovalProposal reading false.
+  voidedAt: BigInt
+  voidedReason: String   # "resigned" | "demoted" | "removedForCause"
+}
+
+# The words of the accuser. A record of its own and not a field on the
+# accusation, for the same reason the contract made it a separate event: the
+# proposal and the removal logs are already indexed by the subgraph that is
+# live on chain, and widening their signatures would have stopped that feed in
+# silence, since graph-cli matches a log by its canonical signature.
+#
+# `stage` is the raw uint8 the contract sends, 0 at the proposal and 1 at the
+# removal. It is NOT decoded into a name here — but it IS read, in the mapping,
+# to decide which of the two records the words belong to. That is the one place
+# this file lets a number mean something, and it is a two-valued discriminator
+# declared ten lines from the emit, not a six-valued enum with a decoder in the
+# frontend.
+type RemovalReason implements ArbiterRecord @entity(immutable: true) {
+  id: ID!
+  arbiter: Arbiter!
+  kind: String!       # "removalReasonGiven"
+  by: Bytes!          # the accuser, raw msg.sender as the contract sends it
+  timestamp: BigInt!
+  blockNumber: BigInt!
+  txHash: Bytes!
+
+  stage: Int!         # 0 = given with the proposal, 1 = given with the removal
+  reason: String!     # never empty: the contract does not emit an empty reason,
+                      # deliberately, so that "explained" and "said nothing"
+                      # stay different things in the feed
+
+  # Whichever record these words were given with. Exactly one on a well-formed
+  # log, both null when the accusation itself never reached this indexer.
+  proposal: RemovalProposal
+  removal: ArbiterRemoval
+}
+
+# The words of the accused. The symmetric half, and asymmetric on purpose in
+# one respect the schema cannot show: for the accuser the words are a duty when
+# the chain proves nothing itself, for the accused they are a right. Nobody is
+# made to justify himself in public; nobody is left answering an accusation
+# with a hash either.
+type RemovalReply implements ArbiterRecord @entity(immutable: true) {
+  id: ID!
+  arbiter: Arbiter!
+  kind: String!       # "removalReplyGiven"
+  by: Bytes!          # the arbiter himself: respondToRemoval reads _msgSender()
+  timestamp: BigInt!
+  blockNumber: BigInt!
+  txHash: Bytes!
+
+  reply: String!      # never empty, for the same reason `reason` never is
+
+  # The RemovalAnswered log of the same transaction, which carries the digest
+  # and the moment. Null only if that log never reached this indexer.
+  answer: RemovalAnswer
+}
+
+# One arbiter's ruling on one dispute, keyed by the dispute.
+#
+# NOT a public feature in its own right — nothing on a card asks for it. It is
+# here because the evidence under a chain accusation cannot be assembled
+# without it: "the streak resets on a verdict that was finalized WITHOUT being
+# overturned" is a sentence about two logs at once, and this is where the first
+# one waits for the second.
+#
+# Overwritten rather than versioned when a verdict is resubmitted: a stuck
+# verdict can be cleared (StuckVerdictAutoCleared) and the dispute claimed by
+# somebody else, and it is the standing ruling that matters here.
+type Verdict @entity(immutable: false) {
+  id: ID!             # agreement address, lowercase hex
+  agreement: Bytes!
+  arbiter: Arbiter!
+  clientWins: Boolean!
+
+  submittedAt: BigInt
+  overturned: Boolean!
+  overturnedAt: BigInt
+  finalized: Boolean!
+  finalizedAt: BigInt
+  # A panel restored this arbiter's own ruling after a hand had overturned it.
+  # The mistake is taken back on chain — one off the streak, one off the
+  # cumulative count — so it is taken back here too.
+  vindicatedAt: BigInt
+
+  # True when this record was built by an overturn or a finalization arriving
+  # with no submission indexed before it. Same meaning as
+  # RemovalProposal.reconstructed: it should never happen, and if it does the
+  # record survives rather than the event being dropped.
+  reconstructed: Boolean!
+
+  # The most recent overturn of this verdict, as a plain pointer. A derived
+  # list is right for a reader and wrong for the mapping: the vindication
+  # branch has to reach the record it is taking back, and reaching it through a
+  # derived loader means depending on store internals in a handler that runs on
+  # every appeal.
+  latestOverturn: VerdictOverturn
+
+  overturns: [VerdictOverturn!]! @derivedFrom(field: "verdict")
+}
+
+# One judicial mistake of the TIMEOUT kind: the arbiter took a dispute and let
+# the window run out without ruling.
+#
+# ⚠️ THE EVENT BEHIND THIS ENTITY WAS ADDED TO THE CONTRACT FOR IT. Every other
+# record in this file reads a log that already existed; this one exists because
+# the timeout path emitted nothing naming the arbiter, and a mistake run
+# containing one could not be reconstructed by any reading of the chain. The
+# accused was shown two of the three disputes he was about to be removed over,
+# and the missing one was invisible rather than marked absent.
+#
+# No `overturnedVerdicts` moves on this path, here or on chain: a timeout
+# overturned nothing, because there was no ruling to overturn. It is a mistake
+# of the streak and not a mark against a verdict.
+type ArbiterTimeout implements ArbiterRecord @entity(immutable: true) {
+  id: ID!
+  arbiter: Arbiter!
+  kind: String!       # "arbiterTimedOut"
+  by: Bytes!          # address(0): the caller is the deal contract itself, and
+                      # the contract says outright there is no person behind it
+  timestamp: BigInt!
+  blockNumber: BigInt!
+  txHash: Bytes!
+
+  agreement: Bytes!   # the dispute whose window ran out
+}
+
+# One judicial mistake of the overturn kind — the unit the chain's accusation
+# is built out of.
+#
+# ⚠️ DELIBERATELY NOT AN ArbiterRecord, alone among the entities in this file.
+# The interface requires `by`, the presser, and this event does not carry one:
+# VerdictOverturned names the dispute, the arbiter and the new outcome, never
+# the hand that pressed. A zero there would be read the way every other zero in
+# this file is read — "the contract states that nobody pressed" — and on the
+# owner-overturn path a hand very much did. Rather than assert something false
+# or dig transaction.from out of a relayed call, this record stays off the
+# feed, and the accusation that cites it carries the disputes instead.
+type VerdictOverturn @entity(immutable: false) {
+  id: ID!             # txHash-logIndex
+  arbiter: Arbiter!
+  agreement: Bytes!
+  verdict: Verdict!
+
+  timestamp: BigInt!
+  blockNumber: BigInt!
+  txHash: Bytes!
+
+  # False: a hand pressed overturnVerdict (DemotionPath.OwnerOverturn).
+  # True: the appeal panel voted it down (DemotionPath.AppealVote), which
+  # leaves no VerdictOverturned log at all and is reconstructed from
+  # AppealResolved plus the verdict's own arbiter.
+  byPanel: Boolean!
+
+  # The outcome the overturn installed — "clientWins" or "executorWins" — and
+  # null on the panel path, where AppealResolved says only that the vote
+  # carried and the flipped value is derived rather than stated.
+  #
+  # ⚠️ A STRING FOR A BOOLEAN, ON PURPOSE, and it is the rule at the top of the
+  # arbiter section rather than a preference: a nullable Boolean generates
+  # `return false` for an absent value, so "the log did not say" and "the log
+  # said executor" come out of the store as the same answer. Measured here, not
+  # assumed — the first version of this field was `Boolean` and asc refused the
+  # `null` outright (AS200), which is the compiler saying the same thing.
+  outcome: String
+
+  # A later panel restored the arbiter's ruling, so this overturn stopped being
+  # a mistake of his. Left standing rather than deleted: it happened, and the
+  # feed's whole purpose is that things which happened stay visible.
+  takenBackAt: BigInt
 }

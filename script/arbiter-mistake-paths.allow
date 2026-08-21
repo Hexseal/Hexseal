@@ -1,0 +1,84 @@
+# Every way an arbiter can be booked a judicial mistake, and the log each one
+# leaves for a reader to find it by.
+#
+# Checked by: ./script/check-subgraph-arbiter-events.sh
+# Rule:       every caller of ArbiterRegistryFacet._recordArbiterMistake has a
+#             record here, and every record names at least one event that the
+#             subgraph actually indexes.
+#
+# WHY THIS FILE EXISTS. Owner decision 15a: an arbiter accused by the chain must
+# see EVERY dispute the accusation stands on. The accusation names one and
+# stands on three, so the rest are recovered from the logs — which only works
+# while every path that books a mistake leaves a log naming the arbiter. On
+# 21 August 2026 one of the three did not, and nothing noticed: the timeout
+# booked its mistake in silence for two days.
+#
+# THE SCENE IS NOT ENOUGH, and that is the whole reason for a second mechanism.
+# test_TheWholeRunIsRecoverableFromLogsWithATimeoutInIt plays a run of three and
+# demands all three be readable — but it plays the three paths it KNOWS. A
+# fourth caller added tomorrow is never acted, so the scene stays green; and if
+# it is added as a branch inside a function that already exists, no selector
+# moves either, so the locks over the cut's selector set stay green with it.
+# The scene proves the paths it plays. This file is what makes the LIST of paths
+# a thing somebody has to touch.
+#
+# ⚠️ NOT A SCANNER OVER THE SOURCE, and the distinction is the one this
+# repository has been burned by twice ("the sixth way": a lock that recognises
+# spelling and goes quiet when the same thing is written another way). The
+# callers are taken from solc's AST, by the id the call resolves to — so
+# `_recordArbiterMistake` reached through a wrapper shows up as the WRAPPER
+# being a new caller, which is exactly right, and a mention in a comment shows
+# up as nothing at all.
+#
+# FORMAT. A record is
+#
+#     === <Contract>.<function> ===
+#
+# followed by a line beginning literally with
+#
+#     log:
+#
+# naming one or more indexed events, comma separated, and a line beginning
+# literally with
+#
+#     recoverable, because:
+#
+# whose text continues until the next header. A record missing either line makes
+# the gate treat the file as damaged and refuse — the same deliberate
+# inconvenience as script/gasless-sender.allow and
+# script/subgraph-arbiter-events.allow.
+#
+# ⚠️ THE `log:` NAMES ARE CHECKED AGAINST THE HANDLER MAP, not merely against
+# the contracts. Naming an event nobody indexes would satisfy the letter of this
+# file and leave the reader exactly where he was.
+
+
+=== ArbiterRegistryFacet.overturnVerdict ===
+log: VerdictOverturned
+recoverable, because: the log names the arbiter in its own right —
+  VerdictOverturned(address indexed agreement, address indexed arbiter, bool) —
+  so the dispute and the man are in one place and a reader filters by either.
+  This is the only path of the three that never needed anything added.
+
+=== ArbiterRegistryFacet.notifyArbiterTimeout ===
+log: ArbiterTimeoutRecorded
+recoverable, because: it names the arbiter in its own right, and it exists only
+  because this list was written down and found short.
+  ⚠️ THE PATH THAT WAS SILENT. Until 21 August 2026 this function emitted
+  nothing at all, and the neighbouring Agreement.ArbiterTimedOut names the
+  CLIENT — a name that reads like the arbiter's and is not. A mistake run
+  containing a timeout came out a dispute short, and the accused was shown two
+  of the three things he was about to be removed over.
+  The event and the booking sit in one call frame, which Agreement reaches
+  inside an empty try/catch: they revert together or not at all, so the counter
+  cannot count a mistake this log cannot name.
+
+=== ArbiterRegistryFacet.resolveAppeal ===
+log: AppealResolved, VerdictSubmitted
+recoverable, because: NO log names the judged arbiter on this path — the panel's
+  overturn emits no VerdictOverturned at all, AppealResolved carries the
+  appellant, and AppealVoteCast carries the VOTER in a parameter that is
+  actually named `arbiter`. Two logs are therefore needed and both are indexed:
+  AppealResolved gives the dispute, and the verdict of that dispute gives whose
+  it was. That is why VerdictSubmitted is indexed even though nothing on a card
+  asks for it.

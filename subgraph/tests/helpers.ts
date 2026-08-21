@@ -31,6 +31,15 @@ import {
   RemovalProposalWithdrawn,
   RemovalProposalConsumed,
   RemovalAnswered,
+  RemovalReasonGiven,
+  RemovalReplyGiven,
+  RemovalProposedByChain,
+  ChainAccusationCleared,
+  VerdictSubmitted,
+  VerdictOverturned,
+  VerdictFinalized,
+  AppealResolved,
+  ArbiterTimeoutRecorded,
 } from '../generated/Diamond/Diamond'
 
 // ── the cast ─────────────────────────────────────────────────────────────────
@@ -47,6 +56,12 @@ export const DIRECTOR = Address.fromString('0xc3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3
 export const OWNER = Address.fromString('0xd4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4')
 /** The deal a demotion's last mistake landed on. */
 export const AGREEMENT = Address.fromString('0xe5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5')
+/** The second deal of a mistake streak — the middle one, the easiest to lose. */
+export const AGREEMENT2 = Address.fromString('0x0707070707070707070707070707070707070707')
+/** The third: on the ordinary path this is the one that tips him over. */
+export const AGREEMENT3 = Address.fromString('0x1818181818181818181818181818181818181818')
+/** Whoever raised the appeal — never the arbiter, and never a party to it here. */
+export const APPELLANT = Address.fromString('0x2929292929292929292929292929292929292929')
 /** The zero the contract uses to say "nobody pressed this". */
 export const ZERO = Address.zero()
 
@@ -68,6 +83,21 @@ export const BOND_REFUNDED = BigInt.fromI32(6000000)
 export const BOND_FORFEITED = BigInt.fromI32(9000000)
 /** When a proposal was made, as the consumed snapshot reports it. */
 export const PROPOSED_AT = BigInt.fromI32(1699990000)
+/** Block timestamp of a third transaction, and of a fourth. */
+export const TS3 = BigInt.fromI32(1700007200)
+export const TS4 = BigInt.fromI32(1700010800)
+/** Their block heights. */
+export const BLOCK3 = BigInt.fromI32(44700723)
+export const BLOCK4 = BigInt.fromI32(44701023)
+/**
+ * When the chain laid its own accusation, as RemovalProposedByChain reports it.
+ * Deliberately NOT equal to any block timestamp above: on chain the two are the
+ * same value, so a handler reading `event.block.timestamp` where
+ * `event.params.proposedAt` was meant would pass unnoticed in production and
+ * has to be visible here. The forty-eight hours of the pause are counted from
+ * this number, not from the block.
+ */
+export const CHAIN_PROPOSED_AT = BigInt.fromI32(1700007123)
 
 // ── the hashes ───────────────────────────────────────────────────────────────
 
@@ -86,6 +116,19 @@ export const EVIDENCE2 = Bytes.fromHexString(
 export const REPLY = Bytes.fromHexString(
   '0xdddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd'
 ) as Bytes
+
+// ── the words ────────────────────────────────────────────────────────────────
+//
+// Distinct from each other for the same reason every number above is distinct
+// from every other: the accusation and the answer are both a `string` in the
+// same transaction, and swapping them is invisible to the compiler. And neither
+// is empty — the contract does not emit empty words, deliberately, so a test
+// that used '' would be playing a scene the chain cannot produce.
+
+/** What the accuser wrote. */
+export const REASON_TEXT = 'colluded with the client on deal 0x18'
+/** What the accused wrote back. Nothing about it resembles the accusation. */
+export const REPLY_TEXT = 'the chat log shows the opposite, see message 41'
 
 /** The id every record entity gets: txHash-logIndex. */
 export function recordId(tx: Bytes, logIndex: i32): string {
@@ -126,6 +169,10 @@ function flag(name: string, value: boolean): ethereum.EventParam {
 
 function digest(name: string, value: Bytes): ethereum.EventParam {
   return new ethereum.EventParam(name, ethereum.Value.fromFixedBytes(value))
+}
+
+function text(name: string, value: string): ethereum.EventParam {
+  return new ethereum.EventParam(name, ethereum.Value.fromString(value))
 }
 
 export function seatedEvent(
@@ -293,5 +340,149 @@ export function removalAnsweredEvent(
   let event = changetype<RemovalAnswered>(mockEvent(ts, block, tx, logIndex))
   event.parameters.push(addr('arbiter', arbiter))
   event.parameters.push(digest('replyDigest', replyDigest))
+  return event
+}
+
+// ── builders for the events indexed on 21 August 2026 ────────────────────────
+
+export function reasonGivenEvent(
+  arbiter: Address,
+  by: Address,
+  stage: i32,
+  reason: string,
+  ts: BigInt,
+  block: BigInt,
+  tx: Bytes,
+  logIndex: i32
+): RemovalReasonGiven {
+  let event = changetype<RemovalReasonGiven>(mockEvent(ts, block, tx, logIndex))
+  event.parameters.push(addr('arbiter', arbiter))
+  event.parameters.push(addr('by', by))
+  event.parameters.push(small('stage', stage))
+  event.parameters.push(text('reason', reason))
+  return event
+}
+
+export function replyGivenEvent(
+  arbiter: Address,
+  reply: string,
+  ts: BigInt,
+  block: BigInt,
+  tx: Bytes,
+  logIndex: i32
+): RemovalReplyGiven {
+  let event = changetype<RemovalReplyGiven>(mockEvent(ts, block, tx, logIndex))
+  event.parameters.push(addr('arbiter', arbiter))
+  event.parameters.push(text('reply', reply))
+  return event
+}
+
+export function chainProposedEvent(
+  arbiter: Address,
+  path: i32,
+  agreement: Address,
+  proposedAt: BigInt,
+  ts: BigInt,
+  block: BigInt,
+  tx: Bytes,
+  logIndex: i32
+): RemovalProposedByChain {
+  let event = changetype<RemovalProposedByChain>(mockEvent(ts, block, tx, logIndex))
+  event.parameters.push(addr('arbiter', arbiter))
+  event.parameters.push(small('path', path))
+  event.parameters.push(addr('agreement', agreement))
+  event.parameters.push(num('proposedAt', proposedAt))
+  return event
+}
+
+export function chainClearedEvent(
+  arbiter: Address,
+  agreement: Address,
+  ts: BigInt,
+  block: BigInt,
+  tx: Bytes,
+  logIndex: i32
+): ChainAccusationCleared {
+  let event = changetype<ChainAccusationCleared>(mockEvent(ts, block, tx, logIndex))
+  event.parameters.push(addr('arbiter', arbiter))
+  event.parameters.push(addr('agreement', agreement))
+  return event
+}
+
+export function verdictSubmittedEvent(
+  agreement: Address,
+  arbiter: Address,
+  clientWins: boolean,
+  ts: BigInt,
+  block: BigInt,
+  tx: Bytes,
+  logIndex: i32
+): VerdictSubmitted {
+  let event = changetype<VerdictSubmitted>(mockEvent(ts, block, tx, logIndex))
+  event.parameters.push(addr('agreement', agreement))
+  event.parameters.push(addr('arbiter', arbiter))
+  event.parameters.push(flag('clientWins', clientWins))
+  return event
+}
+
+export function verdictOverturnedEvent(
+  agreement: Address,
+  arbiter: Address,
+  newClientWins: boolean,
+  ts: BigInt,
+  block: BigInt,
+  tx: Bytes,
+  logIndex: i32
+): VerdictOverturned {
+  let event = changetype<VerdictOverturned>(mockEvent(ts, block, tx, logIndex))
+  event.parameters.push(addr('agreement', agreement))
+  event.parameters.push(addr('arbiter', arbiter))
+  event.parameters.push(flag('newClientWins', newClientWins))
+  return event
+}
+
+export function verdictFinalizedEvent(
+  agreement: Address,
+  arbiter: Address,
+  clientWins: boolean,
+  ts: BigInt,
+  block: BigInt,
+  tx: Bytes,
+  logIndex: i32
+): VerdictFinalized {
+  let event = changetype<VerdictFinalized>(mockEvent(ts, block, tx, logIndex))
+  event.parameters.push(addr('agreement', agreement))
+  event.parameters.push(addr('arbiter', arbiter))
+  event.parameters.push(flag('clientWins', clientWins))
+  return event
+}
+
+export function appealResolvedEvent(
+  agreement: Address,
+  appellant: Address,
+  overturned: boolean,
+  ts: BigInt,
+  block: BigInt,
+  tx: Bytes,
+  logIndex: i32
+): AppealResolved {
+  let event = changetype<AppealResolved>(mockEvent(ts, block, tx, logIndex))
+  event.parameters.push(addr('agreement', agreement))
+  event.parameters.push(addr('appellant', appellant))
+  event.parameters.push(flag('overturned', overturned))
+  return event
+}
+
+export function timeoutRecordedEvent(
+  arbiter: Address,
+  agreement: Address,
+  ts: BigInt,
+  block: BigInt,
+  tx: Bytes,
+  logIndex: i32
+): ArbiterTimeoutRecorded {
+  let event = changetype<ArbiterTimeoutRecorded>(mockEvent(ts, block, tx, logIndex))
+  event.parameters.push(addr('arbiter', arbiter))
+  event.parameters.push(addr('agreement', agreement))
   return event
 }

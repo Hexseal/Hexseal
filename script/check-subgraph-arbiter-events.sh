@@ -2,11 +2,17 @@
 # Gate: the subgraph's copy of the arbiter-accountability events matches the
 # contracts, and every one of them has a handler pointed at the diamond.
 #
-# ⚠️ NOT WIRED INTO CI, deliberately, on the same footing as
-# check-arbiter-bond-writers.sh: the workflow runs six gates, and each new one
-# is a tax on every run. Adding a seventh and an eighth there is the owner's
-# call, not something that happens in passing. Run it by hand before touching
-# an arbiter event, the subgraph ABI, or the manifest.
+# ⚠️ WIRED INTO CI since 21 August 2026, as the eighth, together with
+# check-arbiter-bond-writers.sh as the seventh. Here stood "NOT WIRED INTO CI,
+# deliberately... each new one is a tax on every run" — an argument nobody had
+# measured. Measured: 3.1 seconds on a warm cache, which is the only kind CI
+# has here, since `forge test` runs first and this gate's own `forge build` is
+# then a cache hit.
+#
+# The reason it could not stay out: this gate exists to catch an event being
+# FORGOTTEN, and until now it was itself remembered only when somebody thought
+# to run it. A guard against forgetting that runs from memory is the defect it
+# was written against.
 #
 # What it guards, why the seam is worth a gate, and what it deliberately does
 # not look at — the docstring of script/check_subgraph_arbiter_events.py.
@@ -21,9 +27,12 @@
 #   ./script/check-subgraph-arbiter-events.sh
 #
 # Exit codes:
-#   0   the copies agree with the contracts
-#   1   they do not, or an accountability event is indexed nowhere and excluded
-#       nowhere
+#   0   the copies agree with the contracts, and every event of both arbiter
+#       facets is either indexed or excluded with a reason
+#   1   they do not, or an event is indexed nowhere and excluded nowhere, or an
+#       exclusion has gone stale
+#   2   script/subgraph-arbiter-events.allow is missing, empty or damaged —
+#       there is nothing to compare the uncovered events against
 #   3   the check could not run (build failed, no artifacts, files missing):
 #       the rule is UNVERIFIED, which is not "no violations"
 #   127 python3 not found

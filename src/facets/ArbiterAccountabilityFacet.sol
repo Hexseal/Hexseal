@@ -2057,9 +2057,17 @@ contract ArbiterAccountabilityFacet {
     /// not finishing this one.
     ///
     /// Sits in THIS facet, not the registry, for the reason the fourteen
-    /// readings above moved here: the registry has 1 504 bytes of headroom
-    /// left, and readings about an arbiter's BEHAVIOUR are this facet's
+    /// readings above moved here: the registry is the one that is running out
+    /// of room, and readings about an arbiter's BEHAVIOUR are this facet's
     /// business anyway.
+    ///
+    /// ⚠️ A SNAPSHOT, NOT A STANDING FACT, and the earlier wording here was the
+    /// second kind: "the registry has 1 504 bytes of headroom left" went stale
+    /// the same week it was written (round of edits 2, 21 August 2026). The
+    /// number as measured: 1 504 bytes free on 19 August 2026, 1 207 on
+    /// 21 August. Today's number comes from `forge build --sizes`, and the
+    /// place where it is kept current is docs/OPEN-ITEMS.md, item 94 — not a
+    /// docstring in a public .sol that nothing recomputes.
     function getOverturnedVerdicts(address arbiterAddr) external view returns (uint256) {
         return ArbiterRegistryStorage.data().overturnedVerdicts[arbiterAddr];
     }

@@ -882,6 +882,45 @@ contract ArbiterRegistryFacet {
     /// until its author or the authority withdraws it.
     event ChainAccusationCleared(address indexed arbiter, address indexed agreement);
 
+    /// A judicial mistake booked on the TIMEOUT path — the one path that left
+    /// nothing a reader could recover it from (round of edits 1 to the subgraph
+    /// work, 21 August 2026).
+    ///
+    /// ⚠️ WHY A CONTRACT CHANGE FOR WHAT LOOKS LIKE A READING PROBLEM. Owner
+    /// decision 15a says the accused must see EVERY dispute his accusation
+    /// stands on. Two of the three mistake paths are recoverable from logs that
+    /// already exist — `VerdictOverturned` names the arbiter outright, and the
+    /// appeal vote is recoverable from `AppealResolved` plus the arbiter of the
+    /// verdict it is about. The third could not be recovered by ANY reading:
+    /// `notifyArbiterTimeout` emitted nothing at all, and
+    /// `Agreement.ArbiterTimedOut(address indexed client, uint256)` lives on the
+    /// deal and names the CLIENT. A run with a timeout in it therefore came out
+    /// one dispute short, and the accused was shown two of the three things he
+    /// was about to be removed over.
+    ///
+    /// ⚠️ TWO INDEXED ADDRESSES AND NOTHING ELSE, and that is the BYTECODE
+    /// budget talking rather than taste: this facet had 1 213 bytes of its
+    /// 24 576 left when the event was written, and the whole event cost 6.
+    /// Indexing both fields means the log carries three topics and an empty
+    /// data section, so the compiled code holds no memory layout and no length
+    /// — which is what the six bytes buy.
+    ///
+    /// It is NOT the cheapest to EXECUTE, and saying so keeps the trade honest:
+    /// LOG3 with no data costs 1 500 gas where LOG2 with one 32-byte word costs
+    /// 1 381. The 119 gas go to the reader, who can then filter the log by the
+    /// arbiter — which is the entire point of the event.
+    ///
+    /// The demotion path is not carried because there is only one it could be:
+    /// this event is emitted from exactly one place, and that place is the
+    /// timeout.
+    ///
+    /// ⚠️ NOTHING AROUND THIS EMIT MAY REVERT. `notifyArbiterTimeout` is reached
+    /// from `Agreement.triggerArbiterTimeout` inside an EMPTY try/catch — a
+    /// revert there is swallowed in silence and the arbiter walks away
+    /// untouched, without a trace. An `emit` cannot revert, which is the reason
+    /// this is an event and not a storage field.
+    event ArbiterTimeoutRecorded(address indexed arbiter, address indexed agreement);
+
     event ChiefArbiterSet(address indexed prev, address indexed next);
     event DisputeClaimCommitted(address indexed arbiter, bytes32 indexed commitment);
     event DisputeClaimed(address indexed agreement, address indexed arbiter);
@@ -968,25 +1007,38 @@ contract ArbiterRegistryFacet {
     /// `agreement` — спор, на котором сработала ПОСЛЕДНЯЯ ошибка серии. Он не
     /// вся история и ею не притворяется: он вход в неё.
     ///
-    /// ⚠️ И вход этот НЕПОЛНЫЙ — сказано прямо, потому что прежняя редакция
-    /// докстринга обещала больше, чем цепь отдаёт (круг правок 1, 16 августа
-    /// 2026). Сверено с объявлениями:
+    /// ⚠️ ВХОД, А НЕ ИСТОРИЯ — но серия ЦЕЛИКОМ теперь читается по логам
+    /// (круг правок 1 к работе по сабграфу, 21 августа 2026). Здесь стояло
+    /// «ошибку-таймаут найти по этому полю нельзя никак» и вывод «пересчитать
+    /// первые две нельзя»: верно на 16 августа, и починено не чтением, а
+    /// контрактом — `notifyArbiterTimeout` слал молчание, и никакой индексатор
+    /// этого исправить не мог.
     ///
-    ///   • серия из одних переворотов восстанавливается полностью:
-    ///     VerdictOverturned(address indexed agreement, address indexed arbiter,
-    ///     bool) индексирует арбитра, и все три события фильтруются по нему;
-    ///   • ошибка-ТАЙМАУТ, не ставшая третьей, не оставляет на цепи НИ ОДНОЙ
-    ///     записи, адресуемой по арбитру: notifyArbiterTimeout при первой и
-    ///     второй ошибке не шлёт ничего вообще, а ArbiterTimedOut(address
-    ///     indexed client, uint256) живёт на самом агрименте и арбитра не
-    ///     называет. Найти такую ошибку по этому полю нельзя никак;
-    ///   • по апелляции снятого не называет ни AppealResolved (там appellant),
-    ///     ни AppealVoteCast (там ГОЛОСУЮЩИЙ, а не судимый) — вход остаётся,
-    ///     но ведёт к голосам, а не к судимому.
+    /// СВОЙСТВО, которое здесь охраняется, вместо перечисления, которое
+    /// протухало дважды: **у каждого пути судейской ошибки есть лог, называющий
+    /// арбитра**. Прямо его называют `VerdictOverturned` и
+    /// `ArbiterTimeoutRecorded`; путь голосов — парой `AppealResolved` (спор) и
+    /// вердикта этого спора (`VerdictSubmitted` называет арбитра), потому что
+    /// сам `AppealResolved` несёт подателя, а `AppealVoteCast` — голосующего.
     ///
-    /// Значит по смешанной серии (переворот + таймаут + голоса) читатель видит
-    /// последнюю ошибку и её путь, но пересчитать первые две по одному этому
-    /// полю не может. Обещать обратное — та же неправда, что и одно поле.
+    /// Как проверяется, чтобы не держаться на этом абзаце. Путей ровно столько,
+    /// сколько вызывающих у `_recordArbiterMistake` — сегодня три, и список
+    /// берётся грепом по его имени, а не отсюда. Восстановимость серии из ЛОГОВ
+    /// разыгрывает сцена `test_TheWholeRunIsRecoverableFromLogsWithATimeoutInIt`
+    /// (test/ArbiterRemovalForCauseIntegration.t.sol): серия «переворот, таймаут,
+    /// переворот» собирается по топикам, и снятие любого из двух эмитов роняет
+    /// её числом найденных споров. Пару для пути голосов держит сцена
+    /// `subgraph/tests/chain.test.ts` — там переворот коллегией приписывается
+    /// арбитру вердикта.
+    ///
+    /// ⚠️ ЧЕГО НЕ СТОРОЖИТ НИЧТО: ЧЕТВЁРТЫЙ путь. Добавить вызывающего
+    /// `_recordArbiterMistake`, не дав ему лога с именем арбитра, можно с
+    /// зелёными тестами — сцена выше знает про три и про четвёртый не спросит.
+    /// Это тот же класс, что и allow-список в самом `_recordArbiterMistake`, и
+    /// лечится он так же: новый путь называют руками, здесь и там.
+    ///
+    /// Само поле при этом остаётся ОДНИМ спором и историей не притворяется:
+    /// читатель, которому нужна вся серия, читает ленту, а не это поле.
     ///
     /// Событие в селектор функции не входит — состав селекторов фасета этой
     /// правкой не меняется, и это проверено хешем methodIdentifiers до и после,
@@ -2070,6 +2122,16 @@ contract ArbiterRegistryFacet {
         // `by` нулевой: msg.sender здесь — сам агримент (проверено выше),
         // человека за вызовом нет вовсе.
         _recordArbiterMistake(d, rep, arbiterAddr, address(0), DemotionPath.AgreementTimeout, agreement);
+
+        // ⚠️ BELOW the booking and not above it, which puts this log AFTER the
+        // chain's own accusation when this mistake is the third of a run —
+        // _recordArbiterMistake emits RemovalProposedByChain from inside. That
+        // ordering is deliberate and is the one overturnVerdict already uses:
+        // there too the booking runs first and the outer event (VerdictOverturned)
+        // lands after any accusation it caused. Both outer events therefore reach
+        // a reader in the same relative position, and neither needs a rule of its
+        // own.
+        emit ArbiterTimeoutRecorded(arbiterAddr, agreement);
     }
 
     /// @notice Списывает OVERTURN_XP_SLASH у арбитра, не давая уйти в underflow.

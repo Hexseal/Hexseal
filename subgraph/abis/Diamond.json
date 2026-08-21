@@ -692,5 +692,198 @@
       }
     ],
     "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "RemovalReasonGiven",
+    "inputs": [
+      {
+        "name": "arbiter",
+        "type": "address",
+        "indexed": true
+      },
+      {
+        "name": "by",
+        "type": "address",
+        "indexed": true
+      },
+      {
+        "name": "stage",
+        "type": "uint8",
+        "indexed": true
+      },
+      {
+        "name": "reason",
+        "type": "string",
+        "indexed": false
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "RemovalReplyGiven",
+    "inputs": [
+      {
+        "name": "arbiter",
+        "type": "address",
+        "indexed": true
+      },
+      {
+        "name": "reply",
+        "type": "string",
+        "indexed": false
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "RemovalProposedByChain",
+    "inputs": [
+      {
+        "name": "arbiter",
+        "type": "address",
+        "indexed": true
+      },
+      {
+        "name": "path",
+        "type": "uint8",
+        "indexed": false
+      },
+      {
+        "name": "agreement",
+        "type": "address",
+        "indexed": true
+      },
+      {
+        "name": "proposedAt",
+        "type": "uint256",
+        "indexed": false
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "ChainAccusationCleared",
+    "inputs": [
+      {
+        "name": "arbiter",
+        "type": "address",
+        "indexed": true
+      },
+      {
+        "name": "agreement",
+        "type": "address",
+        "indexed": true
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "VerdictSubmitted",
+    "inputs": [
+      {
+        "name": "agreement",
+        "type": "address",
+        "indexed": true
+      },
+      {
+        "name": "arbiter",
+        "type": "address",
+        "indexed": true
+      },
+      {
+        "name": "clientWins",
+        "type": "bool",
+        "indexed": false
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "VerdictOverturned",
+    "inputs": [
+      {
+        "name": "agreement",
+        "type": "address",
+        "indexed": true
+      },
+      {
+        "name": "arbiter",
+        "type": "address",
+        "indexed": true
+      },
+      {
+        "name": "newClientWins",
+        "type": "bool",
+        "indexed": false
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "VerdictFinalized",
+    "inputs": [
+      {
+        "name": "agreement",
+        "type": "address",
+        "indexed": true
+      },
+      {
+        "name": "arbiter",
+        "type": "address",
+        "indexed": true
+      },
+      {
+        "name": "clientWins",
+        "type": "bool",
+        "indexed": false
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "AppealResolved",
+    "inputs": [
+      {
+        "name": "agreement",
+        "type": "address",
+        "indexed": true
+      },
+      {
+        "name": "appellant",
+        "type": "address",
+        "indexed": true
+      },
+      {
+        "name": "overturned",
+        "type": "bool",
+        "indexed": false
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "ArbiterTimeoutRecorded",
+    "inputs": [
+      {
+        "name": "arbiter",
+        "type": "address",
+        "indexed": true
+      },
+      {
+        "name": "agreement",
+        "type": "address",
+        "indexed": true
+      }
+    ],
+    "anonymous": false
   }
 ]

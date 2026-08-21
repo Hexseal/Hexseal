@@ -28,6 +28,12 @@ dataSources:
         - ArbiterSuspensionLift
         - RemovalProposal
         - RemovalAnswer
+        - ChainAccusation
+        - RemovalReason
+        - RemovalReply
+        - Verdict
+        - VerdictOverturn
+        - ArbiterTimeout
       abis:
         - name: Diamond
           file: ./abis/Diamond.json
@@ -121,6 +127,59 @@ dataSources:
           handler: handleRemovalProposalConsumed
         - event: RemovalAnswered(indexed address,bytes32)
           handler: handleRemovalAnswered
+
+        # ── The words on both sides ──────────────────────────────────────────
+        # The half of the accountability work that the feed was missing
+        # entirely: an accusation nobody had to explain, answered by a hash.
+        # Both events carry a string and are emitted only when there is one to
+        # carry — an empty reason would erase the difference between "explained
+        # himself" and "said nothing", and that difference is what the whole
+        # design rests on.
+        - event: RemovalReasonGiven(indexed address,indexed address,indexed uint8,string)
+          handler: handleRemovalReasonGiven
+        - event: RemovalReplyGiven(indexed address,string)
+          handler: handleRemovalReplyGiven
+
+        # ── The chain accusing in its own name ───────────────────────────────
+        # Until these two were indexed, an arbiter removed on the third
+        # judicial mistake read in the feed as a seat taken away with no
+        # accusation, no pause and no right of reply: handleArbiterDemoted
+        # closed a proposal that had never appeared.
+        - event: RemovalProposedByChain(indexed address,uint8,indexed address,uint256)
+          handler: handleRemovalProposedByChain
+        - event: ChainAccusationCleared(indexed address,indexed address)
+          handler: handleChainAccusationCleared
+
+        # ── The evidence under that accusation ───────────────────────────────
+        # Owner decision 15a (20 August 2026): the accused must see EVERY
+        # dispute the accusation stands on, not the last of them.
+        # RemovalProposedByChain carries one and the accusation stands on
+        # three; the rest are recovered from these four.
+        #
+        # ⚠️ ALL FOUR, NOT JUST VerdictOverturned, and the other three are not
+        # padding. A streak is "mistakes in an unbroken row", so the RESETS
+        # have to be visible too — and a reset is "VerdictFinalized on a
+        # verdict that was not overturned", a fact no single log states.
+        # VerdictSubmitted is what a finalization is held against;
+        # AppealResolved is a judicial mistake that VerdictOverturned never
+        # mentions, since the appeal path emits no overturn log at all.
+        - event: VerdictSubmitted(indexed address,indexed address,bool)
+          handler: handleVerdictSubmitted
+        - event: VerdictOverturned(indexed address,indexed address,bool)
+          handler: handleVerdictOverturned
+        - event: VerdictFinalized(indexed address,indexed address,bool)
+          handler: handleVerdictFinalized
+        - event: AppealResolved(indexed address,indexed address,bool)
+          handler: handleAppealResolved
+        # ⚠️ THE ONE EVENT HERE THAT DID NOT EXIST BEFORE THIS FEED ASKED FOR
+        # IT (21 August 2026). A judicial mistake booked on the timeout left no
+        # log naming the arbiter at all — notifyArbiterTimeout emitted nothing,
+        # and Agreement's own ArbiterTimedOut names the CLIENT — so a mistake
+        # run containing one came out a dispute short and the accused was shown
+        # two of the three deals his removal stood on. Reading could not fix
+        # that; the event was added to the contract instead.
+        - event: ArbiterTimeoutRecorded(indexed address,indexed address)
+          handler: handleArbiterTimeoutRecorded
       file: ./src/diamond.ts
 templates:
   - kind: ethereum

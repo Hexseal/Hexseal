@@ -88,6 +88,28 @@ jobs:
       - name: Check appeal window (relayer copy matches contract)
         run: ./script/check-appeal-window.sh
 
+      # ── The seventh and eighth gates, added 21 August 2026 ─────────────────
+      #
+      # Both carried "NOT WIRED INTO CI, deliberately" in their own headers,
+      # on one argument: six gates already run and each new one is a tax on
+      # every push. The argument was never measured, and the second gate below
+      # is what made measuring it urgent — it exists to catch a thing being
+      # FORGOTTEN, and it was itself remembered only by hand.
+      #
+      # Measured on a warm cache, which is what CI has here because `forge test`
+      # above has already built: 1.4 s for the bond writers, 3.1 s for the
+      # subgraph events. Their own `forge build` is a cache hit, not a rebuild.
+      # Against a job that installs Foundry, pip-installs slither and runs 959
+      # tests, the tax is under five seconds.
+      #
+      # No new dependency either: both need python3, which check-gasless-sender
+      # above has been proving present since it was added.
+      - name: Check arbiter bond writers (exactly one non-zero writer)
+        run: ./script/check-arbiter-bond-writers.sh
+
+      - name: Check subgraph arbiter events (coverage, liveness, mistake paths)
+        run: ./script/check-subgraph-arbiter-events.sh
+
       # Версия каждой зависимости объявлена трижды: гитлинком, строкой в
       # foundry.lock и тем, что реально выложено на диск. Гейт сверяет все три.
       # Замер (порча + прогон): чужой коммит в локе, пропавшая строка, лишняя

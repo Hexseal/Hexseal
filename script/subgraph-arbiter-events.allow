@@ -1,0 +1,337 @@
+# Events of the two arbiter facets that the subgraph deliberately does not index.
+#
+# Checked by: ./script/check-subgraph-arbiter-events.sh
+# Rule:       every event declared by ArbiterAccountabilityFacet or
+#             ArbiterRegistryFacet is either handled by the subgraph or written
+#             down here with a reason. An event in neither place turns the gate
+#             red.
+# Rule 2:     every OTHER .sol under src/ is written off at the bottom of this
+#             file, with a reason and a pinned count of the events it declares.
+#             A file in neither place turns the gate red too — see the second
+#             header down there for what that costs and why it is worth it.
+#
+# A third list lives in a file of its own, script/arbiter-mistake-paths.allow:
+# every way an arbiter can be booked a judicial mistake, with the log each one
+# leaves. It is not a list of exceptions, which is why it is not in here.
+#
+# THIS FILE EXISTS BECAUSE THE GATE USED TO BE SILENT OVER HALF ITS AREA.
+# Coverage was enforced over ArbiterAccountabilityFacet only, on the argument
+# that the registry emits thirty-odd events with nothing to do with
+# accountability. The cost of that argument was measured on 21 August 2026:
+# RemovalProposedByChain and ChainAccusationCleared — the chain accusing an
+# arbiter in its own name, and the withdrawal of that accusation — sat
+# unindexed from 18 to 21 August with every gate in the repository green. The
+# only thing that remembered them was a comment. A reader of the feed in those
+# three days saw a removal with no accusation, no pause and no answer behind
+# it.
+#
+# So the tax is paid instead: twenty-six entries below, most of them one line,
+# and the next event added to either facet goes red until somebody decides
+# which half it belongs in.
+#
+# FORMAT. A record is a header line
+#
+#     === <Facet> :: <EventName> ===
+#
+# followed by a line that begins literally with
+#
+#     not indexed, because:
+#
+# The reason continues over following lines until the next header. A record
+# without that line makes the gate treat the file as damaged and refuse — the
+# same shape, and the same deliberate inconvenience, as
+# script/gasless-sender.allow: an exception cannot be taken without saying out
+# loud why.
+#
+# ⚠️ NOTHING IS PINNED HERE, unlike the `occurrences:` counts in
+# gasless-sender.allow, and that is a decision rather than an omission. There,
+# the bug class is a NEW raw msg.sender appearing inside a body that was already
+# allowed, so the count is what catches it. Here the bug class is a new EVENT
+# nobody indexed, and coverage catches that by itself. What is therefore NOT
+# caught: an event listed below changing its parameters or its `indexed` marks.
+# Nothing reads it, so nothing breaks — and the day one of these moves into the
+# feed it leaves this file, at which point the parameter-for-parameter
+# comparison in the gate starts holding it against solc.
+#
+# ⚠️ AND THE LIST IS ABOUT THIS FEED, NOT ABOUT IMPORTANCE. Several entries
+# below are read by the frontend or by the relayer through their own ABIs;
+# "not indexed" means "no accountability record needs it", nothing more.
+
+
+# ---------------------------------------------------------------------------
+# ALREADY IN THE FEED UNDER ANOTHER NAME
+#
+# Two events whose information is indexed — through a different log that says
+# strictly more.
+# ---------------------------------------------------------------------------
+
+=== ArbiterRegistryFacet :: ArbiterAdded ===
+not indexed, because: ArbiterSeated is emitted beside it at both entry doors and
+  carries the same seating plus the presser and the self-service flag. The bare
+  event is kept in the contract for the subgraph that is LIVE on chain (v2.3.0
+  reads it), and its declaration says so. Indexing both would put one seating in
+  the feed twice.
+
+=== ArbiterRegistryFacet :: ArbiterApplied ===
+not indexed, because: the self-service half of the same seating.
+  applyAsArbiter emits ArbiterSeated(caller, address(0), true) in the next line,
+  and the zero presser with selfService true is the whole of what this event
+  says.
+
+
+# ---------------------------------------------------------------------------
+# THE DISPUTE, NOT THE ARBITER'S STANDING
+#
+# The life of one dispute: who took it, who let it go, what was frozen, what
+# was presented. None of it changes what the corps may be held to account for.
+# Several have live readers elsewhere — the frontend counts arbiter turns off
+# DisputeClaimed, the relayer pushes on it — through their own ABI copies.
+# ---------------------------------------------------------------------------
+
+=== ArbiterRegistryFacet :: DisputeClaimCommitted ===
+not indexed, because: the commit half of the commit-reveal that stops arbiters
+  racing for a dispute. It names a commitment hash, not a dispute — there is
+  nothing an accountability record could hang off it until the reveal.
+
+=== ArbiterRegistryFacet :: DisputeClaimed ===
+not indexed, because: assignment, not accountability. The arbiter of a dispute
+  reaches the feed when it matters — VerdictSubmitted names him, and that is
+  the point where a mistake becomes possible at all.
+
+=== ArbiterRegistryFacet :: DisputeReleased ===
+not indexed, because: an arbiter letting a dispute go costs him nothing and is
+  not a judicial mistake. The mistake case is the one he does NOT release and
+  runs out the clock on, which is ArbiterTimeoutRecorded.
+
+=== ArbiterRegistryFacet :: DisputeNoResponseRecorded ===
+not indexed, because: the chain-as-witness work of 15 August. It records that a
+  PARTY did not answer the arbiter, which is evidence inside a dispute and never
+  a mark against the arbiter.
+
+=== ArbiterRegistryFacet :: PresentationDigestRecorded ===
+not indexed, because: the other half of the same work — a party fixing the
+  digest of what it showed the arbiter. Evidence within a dispute; it says
+  nothing about the arbiter's standing.
+
+=== ArbiterRegistryFacet :: ArbiterChatKeySet ===
+not indexed, because: the arbiter publishing or rotating the keys a party
+  encrypts a presentation to. It has a live reader — the frontend watches it so
+  a presentation can be repeated when the arbiter changes device — and that
+  reader takes it straight off the chain through its own ABI. Nothing about a
+  key is conduct.
+
+=== ArbiterRegistryFacet :: VerdictFrozen ===
+not indexed, because: a freeze suspends finalization and touches neither the
+  mistake streak nor the counters. The Verdict entity holds what the series
+  needs — submitted, overturned, finalized — and a freeze changes none of the
+  three.
+
+=== ArbiterRegistryFacet :: VerdictUnfrozen ===
+not indexed, because: the reverse of the freeze, and silent about the arbiter
+  for the same reason.
+
+=== ArbiterRegistryFacet :: StuckVerdictAutoCleared ===
+not indexed, because: it throws away a verdict nobody finalized so the dispute
+  can be claimed again — no mistake is booked and no counter moves.
+  ⚠️ NAMED RATHER THAN WAVED THROUGH: the Verdict entity is keyed by the
+  agreement, so a cleared verdict that is never resubmitted leaves a stale
+  record with finalized false. Nothing reads it — the series only ever asks
+  about verdicts that reach an overturn or a finalization — and a resubmission
+  overwrites it whole in handleVerdictSubmitted. Index this the day something
+  starts reading "the standing verdict" off that entity.
+
+=== ArbiterRegistryFacet :: AppealRaised ===
+not indexed, because: raising an appeal is the losing party's move, not the
+  arbiter's. What the series needs is how it ended, and AppealResolved is
+  indexed for exactly that.
+
+=== ArbiterRegistryFacet :: AppealVoteCast ===
+not indexed, because: it names the VOTER, never the arbiter being judged — the
+  gap that made the appeal path unrecoverable until AppealResolved was paired
+  with the verdict's own arbiter. A record of who voted how is governance
+  history and would be a feed of its own.
+
+
+# ---------------------------------------------------------------------------
+# MONEY
+#
+# The arbiter payment ledger and the bounty on a dispute. Amounts, never
+# conduct.
+# ---------------------------------------------------------------------------
+
+=== ArbiterRegistryFacet :: ArbiterRewarded ===
+not indexed, because: payment for work done. An accountability record that
+  counted rewards would be answering a different question.
+
+=== ArbiterRegistryFacet :: ArbiterRewardWithdrawn ===
+not indexed, because: the arbiter moving his own earned balance out.
+
+=== ArbiterRegistryFacet :: DisputeFeeCredited ===
+not indexed, because: the split of a dispute fee between the arbiter and the
+  treasury.
+
+=== ArbiterRegistryFacet :: DisputeBountyFunded ===
+not indexed, because: a party paying to get a dispute looked at.
+
+=== ArbiterRegistryFacet :: DisputeBountyRefunded ===
+not indexed, because: that payment going back.
+
+=== ArbiterRegistryFacet :: DisputeBountyRefundable ===
+not indexed, because: the same money becoming claimable when a push failed.
+
+=== ArbiterRegistryFacet :: DisputeBountyWithdrawn ===
+not indexed, because: the payer collecting it.
+
+=== ArbiterRegistryFacet :: VaultFunded ===
+not indexed, because: the bank arbiters are paid out of, topped up.
+
+=== ArbiterRegistryFacet :: TreasurySlicePushed ===
+not indexed, because: the treasury's share of a fee leaving the diamond.
+
+=== ArbiterRegistryFacet :: ArbiterFloorUpdated ===
+not indexed, because: an economic parameter of the corps — what an arbiter is
+  paid — set by the owner. Not conduct, and not a thing anyone is answerable
+  for.
+
+
+# ---------------------------------------------------------------------------
+# WHO GOVERNS
+#
+# The seats above the corps. Adjacent to accountability and deliberately left
+# out for now; the note on the first entry says what would change that.
+# ---------------------------------------------------------------------------
+
+=== ArbiterRegistryFacet :: ChiefArbiterSet ===
+not indexed, because: it names the director's seat, and the director is the one
+  who may PROPOSE removals. That makes it the closest thing in this section to
+  accountability, and it stays out only because no record needs it: every
+  proposal already carries its author in `by`, so the feed answers "who accused
+  him" without knowing who held the seat that day. Index it the day a reader
+  asks the other question — "who could have accused him then" — which is a
+  question about the office rather than the act.
+
+=== ArbiterRegistryFacet :: DAOActivated ===
+not indexed, because: the handover of the corps to the DAO. A one-off
+  governance switch, readable from the chain directly (isDaoActive), with no
+  per-arbiter record to attach to.
+
+=== ArbiterRegistryFacet :: DAOAddressSet ===
+not indexed, because: the address of that DAO being set, for the same reason.
+
+
+# ===========================================================================
+#  THE OTHER KIND OF RECORD: FILES, NOT EVENTS
+#
+#  Every .sol under src/ is either read by this gate — today that is the two
+#  arbiter facets — or written off below with a reason and a PINNED count of
+#  the events it declares.
+#
+#  WHY THE AREA IS DEFINED BY SUBTRACTION. Until 21 August 2026 the gate knew
+#  two contracts by name and looked nowhere else. A reviewer measured what that
+#  costs: he declared an arbiter event in ReputationFacet.sol and the gate
+#  stayed green. It is the same hole one floor up from the one the event list
+#  closed — the old rule read one facet out of two, the new one read two
+#  contracts out of sixteen. Defining the area as "everything, minus what is
+#  written off" is the only shape where a file nobody thought about fails
+#  loudly, and it is the shape script/gasless-sender.allow already uses for
+#  exactly this reason.
+#
+#  WHAT THE PIN IS FOR. Without `events: <n>`, writing a file off once writes
+#  off everything ever added to it, and the reviewer's measurement goes green
+#  again the moment somebody puts an arbiter event in a written-off file. With
+#  it, the count moves and the gate stops. Raising a pin is a decision: it says
+#  "I looked at the new event and it is not about arbiter accountability".
+#
+#  ⚠️ ZERO IS A LEGAL VALUE and says something worth saying: this file declares
+#  no events at all, and if it grows one, somebody will look.
+# ===========================================================================
+
+=== out of scope :: src/Agreement.sol ===
+no accountability events, because: the escrow itself. Its events are about ONE
+  deal — funded, activated, released, disputed — and they are already indexed,
+  by the AgreementContract template in subgraph.yaml rather than by the diamond
+  data source this gate guards.
+  ⚠️ AND IT IS THE MOST INSTRUCTIVE ENTRY IN THIS FILE. Agreement declares
+  ArbiterTimedOut(address indexed client, uint256), whose NAME says arbiter and
+  whose first field is the client. That event is the reason the timeout path
+  looked observable for two days and was not: reading the arbiter out of it is
+  impossible, because the arbiter is not in it. A file being written off here
+  means "no accountability event lives here", never "nothing here mentions
+  arbiters".
+events: 21
+
+=== out of scope :: src/facets/JobBoardFacet.sol ===
+no accountability events, because: the job board. Posting, applying, accepting,
+  cancelling — the marketplace, indexed by handlers of its own in
+  subgraph/src/diamond.ts, and touching no arbiter.
+events: 7
+
+=== out of scope :: src/facets/ServiceBoardFacet.sol ===
+no accountability events, because: the service board, the executor-side twin of
+  the job board and out of scope for the same reason.
+events: 11
+
+=== out of scope :: src/FactoryFacet.sol ===
+no accountability events, because: deal creation and the protocol's keys —
+  fee recipient, forwarder, deployer. It names an arbiter when a deal is
+  deployed, and that is an assignment, never conduct.
+events: 10
+
+=== out of scope :: src/RegistryFacet.sol ===
+no accountability events, because: the list of deployed agreements and their
+  status. It is the registry of DEALS; the registry of arbiters is the facet
+  this gate reads, and the two share a name and nothing else.
+events: 3
+
+=== out of scope :: src/facets/ReputationFacet.sol ===
+no accountability events, because: XP. An arbiter loses XP when a verdict of his
+  is overturned — _slashArbiterXP writes this facet's storage — but the writing
+  is done FROM the registry, and the mark of the mistake is the registry's event.
+  What lives here is a number, not a record of conduct.
+  ⚠️ THIS IS THE FILE THE REVIEWER USED to show the gate was blind to everything
+  outside its two-name list. An arbiter event declared here now moves the pin
+  below and stops the gate.
+events: 2
+
+=== out of scope :: src/Treasury.sol ===
+no accountability events, because: the protocol's own money — the ladder that
+  splits income between the arbiter vault, the foundation and the reserve. It
+  funds the corps and judges nobody.
+events: 4
+
+=== out of scope :: src/JobReceiptFacet.sol ===
+no accountability events, because: the soulbound receipt minted when a job is
+  posted. NFT bookkeeping.
+events: 4
+
+=== out of scope :: src/DiamondProxy.sol ===
+no accountability events, because: the proxy, its ownership and the cut. Its
+  events are about which facet answers which selector — the plumbing under every
+  other file here, arbiter facets included.
+events: 5
+
+=== out of scope :: src/MinimalForwarder.sol ===
+no accountability events, because: the ERC-2771 forwarder, a separate deployed
+  contract that is not part of the diamond at all. It knows who paid for gas and
+  nothing else.
+events: 1
+
+=== out of scope :: src/AgreementDeployer.sol ===
+no accountability events, because: it clones the Agreement implementation and
+  declares no events at all. The zero below is the assertion.
+events: 0
+
+=== out of scope :: src/SVGRenderer.sol ===
+no accountability events, because: on-chain SVG for the receipt NFT. Pure
+  rendering, no events.
+events: 0
+
+=== out of scope :: src/facets/DealMetadataFacet.sol ===
+no accountability events, because: on-chain metadata for the deal NFT. Rendering
+  again, and no events.
+events: 0
+
+=== out of scope :: src/facets/IFactory.sol ===
+no accountability events, because: an interface. It declares functions for other
+  contracts to call and no events.
+events: 0

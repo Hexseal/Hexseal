@@ -247,4 +247,13 @@ export {
   handleRemovalProposalWithdrawn,
   handleRemovalProposalConsumed,
   handleRemovalAnswered,
+  handleRemovalReasonGiven,
+  handleRemovalReplyGiven,
+  handleRemovalProposedByChain,
+  handleChainAccusationCleared,
+  handleVerdictSubmitted,
+  handleVerdictOverturned,
+  handleVerdictFinalized,
+  handleAppealResolved,
+  handleArbiterTimeoutRecorded,
 } from './arbiter'
