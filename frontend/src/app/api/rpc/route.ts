@@ -5,6 +5,7 @@ import {
   describeRpcCall,
   formatAttempts,
   rpcHostLabel,
+  privateSlotWarning,
   shouldRetryPrivate,
   type RpcAttempt,
   MAX_BATCH_SIZE,
@@ -134,21 +135,30 @@ const PRIVATE_RPC =
     .map(v => v?.trim())
     .find((v): v is string => !!v) ?? null;
 
-// A public host winning the private slot is survivable but never intentional — and it
-// was invisible in the logs, which is how it stayed hidden. Say so once at startup.
-// Matched on hostname, not substring: drpc's FREE endpoint is `base-sepolia.drpc.org`
-// while the paid one is `…drpc.live/…?dkey=`, and a substring test for "drpc" would
-// flag the paid one too.
-const PUBLIC_RPC_HOSTS = ['base.org', 'drpc.org', 'publicnode.com', 'blockpi.network'];
+// A keyless endpoint winning the private slot is survivable but never intentional —
+// and it was invisible in the logs, which is how it stayed hidden. Say so once at startup.
+//
+// ⚠️ ПРИЗНАК — НАЛИЧИЕ КЛЮЧА В АДРЕСЕ, А НЕ ИМЯ ХОСТА. Здесь стоял список
+// доменов, а рядом — довод: платный узел нашего поставщика живёт на ДРУГОМ
+// домене, поэтому запретить домен его бесплатного узла безопасно.
+//
+// Довод был неверен ДВАЖДЫ, и обе ошибки — одного класса.
+//   • Поставщик обслуживает платный доступ НЕ НА ОДНОМ домене. Один из них
+//     стоял в списке — то есть детектор ругался на боевой платный адрес при
+//     каждом запуске. Ложная тревога хуже молчания: в ней тонет настоящий.
+//   • Форма ключа у одного и того же поставщика РАЗНАЯ на разных доменах: то
+//     параметром, то длинным сегментом прямо в пути. Список доменов про ключ
+//     не рассуждает вовсе и вторую форму не увидел бы ни при каком составе.
+//
+// Нового имени хоста здесь намеренно НЕТ: оно протухнет ровно так же — это и
+// проверять нечем, домены меняются молча. Вопрос ровно один: несёт ли адрес
+// удостоверение. Приватный — тот, у кого есть ключ, чей бы домен ни был; тогда
+// списку протухать нечем, потому что списка нет. Разбор признака и три его
+// исхода (в том числе «не понял — говорю вслух») — `classifyRpcCredential` /
+// `privateSlotWarning` в `lib/rpcProxy.ts`.
 if (PRIVATE_RPC) {
-  let host = '';
-  try { host = new URL(PRIVATE_RPC).hostname; } catch { /* не URL — сказать нечего */ }
-  if (PUBLIC_RPC_HOSTS.some(h => host === h || host.endsWith(`.${h}`))) {
-    console.warn(
-      `[/api/rpc] private RPC slot resolved to a public endpoint (${host}) — ` +
-      'set DRPC_URL (or RPC_URL) to a keyed endpoint, or every call shares one public rate limit',
-    );
-  }
+  const slotWarning = privateSlotWarning(PRIVATE_RPC);
+  if (slotWarning) console.warn(`[/api/rpc] ${slotWarning}`);
 }
 
 // Public fallback RPC endpoints tried in order if private RPC fails.
@@ -158,8 +168,9 @@ const PUBLIC_RPCS: string[] = appChain.id === 8453
 
 /** Имя приватного узла для журнала. Считается один раз на процесс — и это
  *  ЕДИНСТВЕННОЕ, что от `PRIVATE_RPC` попадает в вывод: в адресе лежит ключ
- *  доступа (`?dkey=`), и полный URL в журнале равносилен его утечке.
- *  Наружу, в тело ответа клиенту, не уходит и хост — там метка `private`. */
+ *  доступа — параметром ЛИБО сегментом пути, у одного поставщика встречаются
+ *  обе формы — и полный URL в журнале равносилен его утечке. Наружу, в тело
+ *  ответа клиенту, не уходит и хост — там метка `private`. */
 const PRIVATE_HOST = PRIVATE_RPC ? rpcHostLabel(PRIVATE_RPC) : '—';
 
 const PRIVATE_TIMEOUT_MS       = 6_000;

@@ -5,6 +5,8 @@ import {
   describeRpcCall,
   formatAttempts,
   rpcHostLabel,
+  classifyRpcCredential,
+  privateSlotWarning,
   shouldRetryPrivate,
   type RpcAttempt,
   MAX_BATCH_SIZE,
@@ -55,10 +57,150 @@ describe('rpcHostLabel', () => {
     expect(label).not.toContain('SECRETPASS');
   });
 
+  it('ЗАМЕР: ключ В ПУТИ не попадает в журнал — ни он, ни сам путь', () => {
+    // ⚠️ ЭТОТ СЛУЧАЙ ДОРОЖЕ, ЧЕМ ВЫГЛЯДИТ. Маску, написанную под `?dkey=`
+    // (обрезать всё после `?`), ключ в пути проходит НАСКВОЗЬ — а в окружении
+    // владельца ключ лежит именно в пути. Тот же класс, что и список доменов:
+    // знание одной формы принимается за знание признака.
+    const KEY = 'A1bC2dE3fG4hI5jK6lM7nO8pQ9rS0tU1vW2xY3zB';
+    const label = rpcHostLabel(`https://lb.drpc.live/base-sepolia/${KEY}`);
+    expect(label).toBe('lb.drpc.live');
+    expect(label).not.toContain(KEY);
+    expect(label).not.toContain('/');
+  });
+
   it('на неразобравшуюся строку не отдаёт её саму', () => {
     const label = rpcHostLabel('этоневообщеurl?dkey=SECRET');
     expect(label).toBe('<не-URL>');
     expect(label).not.toContain('SECRET');
+  });
+});
+
+/**
+ * ⚠️ КЛЮЧИ НИЖЕ ВЫДУМАНЫ. Репозиторий публичный; настоящий платный ключ здесь
+ * не появляется ни в каком виде — форма важна, значение нет.
+ */
+const FAKE_PATH_KEY  = 'A1bC2dE3fG4hI5jK6lM7nO8pQ9rS0tU1vW2xY3zB'; // 40 знаков, как ключ drpc в пути
+const FAKE_QUERY_KEY = 'Zq7Xm2Vp9Ld4Rt6Yn1Ks8Hb3Jc5Wf0Ag';          // 32 знака, как ключ в параметре
+
+describe('classifyRpcCredential — приватный тот, у кого есть КЛЮЧ, а не тот, у кого домен из списка', () => {
+  it('ЗАМЕР 1: боевой платный адрес — ключ СЕГМЕНТОМ ПУТИ — приватный', () => {
+    // Форма, которая лежит в окружении владельца. Список доменов не увидел бы
+    // её НИ ПРИ КАКОМ своём составе: он про ключ не рассуждает вовсе.
+    expect(classifyRpcCredential(`https://lb.drpc.live/base-sepolia/${FAKE_PATH_KEY}`).kind).toBe('keyed');
+  });
+
+  it('ЗАМЕР 1б: та же платная точка на ДРУГОМ домене поставщика — ключ параметром — приватный', () => {
+    // Этот домен стоял в прежнем чёрном списке: на такой форме детектор
+    // ругался бы при каждом запуске. Предикат про домен не знает ничего.
+    const v = classifyRpcCredential(`https://lb.drpc.org/ogrpc?network=base-sepolia&dkey=${FAKE_QUERY_KEY}`);
+    expect(v.kind).toBe('keyed');
+  });
+
+  it('ЗАМЕР 1в: тот же адрес с ОДНОСИМВОЛЬНЫМ значением ключа — всё равно приватный', () => {
+    // Параметр НАЗВАН ключом и не пуст — длина значения не наше дело.
+    expect(classifyRpcCredential('https://lb.drpc.org/ogrpc?network=base-sepolia&dkey=X').kind).toBe('keyed');
+  });
+
+  it('ЗАМЕР 2: бесплатный drpc — тот же домен, ключа нет — публичный', () => {
+    expect(classifyRpcCredential('https://base-sepolia.drpc.org').kind).toBe('bare');
+  });
+
+  it('ЗАМЕР 3: публичный узел Base — публичный', () => {
+    expect(classifyRpcCredential('https://sepolia.base.org').kind).toBe('bare');
+  });
+
+  it('ЗАМЕР 4: ключ в пути у другого поставщика (`/v2/<ключ>`) — приватный', () => {
+    expect(classifyRpcCredential(`https://base-sepolia.g.alchemy.com/v2/${FAKE_QUERY_KEY}`).kind).toBe('keyed');
+  });
+
+  it('весь публичный пул маршрута — публичный, включая тот, у кого есть путь', () => {
+    // `blockpi` несёт `/v1/rpc/public`: путь есть, ключа нет. Именно на таком
+    // адресе признак «есть путь → значит ключ» дал бы молчание там, где нужен крик.
+    for (const url of [
+      'https://mainnet.base.org',
+      'https://base-rpc.publicnode.com',
+      'https://sepolia.base.org',
+      'https://base-sepolia-rpc.publicnode.com',
+      'https://base-sepolia.blockpi.network/v1/rpc/public',
+    ]) {
+      expect(classifyRpcCredential(url), url).toEqual({ kind: 'bare' });
+    }
+  });
+
+  it('basic-auth — удостоверение в чистом виде', () => {
+    expect(classifyRpcCredential('https://user:pw0rd@node.example.com/rpc').kind).toBe('keyed');
+  });
+
+  it('НЕ ЗНАЕТ НАПИСАНИЙ: незнакомое имя параметра с корнем «token» — тоже приватный', () => {
+    // Шестой способ (`docs/PROCESS.md`): признак обязан узнавать понятие.
+    // Такого поставщика в коде нет нигде, и это ровно проверка.
+    expect(classifyRpcCredential(`https://rpc.example.net/ogrpc?access_token=${FAKE_QUERY_KEY}`).kind).toBe('keyed');
+    expect(classifyRpcCredential(`https://rpc.example.net/ogrpc?pkey=${FAKE_QUERY_KEY}`).kind).toBe('keyed');
+  });
+
+  it('НЕ ПОНЯЛ — ГОВОРИТ ВСЛУХ, а не молчит: строка вообще не URL', () => {
+    const v = classifyRpcCredential('это не url ?dkey=SECRET');
+    expect(v.kind).toBe('unclear');
+    if (v.kind === 'unclear') expect(v.why).not.toContain('SECRET');
+  });
+
+  it('НЕ ПОНЯЛ: параметр назван ключом, но пуст — настройка сломана, и это слышно', () => {
+    const v = classifyRpcCredential('https://lb.drpc.org/ogrpc?network=base-sepolia&dkey=');
+    expect(v.kind).toBe('unclear');
+  });
+
+  it('НЕ ПОНЯЛ: короткий непрозрачный кусок в пути — «не берусь судить», а НЕ «ключа нет»', () => {
+    // Ошибка в эту сторону безопасна: человек читает строку и смотрит сам.
+    // Ошибка в другую («ключа нет») — та самая ложная тревога.
+    expect(classifyRpcCredential('https://rpc.example.net/base-sepolia/Ab3xK9zQ').kind).toBe('unclear');
+  });
+
+  it('ГДЕ лежит ключ — называется, ЧТО в нём — никогда', () => {
+    const v = classifyRpcCredential(`https://lb.drpc.live/base-sepolia/${FAKE_PATH_KEY}`);
+    expect(JSON.stringify(v)).not.toContain(FAKE_PATH_KEY);
+    const q = classifyRpcCredential(`https://lb.drpc.org/ogrpc?dkey=${FAKE_QUERY_KEY}`);
+    expect(JSON.stringify(q)).not.toContain(FAKE_QUERY_KEY);
+  });
+});
+
+describe('privateSlotWarning — что маршрут скажет при запуске', () => {
+  it('ЗАМЕР 1: на боевом платном адресе МОЛЧИТ — в обеих живых формах ключа', () => {
+    expect(privateSlotWarning(`https://lb.drpc.live/base-sepolia/${FAKE_PATH_KEY}`)).toBeNull();
+    expect(privateSlotWarning(`https://lb.drpc.org/ogrpc?network=base-sepolia&dkey=${FAKE_QUERY_KEY}`)).toBeNull();
+    expect(privateSlotWarning('https://lb.drpc.org/ogrpc?network=base-sepolia&dkey=X')).toBeNull();
+  });
+
+  it('ЗАМЕР 4: на ключе в пути у другого поставщика — МОЛЧИТ', () => {
+    expect(privateSlotWarning(`https://base-sepolia.g.alchemy.com/v2/${FAKE_QUERY_KEY}`)).toBeNull();
+  });
+
+  it('ЗАМЕР 2 и 3 + ВСТРЕЧНЫЙ: на бесплатном узле ГОВОРИТ — предикат, признающий приватным всё, обязан здесь покраснеть', () => {
+    for (const url of ['https://base-sepolia.drpc.org', 'https://sepolia.base.org', 'https://base-sepolia.blockpi.network/v1/rpc/public']) {
+      const w = privateSlotWarning(url);
+      expect(w, url).not.toBeNull();
+      expect(w, url).toContain('no access key');
+    }
+  });
+
+  it('в предупреждении — только хост: ни ключа, ни значений параметров', () => {
+    // Строка уезжает в журнал контейнера — правило `rpcHostLabel` целиком.
+    // Сцена выбрана та, где предупреждение ЕСТЬ, а короткий ключ в адресе —
+    // ТОЖЕ есть: «не берусь судить» не должно стать способом слить значение.
+    const w = privateSlotWarning('https://lb.drpc.org/base-sepolia/Ab3xK9zQ');
+    expect(w).not.toBeNull();
+    expect(w!).toContain('lb.drpc.org');
+    expect(w!).not.toContain('Ab3xK9zQ');
+
+    const q = privateSlotWarning('https://lb.drpc.org/ogrpc?network=base-sepolia&secret=');
+    expect(q).not.toBeNull();
+    expect(q!).not.toContain('base-sepolia');
+  });
+
+  it('неразобранный адрес — НЕ молчание: раньше здесь был пустой catch', () => {
+    const w = privateSlotWarning('lb.drpc.org/base-sepolia/КЛЮЧ');
+    expect(w).not.toBeNull();
+    expect(w!).toContain('cannot tell');
   });
 });
 
