@@ -57,130 +57,136 @@ export function rpcHostLabel(url: string): string {
   }
 }
 
-/* ════════ приватный слот: несёт ли адрес удостоверение ════════ */
+/* ════════ the private slot: does the URL carry a credential? ════════ */
 
 /**
- * Что несёт адрес, попавший в ПРИВАТНЫЙ слот RPC (`DRPC_URL`/`RPC_URL`/...).
+ * What the URL in the PRIVATE RPC slot (`DRPC_URL`/`RPC_URL`/...) carries.
  *
- * ⚠️ ЗАЧЕМ ЭТО ПОЯВИЛОСЬ. Раньше «публичный узел в приватном слоте» узнавался
- * по СПИСКУ ДОМЕНОВ в `app/api/rpc/route.ts`. Список протух ровно так, как
- * протухает любой список: один из доменов, на которых наш поставщик отдаёт
- * ПЛАТНЫЙ доступ, в нём стоял — и детектор ругался на боевой адрес при каждом
- * запуске. Ложная тревога хуже молчания: в ней тонет настоящий сигнал.
+ * ⚠️ WHY THIS EXISTS. "A public endpoint won the private slot" used to be
+ * decided in `app/api/rpc/route.ts` by matching the hostname against a LIST OF
+ * DOMAINS. The list went stale exactly the way every list goes stale: one of
+ * the domains on which our provider serves PAID access was on it, so the
+ * detector fired against a live paid address at every single startup. A false
+ * alarm is worse than silence — the real signal drowns in it.
  *
- * Второе, и оно важнее. Форма ключа у ОДНОГО И ТОГО ЖЕ поставщика РАЗНАЯ на
- * разных доменах: на одном ключ едет параметром, на другом — длинным
- * непрозрачным сегментом прямо в пути. Список доменов про ключ не рассуждает
- * вовсе, так что вторую форму он не увидел бы ни при каком своём составе.
- * Значит вопрос не «какой домен платный», а ровно один:
- * **несёт ли адрес удостоверение**.
+ * And the second half, which matters more. The key sits in a DIFFERENT PLACE
+ * depending on the domain, for one and the same provider: on one it rides as a
+ * query parameter, on another as a long opaque segment of the path itself. A
+ * list of hostnames does not reason about keys at all, so no possible
+ * membership would ever have caught the second form. Which makes the question
+ * not "which domain is paid" but exactly one thing:
+ * **does this URL carry a credential?**
  *
- *      Приватный — тот, у кого есть ключ, чей бы домен ни был.
+ *      Private is whoever holds a key, whatever the domain.
  *
- * Тогда списку хостов протухать нечем, потому что списка нет.
+ * Then the host list has nothing left to go stale, because there is no list.
  *
- * ⚠️ И ПРИЗНАК УЗНАЁТ ПОНЯТИЕ, А НЕ НАПИСАНИЕ — это шестой способ обмануться
- * замером (`docs/PROCESS.md`): сканер, знающий строку `dkey`, слеп ровно к
- * тому же классу, что и список доменов. Поэтому ниже нет ни `dkey`, ни
- * `alchemy`, ни `infura`: есть «параметр, НАЗВАННЫЙ ключом» и «непрозрачный
- * кусок, который на слово не похож». Новый поставщик с новым именем параметра
- * узнаётся тем же кодом, без правки.
+ * ⚠️ AND THE TEST RECOGNISES THE CONCEPT, NOT THE SPELLING — that is the sixth
+ * way to fool yourself with a measurement (`docs/PROCESS.md`): a scanner that
+ * knows the string `dkey` is blind to precisely the same class as a list of
+ * domains. So there is no `dkey` below, no `alchemy`, no `infura`. There is "a
+ * parameter NAMED like a key" and "an opaque run that does not look like a
+ * word". A new provider with a new parameter name is recognised by the same
+ * code, with no edit.
  *
- * Исходов ТРИ, и третий — главный: **если предикат не понял, он обязан сказать
- * об этом, а не молчать**. Молчание здесь неотличимо от «всё в порядке», а
- * именно этим прошлый детектор и был плох.
+ * THREE outcomes, and the third one is the point: **when the test cannot tell,
+ * it must say so rather than stay quiet**. Silence here is indistinguishable
+ * from "all good", and being indistinguishable from "all good" is exactly what
+ * was wrong with the old detector.
  */
 export type RpcCredential =
-  /** Удостоверение найдено. `where` — ГДЕ оно лежит; НИКОГДА не что в нём. */
+  /** A credential was found. `where` says WHERE it sits — NEVER what is in it. */
   | { kind: 'keyed';   where: string }
-  /** Удостоверения нет, и спрятать его в этом адресе негде. */
+  /** No credential, and nowhere in this URL to hide one. */
   | { kind: 'bare' }
-  /** Разобрать не вышло — и молчать об этом нельзя. */
+  /** Could not work it out — and staying quiet about that is not allowed. */
   | { kind: 'unclear'; why: string };
 
 /**
- * Длина, с которой непрозрачный кусок уже тянет на ключ доступа сам по себе,
- * без подсказки в имени. Замер по живым формам: ключ drpc в пути — 44 символа,
- * Alchemy `/v2/<ключ>` — 32, Infura `/v3/<ключ>` — 32 hex. Порог сознательно
- * НИЖЕ самого короткого из них: он отделяет ключ от слова, а не «наш ключ» от
- * «чужого». Слова, которые реально встречаются в публичных адресах
- * (`base-sepolia`, `v1`, `rpc`, `public`, `ogrpc`), до него не дотягивают ИЛИ
- * отсеиваются проверкой разнообразия ниже.
+ * The length at which an opaque run is credential-grade on its own, with no
+ * hint from a name. Measured against live shapes: a key in the path runs 40+
+ * characters, `/v2/<key>` is 32, `/v3/<key>` is 32 hex. The threshold sits
+ * deliberately BELOW the shortest of them: its job is to separate a key from a
+ * word, not "our key" from "someone else's". The words that actually occur in
+ * public RPC URLs (`base-sepolia`, `v1`, `rpc`, `public`, `ogrpc`) fall short
+ * of it, or fail the variety test below.
  */
 const CREDENTIAL_MIN_LEN = 16;
 
 /**
- * Длина, с которой кусок перестаёт быть похожим на слово, но ещё не тянет на
- * ключ. Такой адрес НЕ объявляется «без ключа» — про него говорится «не понял».
- * Это и есть цена честности: короткий ключ (8-15 символов) не будет объявлен
- * отсутствующим, о нём будет сказано вслух.
+ * The length at which a run stops looking like a word but does not yet reach a
+ * key. Such a URL is NOT declared keyless — it is reported as "cannot tell".
+ * That is the price of honesty: a short key (8-15 characters) will not be
+ * declared absent, it will be said out loud.
  */
 const AMBIGUOUS_MIN_LEN = 8;
 
-/** Набор знаков, из которых состоят ключи доступа (base64url и его родня). */
+/** The character set access keys are made of (base64url and its relatives). */
 const KEYISH_CHARSET = /^[A-Za-z0-9._~=-]+$/;
 
 /**
- * Имя параметра, которое САМО объявляет, что в нём удостоверение.
+ * A parameter name that ANNOUNCES a credential by itself.
  *
- * Это КОРНИ ПОНЯТИЙ, а не имена поставщиков: `dkey`, `apikey`, `api_key`,
- * `access_token`, `x-secret` — все узнаются одним и тем же выражением, и
- * завтрашний `?pkey=` узнается тоже. Подстрока, а не точное слово, — сознательно:
- * `dkey` от `key` структурно не отличить, и попытка отличить их вернула бы нас
- * ровно к списку написаний.
+ * These are ROOTS OF CONCEPTS, not vendor names: `dkey`, `apikey`, `api_key`,
+ * `access_token`, `x-secret` are all recognised by one expression, and
+ * tomorrow's `?pkey=` will be too. Substring rather than whole word, on
+ * purpose: `dkey` is structurally indistinguishable from `key`, and trying to
+ * distinguish them would drag us straight back to a list of spellings.
  *
- * Цена подстроки — теоретический `?monkey=…`, который был бы принят за ключ.
- * Дешёвая цена: ошибка в эту сторону даёт МОЛЧАНИЕ на странном адресе, а не
- * ложную тревогу на боевом, и параметра `monkey` в адресе RPC-узла не бывает.
+ * The price of the substring is a theoretical `?monkey=…` mistaken for a key.
+ * A cheap price: an error in that direction produces SILENCE on a strange URL
+ * rather than a false alarm on the live one, and RPC endpoints do not carry a
+ * parameter called `monkey`.
  */
 const CREDENTIAL_NAME = /key|token|secret|auth|pass|sig|cred|jwt|bearer/i;
 
 type TokenVerdict = 'credential' | 'ambiguous' | 'harmless';
 
 /**
- * Разнообразие знаков — то, чем ключ отличается от слова. Либо цифры вместе с
- * буквами, либо смешанный регистр. `base-sepolia` не проходит ни по одному
- * признаку, `AocsRMtGU06Ghg6u…` проходит по обоим.
+ * Character variety — what separates a key from a word. Either digits together
+ * with letters, or mixed case. `base-sepolia` passes neither test;
+ * `K3yEx4mpleF4keV4…` passes both.
  */
 function keyishVariety(s: string): boolean {
   return (/[0-9]/.test(s) && /[A-Za-z]/.test(s)) || (/[a-z]/.test(s) && /[A-Z]/.test(s));
 }
 
-/** Может ли ОТДЕЛЬНЫЙ кусок адреса (сегмент пути, значение параметра,
- *  фрагмент) быть ключом доступа. Ни разу не смотрит, чей это домен. */
+/** Whether ONE piece of a URL (a path segment, a parameter value, the
+ *  fragment) could be an access key. Never once looks at whose domain it is. */
 function judgeToken(s: string): TokenVerdict {
-  if (s.length < AMBIGUOUS_MIN_LEN) return 'harmless';       // короче любого ключа
-  if (!KEYISH_CHARSET.test(s)) return 'ambiguous';           // форма незнакомая — сказать вслух
-  if (!keyishVariety(s)) return 'harmless';                  // слово, а не ключ
+  if (s.length < AMBIGUOUS_MIN_LEN) return 'harmless';       // shorter than any key
+  if (!KEYISH_CHARSET.test(s)) return 'ambiguous';           // unfamiliar shape — say so
+  if (!keyishVariety(s)) return 'harmless';                  // a word, not a key
   return s.length >= CREDENTIAL_MIN_LEN ? 'credential' : 'ambiguous';
 }
 
-/** Имя параметра в текст причины — с потолком длины, чтобы строка журнала не
- *  раздувалась содержимым переменной окружения. Значение НЕ берётся никогда. */
+/** A parameter name for the reason text — length-capped, so that a log line
+ *  cannot be inflated by the contents of an environment variable. The VALUE is
+ *  never taken. */
 function paramLabel(name: string): string {
   return name.length > 40 ? `${name.slice(0, 40)}…` : name;
 }
 
 /**
- * Несёт ли адрес удостоверение.
+ * Does this URL carry a credential?
  *
- * ⚠️ НИ ОДНА ВОЗВРАЩАЕМАЯ СТРОКА НЕ СОДЕРЖИТ ЗНАЧЕНИЙ — только положение
- * («параметр такой-то», «сегмент пути номер такой-то»). Это то же правило, что
- * у `rpcHostLabel`: причина уезжает в журнал, а в журнале не место ключу.
+ * ⚠️ NONE OF THE RETURNED STRINGS CONTAINS A VALUE — only a position ("query
+ * parameter X", "path segment #N"). Same rule as `rpcHostLabel`: the reason
+ * travels to the log, and a log is no place for a key.
  */
 export function classifyRpcCredential(raw: string): RpcCredential {
   let u: URL;
   try {
     u = new URL(raw);
   } catch {
-    // Прежний код на этом месте молчал (`catch { /* не URL — сказать нечего */ }`),
-    // и это была та же беда в миниатюре: неразобравшийся адрес в приватном
-    // слоте — самое подозрительное, что тут может лежать.
+    // The old code stayed quiet right here (`catch { /* not a URL, nothing to
+    // say */ }`), and that was the same failure in miniature: an unparseable
+    // address in the private slot is the most suspicious thing that can be in it.
     return { kind: 'unclear', why: 'URL does not parse' };
   }
 
-  // Удостоверение в чистом виде: `https://user:pass@host/`. В адресе RPC-узла
-  // userinfo не бывает ничем иным.
+  // A credential in its purest form: `https://user:pass@host/`. Userinfo on an
+  // RPC endpoint is never anything else.
   if (u.username || u.password) return { kind: 'keyed', where: 'basic-auth' };
 
   const unclear: string[] = [];
@@ -189,8 +195,9 @@ export function classifyRpcCredential(raw: string): RpcCredential {
     const label = paramLabel(name);
     if (CREDENTIAL_NAME.test(name)) {
       if (value !== '') return { kind: 'keyed', where: `query parameter "${label}"` };
-      // Параметр назван ключом и пуст — это поломка настройки, и она обязана
-      // быть слышна: снаружи она выглядит точно так же, как публичный узел.
+      // A parameter named like a key and empty is a broken configuration, and
+      // it has to be audible: from the outside it looks exactly like a public
+      // endpoint.
       unclear.push(`query parameter "${label}" is named like a key but carries no value`);
       continue;
     }
@@ -218,13 +225,14 @@ export function classifyRpcCredential(raw: string): RpcCredential {
 }
 
 /**
- * Что сказать при запуске про адрес приватного слота — или `null`, если
- * сказать нечего (ключ на месте).
+ * What to say at startup about the private slot's URL — or `null` when there is
+ * nothing to say, because the key is where it should be.
  *
- * Отдельной функцией, а не `if` в маршруте, ровно по причине из шапки
- * `route.test.ts`: замок в библиотеке, который маршрут не зовёт, — это код
- * без поведения. Здесь проверяется САМА формулировка (включая то, что в ней
- * нет ключа), а `route.privateSlot.test.ts` проверяет, что маршрут её зовёт.
+ * A separate function rather than an `if` inside the route, for the reason
+ * spelled out at the top of `route.test.ts`: a lock in a library that the route
+ * never calls is code without behaviour. Here the WORDING is checked (including
+ * the fact that it holds no key); `route.privateSlot.test.ts` checks that the
+ * route actually calls it.
  */
 export function privateSlotWarning(url: string): string | null {
   const verdict = classifyRpcCredential(url);
@@ -239,6 +247,7 @@ export function privateSlotWarning(url: string): string | null {
     `(${verdict.why}) — check the value by hand; a keyless endpoint means every call ` +
     'shares one public rate limit';
 }
+
 
 /* ───────────────────────── классификация отказа ─────────────────────── */
 

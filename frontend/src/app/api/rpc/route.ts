@@ -138,24 +138,28 @@ const PRIVATE_RPC =
 // A keyless endpoint winning the private slot is survivable but never intentional —
 // and it was invisible in the logs, which is how it stayed hidden. Say so once at startup.
 //
-// ⚠️ ПРИЗНАК — НАЛИЧИЕ КЛЮЧА В АДРЕСЕ, А НЕ ИМЯ ХОСТА. Здесь стоял список
-// доменов, а рядом — довод: платный узел нашего поставщика живёт на ДРУГОМ
-// домене, поэтому запретить домен его бесплатного узла безопасно.
+// ⚠️ THE TEST IS "DOES THE URL CARRY A KEY", NOT "WHOSE HOSTNAME IS THIS".
+// A list of domains used to stand here, and beside it an argument: our
+// provider's paid endpoint lives on a DIFFERENT domain, so banning the domain
+// of its free endpoint is safe.
 //
-// Довод был неверен ДВАЖДЫ, и обе ошибки — одного класса.
-//   • Поставщик обслуживает платный доступ НЕ НА ОДНОМ домене. Один из них
-//     стоял в списке — то есть детектор ругался на боевой платный адрес при
-//     каждом запуске. Ложная тревога хуже молчания: в ней тонет настоящий.
-//   • Форма ключа у одного и того же поставщика РАЗНАЯ на разных доменах: то
-//     параметром, то длинным сегментом прямо в пути. Список доменов про ключ
-//     не рассуждает вовсе и вторую форму не увидел бы ни при каком составе.
+// The argument was wrong TWICE, and both errors are the same class.
+//   * The provider serves paid access on MORE THAN ONE domain. One of them was
+//     on the list — meaning the detector fired against a live paid address at
+//     every startup. A false alarm is worse than silence: the real signal
+//     drowns in it.
+//   * The key sits in a DIFFERENT PLACE per domain for one and the same
+//     provider: a query parameter on one, a long segment of the path on
+//     another. A list of domains does not reason about keys at all, so no
+//     possible membership would have caught the second form.
 //
-// Нового имени хоста здесь намеренно НЕТ: оно протухнет ровно так же — это и
-// проверять нечем, домены меняются молча. Вопрос ровно один: несёт ли адрес
-// удостоверение. Приватный — тот, у кого есть ключ, чей бы домен ни был; тогда
-// списку протухать нечем, потому что списка нет. Разбор признака и три его
-// исхода (в том числе «не понял — говорю вслух») — `classifyRpcCredential` /
-// `privateSlotWarning` в `lib/rpcProxy.ts`.
+// There is deliberately NO fresh hostname here: it would rot exactly the same
+// way, and nothing would catch it — domains change quietly. The question is
+// just one: does the URL carry a credential. Private is whoever holds a key,
+// whatever the domain; then the list has nothing left to go stale, because
+// there is no list. The test itself and its three outcomes (including "cannot
+// tell — saying so out loud") are `classifyRpcCredential` /
+// `privateSlotWarning` in `lib/rpcProxy.ts`.
 if (PRIVATE_RPC) {
   const slotWarning = privateSlotWarning(PRIVATE_RPC);
   if (slotWarning) console.warn(`[/api/rpc] ${slotWarning}`);
