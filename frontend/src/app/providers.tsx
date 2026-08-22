@@ -216,7 +216,7 @@ const MOBILE_EXCLUDED = [metaMaskWallet];
 const config = projectId
   ? getDefaultConfig({
       appName: "Hexseal",
-      appDescription: "Decentralized freelance protocol on Base",
+      appDescription: "Autonomous escrow protocol on Base",
       appUrl: typeof window !== "undefined" ? window.location.origin : "https://hexseal.net",
       appIcon: typeof window !== "undefined"
         ? `${window.location.origin}/hexseal-app-icon.svg`
