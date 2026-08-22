@@ -258,7 +258,17 @@ no accountability events, because: the escrow itself. Its events are about ONE
   impossible, because the arbiter is not in it. A file being written off here
   means "no accountability event lives here", never "nothing here mentions
   arbiters".
-events: 21
+  ⚠️ RAISED 21 -> 22 on 2026-08-23: XpAwardFailed(address indexed agreement),
+  added with the diamond-call gas caps. It fires when autoAwardXP() did not land
+  — unreachable diamond, reverting facet, or a facet that ate its whole gas cap
+  — so that a missing XP award stops being invisible. It is deliberately NOT an
+  accountability event: it names a DEAL, not an arbiter, and it is the twin of
+  RegistrySyncFailed, which this same entry has always covered. XP does gate
+  entry to the arbiter roster (MIN_XP_TO_REGISTER), which is exactly why the
+  temptation to file it here exists — but what the feed needs is "which arbiter
+  did what", and this event cannot answer that, the same trap ArbiterTimedOut
+  set above.
+events: 22
 
 === out of scope :: src/facets/JobBoardFacet.sol ===
 no accountability events, because: the job board. Posting, applying, accepting,

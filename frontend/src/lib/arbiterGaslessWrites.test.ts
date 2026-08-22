@@ -50,7 +50,13 @@ const EXPECTED_ABI = parseAbi([
 /** Ожидаемые потолки — руками, не из `GAS_DEFAULTS`. */
 const CEILINGS = {
   submitVerdict:         160_000n,
-  finalizeVerdict:       780_000n,
+  // ⚠️ Поднят 23 августа 2026 с 780 000. `finalizeVerdict` исполняет
+  // `resolveDispute` на агрименте, а тот с этого дня отказывается звать
+  // `autoAwardXP` без полного капа газа (пол `NotEnoughGasForDiamondCall`,
+  // src/Agreement.sol). Замер минимального работающего лимита двоичным поиском
+  // на здоровом даймонде — 703 138; при даймонде, который жжёт газ вместо
+  // ответа, — 1 134 325. Число здесь ставится РУКАМИ и не импортируется.
+  finalizeVerdict:     1_200_000n,
   withdrawArbiterReward: 100_000n,
   // Поднят вторично 20 августа 2026, с 90 000: фронтовое ABI догнало цепь, и
   // вызов стал возить `string` до 512 байт. База — холодная сцена на полных
@@ -179,7 +185,7 @@ describe('финализация вердикта идёт через релее
     }));
   });
 
-  it('R5 узел не оценил — уходит 780 000, а не общее умолчание 500 000', async () => {
+  it('R5 узел не оценил — уходит 1 200 000, а не общее умолчание 500 000', async () => {
     // Ровно тот случай, ради которого запись в таблице и заведена: `resolveDispute`
     // на первой сделке пары начисляет XP обеим сторонам в холодные слоты, и
     // умолчания не хватило бы — транзакция сгорела бы по out of gas.
@@ -187,7 +193,7 @@ describe('финализация вердикта идёт через релее
     relayDown();
     await finalizeVerdictGasless(wallet, node, AGREEMENT);
     expect(sent[0].gas).toBe(CEILINGS.finalizeVerdict);
-    expect(CEILINGS.finalizeVerdict).toBe(780_000n);
+    expect(CEILINGS.finalizeVerdict).toBe(1_200_000n);
     expect(CEILINGS.finalizeVerdict).toBeGreaterThan(500_000n);
   });
 

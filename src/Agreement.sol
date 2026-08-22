@@ -322,6 +322,47 @@ contract Agreement is MinimalERC721, ReentrancyGuard, ERC2771Context {
     uint256 private constant VERDICT_VIEW_GAS_FLOOR =
         VERDICT_VIEW_GAS + VERDICT_VIEW_GAS / 63 + 8_000;
 
+    // -------- DIAMOND WRITE BUDGETS --------
+    //
+    // The cap above covers the one diamond VIEW that stands in front of the
+    // money. Everything below covers the diamond WRITES, and they are the
+    // expensive half: _complete() makes two of them in a row before every
+    // payout, which is what let a gas-eating facet inflate auto-approve from
+    // ~419_481 gas to ~29_791_258 -- 71x -- with try/catch powerless to stop
+    // it (docs/audits/2026-08-22-diamond-death-escrow.md, section 4).
+    //
+    // Each number was MEASURED against the real facets through the real proxy
+    // with every slot cold, and is re-measured on every run by
+    // test/DiamondDeathGasCaps.t.sol section 14. The multiplier is the headroom
+    // over that measurement:
+    //
+    //   updateStatus          58_521 -> 150_000  (2.5x)
+    //   autoAwardXP          332_268 -> 500_000  (1.5x)
+    //   creditDisputeFee      56_696 -> 150_000  (2.6x)
+    //   notifyExecutorFault   14_298 -> 100_000  (6.9x)
+    //   notifyArbiterTimeout  31_814 -> 150_000  (4.7x)
+    //   clearDisputeClaim     74_746 -> 200_000  (2.6x)
+    //
+    // autoAwardXP gets the thinnest headroom on purpose. Its floor (below) is
+    // what a caller must be able to hand over, so the cap sets the minimum gas
+    // limit for release/triggerAutoApprove -- the two most ordinary actions in
+    // the product. 500_000 is the largest cap that still fits under the gas
+    // ceilings the frontend already ships (frontend/src/lib/relay.ts,
+    // GAS_DEFAULTS: release and triggerAutoApprove are 660_000 each). The
+    // function is O(1) with no loop anywhere in its call tree, so 167_732 gas
+    // of slack is about seven more cold SSTOREs than it has ever needed.
+    uint256 private constant REGISTRY_UPDATE_GAS = 150_000;
+    uint256 private constant XP_AWARD_GAS        = 500_000;
+    uint256 private constant DISPUTE_FEE_GAS     = 150_000;
+    uint256 private constant FAULT_NOTIFY_GAS    = 100_000;
+    uint256 private constant ARBITER_TIMEOUT_GAS = 150_000;
+    uint256 private constant CLAIM_CLEAR_GAS     = 200_000;
+
+    // Spent between the gasleft() check and the CALL opcode itself: cold
+    // account access, memory for the calldata, the surrounding opcodes. Same
+    // 8_000 the verdict floor above uses, for the same reason.
+    uint256 private constant DIAMOND_CALL_GAS_SLACK = 8_000;
+
     // -------- DEAL PARAMS (пишутся один раз в initialize) --------
     //
     // Не immutable: значения различны у каждого клона, а immutable живёт
@@ -427,6 +468,11 @@ contract Agreement is MinimalERC721, ReentrancyGuard, ERC2771Context {
     // Срабатывает если Registry.updateStatus() упал — сделка завершена, статус в Registry рассинхронизирован.
     // Любой может вызвать syncRegistry() чтобы исправить.
     event RegistrySyncFailed(address indexed agreement, uint8 targetStatus);
+    // Fires when autoAwardXP() did not land -- unreachable diamond, reverting
+    // facet, or a facet that ate its whole gas cap. Before this event the XP
+    // simply went missing with nothing on-chain to say so. claimXP() on the
+    // diamond is the manual way back for both parties.
+    event XpAwardFailed(address indexed agreement);
 
     // -------- ERRORS --------
 
@@ -461,6 +507,17 @@ contract Agreement is MinimalERC721, ReentrancyGuard, ERC2771Context {
     /// Raised when triggerArbiterTimeout is called with too little gas to hand
     /// the verdict read its full budget. See VERDICT_VIEW_GAS_FLOOR.
     error NotEnoughGasForVerdictCheck();
+    /// Raised when a diamond call whose failure would quietly cost someone
+    /// something is reached with too little gas to hand over its full cap.
+    /// Only the calls that CAN be starved for profit carry this; see
+    /// _requireDiamondGas.
+    ///
+    /// The argument is the selector of the call that was refused. Two
+    /// different calls are floored, they sit on the same path, and without
+    /// this argument a refusal from one is indistinguishable from a refusal
+    /// from the other -- both to whoever is reading the failure and to the
+    /// test that is supposed to notice if one of the floors disappears.
+    error NotEnoughGasForDiamondCall(bytes4 diamondCall);
     error NoArbiterSet();
     error WrongAmount();
     error ExtraNotPending();
@@ -837,7 +894,13 @@ contract Agreement is MinimalERC721, ReentrancyGuard, ERC2771Context {
             // Провал означает «сбор не взят», а не «сбор сожжён»: перевод
             // стоит ВНУТРИ try, поэтому при неудаче creditDisputeFee ни цента
             // не покидает Agreement — вся сумма остаётся в payout ниже.
-            try IArbiterRegistryFacet(diamond).creditDisputeFee(fee) {
+            // Floored, not merely capped. A failed credit means the fee is
+            // never taken and the whole pot goes to the winner instead -- so a
+            // winner who calls finalizeVerdict with a hand-picked gas limit
+            // could starve this one call and keep the arbiter's 3%. The event
+            // says it happened, but nothing can take it back afterwards.
+            _requireDiamondGas(DISPUTE_FEE_GAS, IArbiterRegistryFacet.creditDisputeFee.selector);
+            try IArbiterRegistryFacet(diamond).creditDisputeFee{gas: DISPUTE_FEE_GAS}(fee) {
                 usdc.safeTransfer(diamond, fee);
                 taken = fee;
                 emit DisputeFeePaid(fee);
@@ -870,7 +933,7 @@ contract Agreement is MinimalERC721, ReentrancyGuard, ERC2771Context {
         usdc.safeTransfer(client, payout);
 
         if (_diamondHasCode()) {
-            try IReputationFacet(diamond).notifyExecutorFault(address(this)) {} catch {}
+            try IReputationFacet(diamond).notifyExecutorFault{gas: FAULT_NOTIFY_GAS}(address(this)) {} catch {}
         }
 
         emit TimedOut(client, payout);
@@ -894,7 +957,7 @@ contract Agreement is MinimalERC721, ReentrancyGuard, ERC2771Context {
         usdc.safeTransfer(client, payout);
 
         if (_diamondHasCode()) {
-            try IReputationFacet(diamond).notifyExecutorFault(address(this)) {} catch {}
+            try IReputationFacet(diamond).notifyExecutorFault{gas: FAULT_NOTIFY_GAS}(address(this)) {} catch {}
         }
 
         emit TimedOut(client, payout);
@@ -1015,7 +1078,7 @@ contract Agreement is MinimalERC721, ReentrancyGuard, ERC2771Context {
         usdc.safeTransfer(client, pot);
 
         if (_diamondHasCode()) {
-            try IArbiterRegistryFacet(diamond).notifyArbiterTimeout(address(this)) {} catch {}
+            try IArbiterRegistryFacet(diamond).notifyArbiterTimeout{gas: ARBITER_TIMEOUT_GAS}(address(this)) {} catch {}
         }
 
         _clearDisputeClaim();
@@ -1306,7 +1369,19 @@ contract Agreement is MinimalERC721, ReentrancyGuard, ERC2771Context {
         // Автоматически начисляем XP обеим сторонам при успешном завершении
         if (newStatus == Status.COMPLETED || newStatus == Status.RESOLVED) {
             if (_diamondHasCode()) {
-                try IReputationFacet(diamond).autoAwardXP(address(this)) {} catch {}
+                // Floored as well as capped, and this is the reason the floor
+                // exists at all. XP gates entry to the arbiter roster
+                // (MIN_XP_TO_REGISTER), so a client who calls release() with a
+                // gas limit tuned to make this one call fall short would close
+                // the deal, take delivery, and quietly hold back the
+                // executor's standing -- with nothing visibly broken. Out of
+                // gas here reverts the whole transaction instead: call it
+                // again with more.
+                _requireDiamondGas(XP_AWARD_GAS, IReputationFacet.autoAwardXP.selector);
+                try IReputationFacet(diamond).autoAwardXP{gas: XP_AWARD_GAS}(address(this)) {}
+                catch { emit XpAwardFailed(address(this)); }
+            } else {
+                emit XpAwardFailed(address(this));
             }
         }
 
@@ -1399,9 +1474,38 @@ contract Agreement is MinimalERC721, ReentrancyGuard, ERC2771Context {
         return diamond.code.length > 0;
     }
 
+    /// @dev Refuse to make a capped diamond call unless the FULL cap can be
+    /// handed over.
+    ///
+    /// EIP-150 forwards min(cap, gasleft - gasleft/64), so without this a
+    /// caller who hand-picks a small gas limit can make a capped call run out
+    /// of gas while the rest of the function still fits. Every capped call
+    /// below is tolerated -- failure is caught and the deal closes anyway --
+    /// so a starved call is indistinguishable from a broken diamond, and the
+    /// caller keeps whatever the failure was worth to him.
+    ///
+    /// This guard is on the two calls where that is worth something:
+    /// autoAwardXP (the counterparty's XP silently goes missing) and
+    /// creditDisputeFee (the arbiter's 3% stays in the pot the caller is
+    /// about to win). It is deliberately NOT on _updateRegistry,
+    /// notifyExecutorFault, notifyArbiterTimeout or clearDisputeClaim: those
+    /// announce their own failure, cost the starver as much as anyone, and
+    /// syncRegistry() repairs the registry for anyone who cares. Putting a
+    /// floor on _updateRegistry would also raise the minimum gas limit of
+    /// raiseDispute past the ceiling the frontend already ships for it
+    /// (160_000), which is a live regression traded for nothing.
+    ///
+    /// cap * 64/63 is the smallest gasleft that still forwards the full cap
+    /// (x - x/64 >= cap).
+    function _requireDiamondGas(uint256 cap, bytes4 diamondCall) private view {
+        if (gasleft() < cap + cap / 63 + DIAMOND_CALL_GAS_SLACK) {
+            revert NotEnoughGasForDiamondCall(diamondCall);
+        }
+    }
+
     function _updateRegistry(ISignatureRegistry.AgreementStatus regStatus) private {
         if (_diamondHasCode()) {
-            try ISignatureRegistry(diamond).updateStatus(address(this), regStatus) { return; } catch {}
+            try ISignatureRegistry(diamond).updateStatus{gas: REGISTRY_UPDATE_GAS}(address(this), regStatus) { return; } catch {}
         }
         // Деньги важнее Registry — сделка завершается в любом случае.
         // Событие позволяет мониторить рассинхрон и вызвать syncRegistry() для починки.
@@ -1430,7 +1534,7 @@ contract Agreement is MinimalERC721, ReentrancyGuard, ERC2771Context {
         // call runs AFTER the money has been transferred, and a revert here
         // would roll the transfer back with it.
         if (_diamondHasCode()) {
-            try IArbiterRegistry(diamond).clearDisputeClaim(address(this)) {} catch {}
+            try IArbiterRegistry(diamond).clearDisputeClaim{gas: CLAIM_CLEAR_GAS}(address(this)) {} catch {}
         }
     }
 
