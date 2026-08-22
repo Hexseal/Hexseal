@@ -11,6 +11,15 @@ pragma solidity ^0.8.20;
 // promise is true, the money must leave the clone even when the diamond
 // stops answering.
 //
+// HISTORY. On 2026-08-22 this file was written to MEASURE the promise, and
+// it found the promise false for disputed deals: triggerArbiterTimeout, the
+// only exit from DISPUTED, stood behind a bare
+// `IArbiterRegistryFacet(diamond).hasSubmittedVerdict(...)`. A silent diamond
+// meant a stranded pot, for ever, with no rescue function anywhere. The same
+// day the guard was rewritten (Agreement._verdictInFlight / _diamondHasCode)
+// and this file was turned from a description of the hole into the lock on
+// it: every row that used to assert "money stuck" now asserts "money out".
+//
 // The diamond stops answering in three DIFFERENT ways, and they are not
 // interchangeable:
 //
@@ -23,7 +32,9 @@ pragma solidity ^0.8.20;
 //      NOT the same as A or B: solc emits an `extcodesize` guard for calls
 //      that expect no return data, and that guard reverts in the CALLER's
 //      own frame — outside the try/catch region. See
-//      testTryCatchDoesNotCatchExtcodesizeGuard below.
+//      testTryCatchDoesNotCatchExtcodesizeGuard below. try/catch therefore
+//      cannot cover this mode at all, which is why Agreement now checks
+//      `diamond.code.length` itself before every tolerated diamond call.
 //
 // Method notes (project rule "the expected value must not be derived from
 // the thing under test"):
@@ -132,6 +143,27 @@ contract ExtcodesizeProbe {
             abi.encodeWithSignature("isRegisteredArbiter(address)", address(this))
         );
         len = data.length;
+    }
+}
+
+// ---------- VERDICT-VIEW COST PROBE ----------
+//
+// Measures what one `hasSubmittedVerdict` read through the diamond actually
+// costs, from inside a contract frame, the way Agreement makes it. Standalone
+// so the number does not come out of Agreement's own code.
+
+contract VerdictViewProbe {
+    address public diamond;
+    constructor(address d) { diamond = d; }
+
+    function measure(address subject) external view returns (uint256 used, bool ok, uint256 word) {
+        bytes memory cd = abi.encodeWithSignature("hasSubmittedVerdict(address)", subject);
+        address to = diamond;
+        bytes memory ret;
+        uint256 before = gasleft();
+        (ok, ret) = to.staticcall(cd);
+        used = before - gasleft();
+        if (ret.length >= 32) word = abi.decode(ret, (uint256));
     }
 }
 
@@ -548,8 +580,8 @@ contract DiamondDeathEscrowTest is Test {
         assertTrue(_runRelease(Kill.FACET_REVERTS), "release must survive a reverting facet");
     }
 
-    function testRelease_NoCode_MoneyStUCK() public {
-        assertFalse(_runRelease(Kill.NO_CODE), "MEASURED: release dies when the diamond has no code");
+    function testRelease_NoCode_MoneyOut() public {
+        assertTrue(_runRelease(Kill.NO_CODE), "release must survive a codeless diamond");
     }
 
     // ============================================================
@@ -581,8 +613,8 @@ contract DiamondDeathEscrowTest is Test {
         assertTrue(_runAutoApprove(Kill.FACET_REVERTS), "auto-approve must survive a reverting facet");
     }
 
-    function testAutoApprove_NoCode_MoneyStUCK() public {
-        assertFalse(_runAutoApprove(Kill.NO_CODE), "MEASURED: auto-approve dies when the diamond has no code");
+    function testAutoApprove_NoCode_MoneyOut() public {
+        assertTrue(_runAutoApprove(Kill.NO_CODE), "auto-approve must survive a codeless diamond");
     }
 
     // ============================================================
@@ -614,8 +646,8 @@ contract DiamondDeathEscrowTest is Test {
         assertTrue(_runActivationTimeout(Kill.FACET_REVERTS), "refund must survive a reverting facet");
     }
 
-    function testActivationTimeout_NoCode_MoneyStUCK() public {
-        assertFalse(_runActivationTimeout(Kill.NO_CODE), "MEASURED: refund dies when the diamond has no code");
+    function testActivationTimeout_NoCode_MoneyOut() public {
+        assertTrue(_runActivationTimeout(Kill.NO_CODE), "refund must survive a codeless diamond");
     }
 
     // ============================================================
@@ -647,8 +679,8 @@ contract DiamondDeathEscrowTest is Test {
         assertTrue(_runDeadlineTimeout(Kill.FACET_REVERTS), "refund must survive a reverting facet");
     }
 
-    function testDeadlineTimeout_NoCode_MoneyStUCK() public {
-        assertFalse(_runDeadlineTimeout(Kill.NO_CODE), "MEASURED: refund dies when the diamond has no code");
+    function testDeadlineTimeout_NoCode_MoneyOut() public {
+        assertTrue(_runDeadlineTimeout(Kill.NO_CODE), "refund must survive a codeless diamond");
     }
 
     // ============================================================
@@ -688,12 +720,17 @@ contract DiamondDeathEscrowTest is Test {
     }
 
     // ============================================================
-    //  8. triggerArbiterTimeout() — the bare call at Agreement.sol:875
+    //  8. triggerArbiterTimeout() — THE ESCAPE HATCH
     // ============================================================
     //
-    // This is the escape hatch for a disputed deal. It is guarded by a BARE
-    // `IArbiterRegistryFacet(diamond).hasSubmittedVerdict(...)` — no
-    // try/catch — and that guard runs BEFORE any money moves.
+    // The only exit from a disputed deal, and the guard in front of it runs
+    // BEFORE any money moves. It used to be a bare
+    // `IArbiterRegistryFacet(diamond).hasSubmittedVerdict(...)`, which made an
+    // unreachable diamond mean "a verdict exists" and stranded the pot for
+    // ever. It now reads through Agreement._verdictInFlight: a gas-capped
+    // low-level staticcall whose failure means "no verdict", so the money
+    // leaves in all three modes. Section 13 holds the other half of that
+    // bargain — a LIVE diamond still blocks the hatch.
 
     function _runArbiterTimeoutUnclaimed(Kill mode) internal returns (bool ok) {
         Agreement a = _activated();
@@ -723,24 +760,24 @@ contract DiamondDeathEscrowTest is Test {
         assertTrue(_runArbiterTimeoutUnclaimed(Kill.ALIVE), "baseline: the escape hatch works while alive");
     }
 
-    function testArbiterTimeoutUnclaimed_SelectorsRemoved_MoneyStUCK() public {
-        assertFalse(
+    function testArbiterTimeoutUnclaimed_SelectorsRemoved_MoneyOut() public {
+        assertTrue(
             _runArbiterTimeoutUnclaimed(Kill.SELECTORS_REMOVED),
-            "MEASURED: Agreement.sol:875 bare hasSubmittedVerdict blocks the only escape"
+            "the only escape must survive a removed selector"
         );
     }
 
-    function testArbiterTimeoutUnclaimed_FacetReverts_MoneyStUCK() public {
-        assertFalse(
+    function testArbiterTimeoutUnclaimed_FacetReverts_MoneyOut() public {
+        assertTrue(
             _runArbiterTimeoutUnclaimed(Kill.FACET_REVERTS),
-            "MEASURED: Agreement.sol:875 bare hasSubmittedVerdict blocks the only escape"
+            "the only escape must survive a reverting facet"
         );
     }
 
-    function testArbiterTimeoutUnclaimed_NoCode_MoneyStUCK() public {
-        assertFalse(
+    function testArbiterTimeoutUnclaimed_NoCode_MoneyOut() public {
+        assertTrue(
             _runArbiterTimeoutUnclaimed(Kill.NO_CODE),
-            "MEASURED: Agreement.sol:875 bare hasSubmittedVerdict blocks the only escape"
+            "the only escape must survive a codeless diamond"
         );
     }
 
@@ -772,26 +809,30 @@ contract DiamondDeathEscrowTest is Test {
         assertTrue(_runArbiterTimeoutClaimed(Kill.ALIVE), "baseline: works while alive");
     }
 
-    function testArbiterTimeoutClaimed_SelectorsRemoved_MoneyStUCK() public {
-        assertFalse(_runArbiterTimeoutClaimed(Kill.SELECTORS_REMOVED), "MEASURED: stuck");
+    function testArbiterTimeoutClaimed_SelectorsRemoved_MoneyOut() public {
+        assertTrue(_runArbiterTimeoutClaimed(Kill.SELECTORS_REMOVED), "money must come home");
     }
 
-    function testArbiterTimeoutClaimed_FacetReverts_MoneyStUCK() public {
-        assertFalse(_runArbiterTimeoutClaimed(Kill.FACET_REVERTS), "MEASURED: stuck");
+    function testArbiterTimeoutClaimed_FacetReverts_MoneyOut() public {
+        assertTrue(_runArbiterTimeoutClaimed(Kill.FACET_REVERTS), "money must come home");
     }
 
-    function testArbiterTimeoutClaimed_NoCode_MoneyStUCK() public {
-        assertFalse(_runArbiterTimeoutClaimed(Kill.NO_CODE), "MEASURED: stuck");
+    function testArbiterTimeoutClaimed_NoCode_MoneyOut() public {
+        assertTrue(_runArbiterTimeoutClaimed(Kill.NO_CODE), "money must come home");
     }
 
     // ============================================================
-    //  9. A DISPUTED DEAL HAS NO OTHER WAY OUT
+    //  9. THE HATCH IS THE ONLY DOOR — AND IT OPENS
     // ============================================================
     //
-    // The severity of finding (8) rests on this: once disputedAt != 0 there
-    // is no second door. Measured, not argued.
+    // Two halves of one statement, measured together because each is
+    // worthless without the other. First: once disputedAt != 0 every other
+    // door really is shut, so the hatch carries the whole promise. Second:
+    // with the diamond silent, the hatch opens and the pot leaves.
+    //
+    // Before the fix the second half read assertFalse — that was the hole.
 
-    function _assertDisputedDealHasNoOtherExit(Kill mode) internal {
+    function _assertHatchIsTheOnlyDoorAndItOpens(Kill mode) internal {
         Agreement a = _activated();
         vm.prank(client);
         a.raiseDispute();
@@ -808,7 +849,6 @@ contract DiamondDeathEscrowTest is Test {
         assertFalse(_callAs(client,   a, "triggerDeadlineTimeout()"),  "deadline timeout is closed once disputed");
         assertFalse(_callAs(client,   a, "triggerActivationTimeout()"),"activation timeout needs !activated");
         assertFalse(_callAs(executor, a, "triggerAutoApprove()"),      "auto-approve is closed once disputed");
-        assertFalse(_callAs(client,   a, "triggerArbiterTimeout()"),   "the only real hatch, and it is blocked");
 
         // resolveDispute is reachable only through the diamond
         // (claimDispute makes the DIAMOND the arbiter), so a dead diamond
@@ -817,57 +857,62 @@ contract DiamondDeathEscrowTest is Test {
         (bool okRes, ) = address(a).call(abi.encodeWithSignature("resolveDispute(bool)", true));
         assertFalse(okRes, "nobody can resolve without the diamond");
 
-        assertEq(usdc.balanceOf(address(a)), escrowBefore, "the pot never moved");
+        assertEq(usdc.balanceOf(address(a)), escrowBefore, "no other door moved the pot");
+
+        // ...and the one door that is left does open.
+        Snap memory before = _snap(a);
+        assertTrue(_callAs(client, a, "triggerArbiterTimeout()"), "the only hatch must open");
+        assertEq(usdc.balanceOf(client)   - before.clientBal,   DEAL_HALF, "client half");
+        assertEq(usdc.balanceOf(executor) - before.executorBal, DEAL_HALF, "executor half");
+        assertEq(usdc.balanceOf(address(a)), 0, "escrow must be empty");
     }
 
-    function testDisputedDealHasNoOtherExit_SelectorsRemoved() public {
-        _assertDisputedDealHasNoOtherExit(Kill.SELECTORS_REMOVED);
+    function testHatchIsTheOnlyDoorAndItOpens_SelectorsRemoved() public {
+        _assertHatchIsTheOnlyDoorAndItOpens(Kill.SELECTORS_REMOVED);
     }
 
-    function testDisputedDealHasNoOtherExit_FacetReverts() public {
-        _assertDisputedDealHasNoOtherExit(Kill.FACET_REVERTS);
+    function testHatchIsTheOnlyDoorAndItOpens_FacetReverts() public {
+        _assertHatchIsTheOnlyDoorAndItOpens(Kill.FACET_REVERTS);
     }
 
-    function testDisputedDealHasNoOtherExit_NoCode() public {
-        _assertDisputedDealHasNoOtherExit(Kill.NO_CODE);
+    function testHatchIsTheOnlyDoorAndItOpens_NoCode() public {
+        _assertHatchIsTheOnlyDoorAndItOpens(Kill.NO_CODE);
     }
 
-    /// The trap door still opens while the diamond is down. raiseDispute()
-    /// reaches the diamond only through _updateRegistry, which IS wrapped, so
-    /// it succeeds — and drops the deal into the state that has no exit.
-    /// Nothing warns the user.
-    function _assertDisputeCanStillBeRaised(Kill mode) internal {
+    /// A party can still raise a dispute while the diamond is down —
+    /// raiseDispute reaches the diamond only through _updateRegistry, which is
+    /// tolerated. That used to be a trap: entering DISPUTED during an outage
+    /// meant entering a state with no exit, and nothing warned anyone. It is
+    /// no longer a trap, and this measures exactly that: raise it mid-outage,
+    /// then walk back out with the money.
+    function _assertDisputeRaisedMidOutageStillHasAWayOut(Kill mode) internal {
         Agreement a = _activated();
         _kill(mode);
         _assertDiamondReallyDeaf(mode);
 
-        bool raised = _callAs(client, a, "raiseDispute()");
-        if (mode == Kill.NO_CODE) {
-            // Only because the extcodesize guard defeats the try/catch, not
-            // because anything checks the diamond is alive.
-            assertFalse(raised, "NO_CODE: raiseDispute dies on the extcodesize guard");
-            return;
-        }
-        assertTrue(raised, "MEASURED: a party can still enter the locked state during an outage");
+        assertTrue(_callAs(client, a, "raiseDispute()"), "a party can still enter a dispute during an outage");
 
         vm.prank(executor);
         a.respondToDispute();
         vm.warp(block.timestamp + DISPUTE_WINDOW + 1);
 
-        assertFalse(_callAs(client, a, "triggerArbiterTimeout()"), "and then cannot get out");
-        assertEq(usdc.balanceOf(address(a)), DEAL, "pot locked");
+        Snap memory before = _snap(a);
+        assertTrue(_callAs(client, a, "triggerArbiterTimeout()"), "and can get back out again");
+        assertEq(usdc.balanceOf(client)   - before.clientBal,   DEAL_HALF, "client half");
+        assertEq(usdc.balanceOf(executor) - before.executorBal, DEAL_HALF, "executor half");
+        assertEq(usdc.balanceOf(address(a)), 0, "pot released");
     }
 
-    function testDisputeCanStillBeRaisedWhileDiamondIsDead_SelectorsRemoved() public {
-        _assertDisputeCanStillBeRaised(Kill.SELECTORS_REMOVED);
+    function testDisputeRaisedMidOutageStillHasAWayOut_SelectorsRemoved() public {
+        _assertDisputeRaisedMidOutageStillHasAWayOut(Kill.SELECTORS_REMOVED);
     }
 
-    function testDisputeCanStillBeRaisedWhileDiamondIsDead_FacetReverts() public {
-        _assertDisputeCanStillBeRaised(Kill.FACET_REVERTS);
+    function testDisputeRaisedMidOutageStillHasAWayOut_FacetReverts() public {
+        _assertDisputeRaisedMidOutageStillHasAWayOut(Kill.FACET_REVERTS);
     }
 
-    function testDisputeCannotBeRaisedWhenDiamondHasNoCode() public {
-        _assertDisputeCanStillBeRaised(Kill.NO_CODE);
+    function testDisputeRaisedMidOutageStillHasAWayOut_NoCode() public {
+        _assertDisputeRaisedMidOutageStillHasAWayOut(Kill.NO_CODE);
     }
 
     // ============================================================
@@ -893,6 +938,24 @@ contract DiamondDeathEscrowTest is Test {
         assertEq(usdc.balanceOf(executor), DEAL, "and the money still left the clone");
     }
 
+    /// The NO_CODE twin of the test above, and the proof that the new
+    /// `diamond.code.length` branch is what carries mode C. If Agreement had
+    /// instead started calling a codeless address low-level and calling that
+    /// success, the money would still be out — and the registry would be
+    /// silently wrong. RegistrySyncFailed is what tells the two apart.
+    function testCodelessDiamondPaysOutAndStillAnnouncesTheStaleRegistry() public {
+        Agreement a = _markedDone();
+        assertEq(_registryStatus(a), 0, "precondition: registry says ACTIVE");
+
+        _kill(Kill.NO_CODE);
+        vm.recordLogs();
+        vm.prank(client);
+        a.release();
+
+        assertTrue(_registrySyncFailedFired(), "the codeless branch must announce itself");
+        assertEq(usdc.balanceOf(executor), DEAL, "and the money still left the clone");
+    }
+
     function testXpIsSilentlySkippedWhenDiamondIsDead() public {
         Agreement a = _markedDone();
         _kill(Kill.SELECTORS_REMOVED);
@@ -913,12 +976,15 @@ contract DiamondDeathEscrowTest is Test {
     }
 
     // ============================================================
-    //  11. syncRegistry() — the bare call at Agreement.sol:1281
+    //  11. syncRegistry() — bare ON PURPOSE
     // ============================================================
     //
-    // Same function as line 1262, which IS wrapped. The repair tool is the
-    // unprotected one. No money at risk, but it dies exactly when it is
-    // needed: after a RegistrySyncFailed.
+    // Same registry call as the one inside _complete, which IS tolerated —
+    // and this one is deliberately not. syncRegistry moves no money; it is the
+    // repair tool a monitor reaches for after a RegistrySyncFailed. A tolerant
+    // version would answer "done" while the registry stayed wrong, which is
+    // the one answer a repair tool must never give. So it keeps failing loudly
+    // when the diamond is down, and this test pins that decision in place.
 
     function testSyncRegistryIsBareAndDiesWithTheDiamond() public {
         Agreement a = _markedDone();
@@ -1018,6 +1084,145 @@ contract DiamondDeathEscrowTest is Test {
         );
 
         assertTrue(ok, "one burn only costs ~1/32 - enough left to pay out");
+        assertEq(usdc.balanceOf(address(a)), 0, "escrow emptied");
+    }
+
+    // ============================================================
+    //  13. THE OTHER HALF OF THE BARGAIN — A LIVE DIAMOND STILL BLOCKS
+    // ============================================================
+    //
+    // Everything above says "a silent diamond must not lock the money in".
+    // The check being fixed has a real job as well: while an arbiter's verdict
+    // is in flight (FINALIZE_DELAY, appeal voting) a party must NOT be able to
+    // force a refund and wipe the other arbiters' vote out. Section 13 is the
+    // set of locks on that job, so the cure cannot quietly become "the check
+    // never fires".
+    //
+    // Where the expectation comes from: a verdict is put in flight by actually
+    // calling submitVerdict through the diamond — an action, not a reading of
+    // the same slot the contract reads. The expected outcomes are hand-written
+    // custom-error selectors.
+
+    /// Deal in dispute, claimed by the arbiter, verdict SUBMITTED but not yet
+    /// finalized. submitVerdict must land inside DISPUTE_WINDOW, so the warp
+    /// past the window happens after it, in the callers.
+    function _disputedWithVerdictSubmitted() internal returns (Agreement a) {
+        a = _activated();
+        vm.prank(client);
+        a.raiseDispute();
+        _claimByArbiter(a);
+        vm.prank(arbiterAddr);
+        ArbiterRegistryFacet(address(diamond)).submitVerdict(address(a), true);
+    }
+
+    function _revertSelector(bytes memory ret) internal pure returns (bytes4 sel) {
+        if (ret.length < 4) return bytes4(0);
+        assembly { sel := mload(add(ret, 0x20)) }
+    }
+
+    /// The behaviour that must NOT have changed: healthy diamond, live
+    /// verdict, window elapsed — the hatch stays shut, and shuts with the same
+    /// error as before.
+    function testLiveVerdictStillBlocksTheHatch() public {
+        Agreement a = _disputedWithVerdictSubmitted();
+        vm.warp(block.timestamp + DISPUTE_WINDOW + 1);
+
+        vm.prank(client);
+        (bool ok, bytes memory ret) = address(a).call(
+            abi.encodeWithSignature("triggerArbiterTimeout()")
+        );
+
+        assertFalse(ok, "a live verdict must still block the timeout");
+        assertEq(
+            _revertSelector(ret),
+            Agreement.VerdictInFlight.selector,
+            "and it must be VerdictInFlight that blocks it"
+        );
+        assertEq(usdc.balanceOf(address(a)), DEAL, "the pot stayed in the clone");
+    }
+
+    /// The attack the gas cap invites and the gas floor closes.
+    ///
+    /// A failed read means "no verdict", so a party who could make the read
+    /// run out of gas — while leaving enough for the payout — would force a
+    /// refund straight through a live verdict on a perfectly healthy diamond.
+    /// Agreement refuses to read at all unless it can hand over the full cap.
+    ///
+    /// Two things are asserted, and they are not the same thing: (1) NO gas
+    /// budget at all lets the money out, and (2) the budgets below the floor
+    /// are refused BY THE FLOOR — NotEnoughGasForVerdictCheck — rather than
+    /// answered by a guess. Drop the floor and (2) goes red.
+    function testGasStarvationCannotForceTheHatchPastALiveVerdict() public {
+        Agreement a = _disputedWithVerdictSubmitted();
+        vm.warp(block.timestamp + DISPUTE_WINDOW + 1);
+        assertEq(usdc.balanceOf(address(a)), DEAL, "precondition: the pot is in the clone");
+
+        bool sawFloorRefusal;
+        for (uint256 g = 40_000; g <= 400_000; g += 4_000) {
+            vm.prank(client);
+            (bool ok, bytes memory ret) = address(a).call{gas: g}(
+                abi.encodeWithSignature("triggerArbiterTimeout()")
+            );
+            assertFalse(ok, "no gas budget may open the hatch past a live verdict");
+            assertEq(usdc.balanceOf(address(a)), DEAL, "and the pot never moves");
+            if (_revertSelector(ret) == Agreement.NotEnoughGasForVerdictCheck.selector) {
+                sawFloorRefusal = true;
+            }
+        }
+        assertTrue(sawFloorRefusal, "below the floor the contract must refuse to read, not guess");
+    }
+
+    /// What the cap is measured against. The number is the real cost of the
+    /// read through the proxy with EVERYTHING cold — diamond account, the
+    /// facet-address slot, the facet account, the verdict slot — because
+    /// nothing in this test body touches the diamond before the probe runs.
+    ///
+    /// The cap literal below is hand-copied from Agreement.VERDICT_VIEW_GAS on
+    /// purpose: reading it back out of the contract under test would make this
+    /// assertion look at itself. A cap set too LOW is caught by behaviour, not
+    /// by this test — testLiveVerdictStillBlocksTheHatch goes red the moment
+    /// the read stops fitting in its budget.
+    uint256 constant VERDICT_VIEW_GAS_CAP = 100_000; // = Agreement.VERDICT_VIEW_GAS
+
+    function testVerdictViewCostSitsFarUnderTheCap() public {
+        VerdictViewProbe probe = new VerdictViewProbe(address(diamond));
+        (uint256 used, bool ok, uint256 word) = probe.measure(address(0xCAFE01));
+
+        assertTrue(ok, "the read must actually answer, otherwise this measures nothing");
+        assertEq(word, 0, "an address with no dispute must read as no verdict");
+        emit log_named_uint("hasSubmittedVerdict through the diamond, all cold", used);
+        assertLt(used * 4, VERDICT_VIEW_GAS_CAP, "the cap must keep at least 4x headroom over the real cost");
+    }
+
+    /// The gas cap earns its keep here: a facet that eats gas on the verdict
+    /// selector cannot drag the hatch down with it. Without the cap the read
+    /// would be handed 63/64 of the transaction and nothing would be left to
+    /// pay anyone.
+    function testGasBurningVerdictFacetCannotBlockTheHatch() public {
+        Agreement a = _activated();
+        vm.prank(client);
+        a.raiseDispute();
+        vm.prank(executor);
+        a.respondToDispute();
+        vm.warp(block.timestamp + DISPUTE_WINDOW + 1);
+
+        bytes4[] memory sels = new bytes4[](1);
+        sels[0] = bytes4(keccak256("hasSubmittedVerdict(address)"));
+        IDiamondCut.FacetCut[] memory cut = new IDiamondCut.FacetCut[](1);
+        cut[0] = IDiamondCut.FacetCut(
+            address(new GasBurnerFacet()), IDiamondCut.FacetCutAction.Replace, sels
+        );
+        DiamondCutFacet(address(diamond)).diamondCut(cut, address(0), "");
+
+        Snap memory before = _snap(a);
+        vm.prank(client);
+        (bool ok, ) = address(a).call{gas: REALISTIC_GAS}(
+            abi.encodeWithSignature("triggerArbiterTimeout()")
+        );
+
+        assertTrue(ok, "a capped read cannot be starved into taking the whole transaction");
+        assertEq(usdc.balanceOf(client)   - before.clientBal,   DEAL_HALF, "client half");
+        assertEq(usdc.balanceOf(executor) - before.executorBal, DEAL_HALF, "executor half");
         assertEq(usdc.balanceOf(address(a)), 0, "escrow emptied");
     }
 }

@@ -285,6 +285,43 @@ contract Agreement is MinimalERC721, ReentrancyGuard, ERC2771Context {
     uint256 public constant DISPUTE_FEE_BPS = 300;          // 3% от котла
     uint256 public constant DISPUTE_FEE_CAP = 500_000_000;  // $500 (6 decimals)
 
+    // -------- DIAMOND VIEW BUDGET --------
+    //
+    // Gas handed to the one diamond view that stands in FRONT of the money
+    // (hasSubmittedVerdict, read by triggerArbiterTimeout). Measured cost of
+    // that read through the proxy with every slot cold -- diamond account,
+    // facet-address slot, facet account, verdict slot -- is 11_064 gas
+    // (test/DiamondDeathEscrow.t.sol::testVerdictViewCostSitsFarUnderTheCap).
+    // The cap is ~9x that, and it is the same number Treasury already uses for
+    // the same class of read (Treasury.DIAMOND_VIEW_GAS).
+    //
+    // Why a cap at all: try/catch turns a revert into a caught failure, but it
+    // cannot give back gas the callee already burned. A facet stuck in an
+    // unbounded loop eats 63/64 of whatever it is offered, and an uncapped
+    // read in front of a payout hands it almost the whole transaction. The cap
+    // bounds that loss to a fixed, known amount.
+    uint256 private constant VERDICT_VIEW_GAS = 100_000;
+
+    // Floor on gasleft() before that read is attempted.
+    //
+    // EIP-150 forwards min(cap, gasleft - gasleft/64), so a caller who hand-
+    // picks a small gas limit could make the read run out of gas while the
+    // rest of the call still fits. Since a failed read is read as "no verdict
+    // was submitted" (see _verdictInFlight), that would turn deliberate gas
+    // starvation into a way to force a refund past a live verdict on a
+    // perfectly healthy diamond -- the exact thing the check exists to stop.
+    //
+    // So: unless gasleft() is enough to hand over the FULL cap, the whole
+    // transaction reverts. Failure of the read then means a genuinely broken
+    // diamond, never a starved one.
+    //
+    // cap * 64/63 is the smallest gasleft that still forwards the full cap
+    // (x - x/64 >= cap); the 8_000 on top covers what is spent between the
+    // check and the CALL opcode itself (cold account access, memory, the
+    // surrounding opcodes).
+    uint256 private constant VERDICT_VIEW_GAS_FLOOR =
+        VERDICT_VIEW_GAS + VERDICT_VIEW_GAS / 63 + 8_000;
+
     // -------- DEAL PARAMS (пишутся один раз в initialize) --------
     //
     // Не immutable: значения различны у каждого клона, а immutable живёт
@@ -421,6 +458,9 @@ contract Agreement is MinimalERC721, ReentrancyGuard, ERC2771Context {
     error ActivationWindowPassed();
     error ArbiterWindowNotPassed();
     error VerdictInFlight();
+    /// Raised when triggerArbiterTimeout is called with too little gas to hand
+    /// the verdict read its full budget. See VERDICT_VIEW_GAS_FLOOR.
+    error NotEnoughGasForVerdictCheck();
     error NoArbiterSet();
     error WrongAmount();
     error ExtraNotPending();
@@ -775,7 +815,12 @@ contract Agreement is MinimalERC721, ReentrancyGuard, ERC2771Context {
         // невозможно протестировать: срабатывание означало бы BPS >= 10_000,
         // то есть катастрофу конфигурации, а не смену ставки, и молчаливый
         // пропуск сбора эту ошибку замаскировал бы, а не смягчил.
-        if (fee > 0) {
+        if (fee > 0 && !_diamondHasCode()) {
+            // No code at the diamond address: the credit cannot happen, and
+            // trying would revert in this frame (see _diamondHasCode), taking
+            // the payout below with it. Treated exactly like a failed credit.
+            emit DisputeFeeSkipped(fee);
+        } else if (fee > 0) {
             // Зачисляем ПЕРВЫМ, переводим только при успехе.
             //
             // Обратный порядок выглядит естественнее и был в первой редакции
@@ -824,7 +869,9 @@ contract Agreement is MinimalERC721, ReentrancyGuard, ERC2771Context {
         _complete(Status.REFUNDED);
         usdc.safeTransfer(client, payout);
 
-        try IReputationFacet(diamond).notifyExecutorFault(address(this)) {} catch {}
+        if (_diamondHasCode()) {
+            try IReputationFacet(diamond).notifyExecutorFault(address(this)) {} catch {}
+        }
 
         emit TimedOut(client, payout);
     }
@@ -846,7 +893,9 @@ contract Agreement is MinimalERC721, ReentrancyGuard, ERC2771Context {
         _complete(Status.REFUNDED);
         usdc.safeTransfer(client, payout);
 
-        try IReputationFacet(diamond).notifyExecutorFault(address(this)) {} catch {}
+        if (_diamondHasCode()) {
+            try IReputationFacet(diamond).notifyExecutorFault(address(this)) {} catch {}
+        }
 
         emit TimedOut(client, payout);
     }
@@ -872,7 +921,11 @@ contract Agreement is MinimalERC721, ReentrancyGuard, ERC2771Context {
         // Арбитр уже подал вердикт (в срок — submitVerdict это гарантирует) — таймаут не
         // для этого случая. Иначе сторона могла бы форсировать рефанд прямо во время
         // FINALIZE_DELAY/апелляции, обнуляя голосование других арбитров.
-        if (IArbiterRegistryFacet(diamond).hasSubmittedVerdict(address(this))) revert VerdictInFlight();
+        //
+        // Read through _verdictInFlight, never bare: this is the ONLY way out
+        // of DISPUTED, and a bare read made an unreachable diamond mean
+        // "locked forever". See that function for the whole argument.
+        if (_verdictInFlight()) revert VerdictInFlight();
 
         _settlePending();
         uint256 pot = amount + extrasTotal;
@@ -961,7 +1014,9 @@ contract Agreement is MinimalERC721, ReentrancyGuard, ERC2771Context {
         _complete(Status.REFUNDED);
         usdc.safeTransfer(client, pot);
 
-        try IArbiterRegistryFacet(diamond).notifyArbiterTimeout(address(this)) {} catch {}
+        if (_diamondHasCode()) {
+            try IArbiterRegistryFacet(diamond).notifyArbiterTimeout(address(this)) {} catch {}
+        }
 
         _clearDisputeClaim();
         emit ArbiterTimedOut(client, pot);
@@ -1250,7 +1305,9 @@ contract Agreement is MinimalERC721, ReentrancyGuard, ERC2771Context {
 
         // Автоматически начисляем XP обеим сторонам при успешном завершении
         if (newStatus == Status.COMPLETED || newStatus == Status.RESOLVED) {
-            try IReputationFacet(diamond).autoAwardXP(address(this)) {} catch {}
+            if (_diamondHasCode()) {
+                try IReputationFacet(diamond).autoAwardXP(address(this)) {} catch {}
+            }
         }
 
         // NFT больше не сжигаются при финализации — они остаются как
@@ -1258,12 +1315,98 @@ contract Agreement is MinimalERC721, ReentrancyGuard, ERC2771Context {
         // статус (COMPLETED/RESOLVED/REFUNDED) через живой status().
     }
 
-    function _updateRegistry(ISignatureRegistry.AgreementStatus regStatus) private {
-        try ISignatureRegistry(diamond).updateStatus(address(this), regStatus) {} catch {
-            // Деньги важнее Registry — сделка завершается в любом случае.
-            // Событие позволяет мониторить рассинхрон и вызвать syncRegistry() для починки.
-            emit RegistrySyncFailed(address(this), uint8(regStatus));
+    /// @dev Is a verdict currently in flight on the diamond?
+    ///
+    /// Reads ArbiterRegistryFacet.hasSubmittedVerdict(address(this)) through
+    /// the diamond, but an UNREACHABLE diamond reads as "no verdict" instead
+    /// of reverting. That single difference decides whether escrowed money can
+    /// ever leave a disputed deal.
+    ///
+    /// WHY FAILURE MUST OPEN THE DOOR RATHER THAN CLOSE IT.
+    /// triggerArbiterTimeout is the only exit from DISPUTED: release,
+    /// triggerAutoApprove and both other timeouts all refuse a disputed deal,
+    /// and resolveDispute is reachable only through the diamond, because
+    /// claimDispute makes the DIAMOND the arbiter. So when the diamond stops
+    /// answering, this one read decides between "the pot goes home" and "the
+    /// pot stays in the clone forever": there is no rescue function here, and
+    /// none on the diamond either, because the money is not on the diamond.
+    /// The deadlock is mutual -- a verdict cannot be finalized while the
+    /// diamond is down either, since finalizeVerdict lives on it. Paying the
+    /// parties out by the attendance rule is the smaller evil. And silencing
+    /// the diamond on purpose takes the upgrade key, whose holder can already
+    /// do worse than this.
+    ///
+    /// Three ways the diamond fails to answer, all three handled here:
+    ///   * a removed selector -- the proxy fallback reverts -> ok = false;
+    ///   * a reverting facet  -- ok = false;
+    ///   * no code at all     -- ok = TRUE with zero bytes of returndata,
+    ///     which is why the returndatasize check is not decoration. The raw
+    ///     staticcall is chosen for exactly this case: it carries no
+    ///     extcodesize guard, and solc's guard would revert in OUR frame,
+    ///     where try/catch cannot see it.
+    ///
+    /// Shape borrowed from Treasury._readDiamondWord, plus one thing the
+    /// treasury does not need: the gasleft() floor. There a failed read costs
+    /// the party who wrecked it; here a failed read OPENS a door, so gas
+    /// starvation has to be impossible, not merely unprofitable.
+    function _verdictInFlight() private view returns (bool) {
+        // Refuse to read at all unless the full budget can be handed over.
+        // "Did not answer" must mean a broken diamond, never a starved call.
+        if (gasleft() < VERDICT_VIEW_GAS_FLOOR) revert NotEnoughGasForVerdictCheck();
+
+        address to      = diamond;
+        address self    = address(this);
+        uint256 gasCap  = VERDICT_VIEW_GAS;
+        bytes4  selector = IArbiterRegistryFacet.hasSubmittedVerdict.selector;
+
+        bool ok;
+        uint256 word;
+        assembly ("memory-safe") {
+            // Scratch behind the free-memory pointer: the pointer itself is
+            // not moved and nothing long-lived is left here. A bytes4 sits in
+            // the high bytes of a Yul word, so mstore + length 4 lays down
+            // exactly the selector, then one word of argument after it. The
+            // output buffer is the same address: the EVM reads the input
+            // before it writes the answer.
+            let ptr := mload(0x40)
+            mstore(ptr, selector)
+            mstore(add(ptr, 4), self)
+            ok := staticcall(gasCap, to, ptr, 36, ptr, 0x20)
+            // A short answer is a failure: success with empty returndata (a
+            // codeless address) would otherwise pass uninitialised memory off
+            // as the value that was read.
+            if lt(returndatasize(), 0x20) { ok := 0 }
+            word := mload(ptr)
         }
+        return ok && word != 0;
+    }
+
+    /// @dev Does the diamond still have code at its address?
+    ///
+    /// Every tolerated diamond call below is gated on this, and try/catch
+    /// cannot stand in for it. For an external call that expects NO return
+    /// data solc emits an extcodesize guard in the CALLER's own frame, ahead
+    /// of the CALL opcode; a revert raised there flies straight past `catch`
+    /// and takes the whole transaction down -- the payout with it. Measured on
+    /// a standalone probe:
+    /// test/DiamondDeathEscrow.t.sol::testTryCatchDoesNotCatchExtcodesizeGuard.
+    ///
+    /// So a codeless diamond has to read exactly like a removed selector or a
+    /// reverting facet: the call did not happen, the deal closes anyway.
+    /// AgreementDeployer already applies this rule to the implementation it
+    /// clones; the diamond had no such check anywhere.
+    function _diamondHasCode() private view returns (bool) {
+        return diamond.code.length > 0;
+    }
+
+    function _updateRegistry(ISignatureRegistry.AgreementStatus regStatus) private {
+        if (_diamondHasCode()) {
+            try ISignatureRegistry(diamond).updateStatus(address(this), regStatus) { return; } catch {}
+        }
+        // Деньги важнее Registry — сделка завершается в любом случае.
+        // Событие позволяет мониторить рассинхрон и вызвать syncRegistry() для починки.
+        // A codeless diamond lands here too, and says so through the same event.
+        emit RegistrySyncFailed(address(this), uint8(regStatus));
     }
 
     /// @notice Повторная синхронизация статуса с Registry.
@@ -1282,8 +1425,13 @@ contract Agreement is MinimalERC721, ReentrancyGuard, ERC2771Context {
     }
 
     function _clearDisputeClaim() private {
-        // Non-blocking: не останавливаем завершение сделки если ArbiterRegistry недоступен
-        try IArbiterRegistry(diamond).clearDisputeClaim(address(this)) {} catch {}
+        // Non-blocking: не останавливаем завершение сделки если ArbiterRegistry недоступен.
+        // The code check is part of that tolerance, not an optimisation: this
+        // call runs AFTER the money has been transferred, and a revert here
+        // would roll the transfer back with it.
+        if (_diamondHasCode()) {
+            try IArbiterRegistry(diamond).clearDisputeClaim(address(this)) {} catch {}
+        }
     }
 
     // -------- STRING UTILS --------
