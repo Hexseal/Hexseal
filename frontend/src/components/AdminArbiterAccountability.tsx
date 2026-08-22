@@ -41,7 +41,7 @@ import { useWriteContract, usePublicClient } from 'wagmi';
 import type { Address, Hex } from 'viem';
 import { toast } from 'react-hot-toast';
 import {
-  AlertTriangle, Ban, CheckCircle2, Clock, Crown, FileUp, Gavel,
+  AlertTriangle, Ban, CheckCircle2, Clock, Crown, FileUp, Gavel, History,
   Loader2, Scale, ShieldOff, Undo2, Upload,
 } from 'lucide-react';
 
@@ -60,7 +60,7 @@ import type { RemovalCauseName } from '@/lib/arbiterRemovalCause';
 import {
   REMOVAL_CAUSE_OPTIONS, causeByValue, causeOption,
   checkExecution, checkProposal, formatSecondsLeft, mistakeOutlook,
-  reasonByteLength, reasonBytesLeft, removalStage,
+  reasonByteLength, reasonBytesLeft, removalStage, streakOutrunsPair,
 } from '@/lib/arbiterRemovalFlow';
 
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000' as Address;
@@ -198,6 +198,49 @@ function MistakeOutlookLine({ standing, rules }: { standing: ArbiterStanding; ru
       ) : (
         <>The row counts consecutive mistakes — a clean verdict resets it to zero.</>
       )}
+    </p>
+  );
+}
+
+/**
+ * Почему серия ошибок длиннее пары чисел — сказано ТАМ ЖЕ, где расхождение видно.
+ *
+ * ⚠️ ЭТО НЕ ПРАВКА ИСТОЧНИКА. Цепь отвечает верно, экран показывает верно —
+ * непонятно ЧИТАЕТСЯ. Владелец увидел «judged 0, overturned 0» и строкой ниже
+ * «1 из 3» (сверено чтением 22 августа 2026: серия 1, переворотов 0, разобрано
+ * 0) и прочёл пару чисел как опровержение строки. Лечится словами, а не
+ * подменой чисел: подставить сюда что-нибудь «согласованное» значило бы врать
+ * про цепь ради красивой карточки.
+ *
+ * ⚠️ ТОЛЬКО ПРИ РАСХОЖДЕНИИ, И ЭТО ТРЕБОВАНИЕ, А НЕ ОПТИМИЗАЦИЯ. Постоянная
+ * пояснительная строка под каждой карточкой — шум, который перестают читать
+ * через неделю; тогда её не прочтут и там, где она объясняет настоящую
+ * странность. Условие — `streakOutrunsPair`, с разбором обеих границ.
+ *
+ * ⚠️ ПРИЧИНА НЕ НАЗВАНА НАРОЧНО. Цепь хранит счётчик, а не историю: из чего
+ * сложилась вот эта единица, не знает никто, и «это была просрочка» — вывод
+ * исключением, верный ровно до первого настоящего переворота. Последняя фраза
+ * говорит это вслух, чтобы владелец не пошёл искать в логах то, чего там нет.
+ *
+ * ⚠️ СТОИТ ПОД СТРОКОЙ ОШИБОК, А НЕ ПОД ПАРОЙ ЧИСЕЛ. Удивление наступает в
+ * момент чтения «1 из 3» — до неё объяснять нечего, читатель ещё не увидел
+ * противоречия. Отсюда и оформление: левая черта и приглушённый тон, то есть
+ * сноска к строке выше, а не третье самостоятельное утверждение.
+ */
+function CounterWindowNote({ standing }: { standing: ArbiterStanding }) {
+  const streak = Number(standing.mistakeStreak);
+  const overturned = Number(standing.overturnedVerdicts);
+  if (!streakOutrunsPair(streak, overturned)) return null;
+
+  return (
+    <p className="text-[11px] leading-relaxed text-white/30 border-l border-white/[0.08] pl-2.5">
+      <History className="w-3 h-3 inline-block mr-1 -mt-0.5" />
+      The pair above is younger than the arbiter: <b className="font-mono">{overturned}</b>{' '}
+      overturned against a row of <b className="font-mono">{streak}</b> is the record, not a
+      display error. <code>overturned</code> started at zero with the cut that created it and is
+      never filled in backwards, and it counts overturned verdicts only — the row counts every
+      judicial mistake. Which of those two edges this row crossed, the chain does not keep: it
+      stores the counters, not the history behind them.
     </p>
   );
 }
@@ -692,6 +735,7 @@ export function ArbiterAccountabilityCard({ arbiter, isChief, rules, onChanged }
         <>
           <StandingNumbers standing={standing} />
           <MistakeOutlookLine standing={standing} rules={rules} />
+          <CounterWindowNote standing={standing} />
         </>
       )}
 

@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import {
   REMOVAL_CAUSE_OPTIONS, causeByValue, causeOption,
   checkExecution, checkProposal, formatSecondsLeft, mistakeOutlook,
-  reasonByteLength, reasonBytesLeft, removalStage,
+  reasonByteLength, reasonBytesLeft, removalStage, streakOutrunsPair,
   type RemovalProposalRecord,
 } from './arbiterRemovalFlow';
 import { decodeRemovalCause } from './arbiterRemovalCause';
@@ -245,6 +245,38 @@ describe('«станет N из M» считается от чисел цепи'
     expect(o.next).toBe(7);
     expect(o.nextTips).toBe(false);
     expect(o.nextProves).toBe(true);
+  });
+});
+
+/* ── 5б. пара чисел моложе арбитра ── */
+
+/**
+ * ⚠️ ГРАНИЦА ПРОВЕРЯЕТСЯ ОБЕИМИ СТОРОНАМИ, И РАВЕНСТВО — ГЛАВНЫЙ СЛУЧАЙ.
+ * «Расхождение» здесь значит «пара НЕ МОЖЕТ объяснить всю серию», то есть
+ * строго меньше. Сдвиг на `<=` показал бы сноску арбитру, у которого числа
+ * сходятся идеально, — то самое постоянное объяснение, которое перестают
+ * читать. Сцена «сходятся ровно» стоит здесь именно за этим.
+ */
+describe('серия длиннее пары — только когда пара её действительно не покрывает', () => {
+  it('серия 1 при нуле переворотов — расхождение', () => {
+    expect(streakOutrunsPair(1, 0)).toBe(true);
+  });
+
+  it('серии нет — молчим, отдельной ветки на ноль не надо', () => {
+    expect(streakOutrunsPair(0, 0)).toBe(false);
+  });
+
+  it('числа сходятся ровно — молчим', () => {
+    expect(streakOutrunsPair(2, 2)).toBe(false);
+  });
+
+  it('переворотов больше серии (чистый вердикт обнулил ряд) — молчим', () => {
+    expect(streakOutrunsPair(0, 4)).toBe(false);
+    expect(streakOutrunsPair(1, 4)).toBe(false);
+  });
+
+  it('окно шире единицы: два доразрезных переворота при одном посчитанном', () => {
+    expect(streakOutrunsPair(3, 1)).toBe(true);
   });
 });
 

@@ -219,6 +219,54 @@ describe('карточка арбитра показывает пару чисе
     expect(html).toContain('the chain suspends him on the spot and opens an accusation');
   });
 
+  /* ── окно счётчиков: сноска появляется только при расхождении ── */
+
+  /**
+   * ⚠️ ТРИ СЦЕНЫ, И ТРЕТЬЯ — ВСТРЕЧНАЯ. Сноску, которую не показывают
+   * НИКОГДА, сцена «молчим» проходит с блеском: она проверяет отсутствие.
+   * Поэтому первая сцена обязана быть, и она обязана требовать текст, а не
+   * его отсутствие — иначе замер «убрать условие» покраснел бы только с
+   * одной стороны.
+   *
+   * ⚠️ И ЧЕТВЁРТАЯ ПРОВЕРКА ВНУТРИ ПЕРВОЙ — ЧЕГО В ТЕКСТЕ БЫТЬ НЕ ДОЛЖНО.
+   * Причину единицы цепь не хранит, «просрочка» — вывод исключением. Стоит
+   * кому-нибудь дописать сюда правдоподобное объяснение, и надпись начнёт
+   * врать в тот день, когда произойдёт первый настоящий переворот.
+   */
+  it('серия длиннее пары — карточка объясняет границу счётчиков на месте', () => {
+    chain.getArbiterStanding = {
+      data: standingTuple({ mistakeStreak: 1n, overturnedVerdicts: 0n, cleanVerdicts: 0n }),
+    };
+    const html = renderToStaticMarkup(<Panel />);
+
+    expect(html).toContain('younger than the arbiter');
+    expect(html).toContain('display error');
+    expect(html).toContain('never filled in backwards');
+    expect(html).toContain('stores the counters, not the history behind them');
+    // Причина НЕ названа: цепь её не хранит.
+    expect(html).not.toContain('timeout');
+    expect(html).not.toContain('Timeout');
+  });
+
+  it('числа сходятся — сноски нет, объяснять нечего', () => {
+    chain.getArbiterStanding = {
+      data: standingTuple({ mistakeStreak: 2n, overturnedVerdicts: 2n }),
+    };
+    const html = renderToStaticMarkup(<Panel />);
+
+    expect(html).toContain('Judicial mistakes in a row');  // строка ошибок на месте
+    expect(html).not.toContain('younger than the arbiter');
+  });
+
+  it('серии нет вовсе — сноски нет, даже при нулевой паре', () => {
+    chain.getArbiterStanding = {
+      data: standingTuple({ mistakeStreak: 0n, overturnedVerdicts: 0n, cleanVerdicts: 0n }),
+    };
+    const html = renderToStaticMarkup(<Panel />);
+
+    expect(html).not.toContain('younger than the arbiter');
+  });
+
   it('приостановка видна на карточке', () => {
     chain.getArbiterStanding = { data: standingTuple({ suspendedUntil: 4_000_000_000n }) };
     const html = renderToStaticMarkup(<Panel />);
